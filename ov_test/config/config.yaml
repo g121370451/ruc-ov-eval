@@ -1,0 +1,34 @@
+project_name: "LocoMo_Benchmark_Refactored"
+
+# --- 数据适配器配置 ---
+adapter:
+  module: "src.adapters.locomo_adapter"  # Python 文件的导入路径
+  class_name: "LocomoAdapter"            # 类名
+
+paths:
+  # 1. 原始数据路径 
+  raw_data: "Data/Locomo1/locomo1.json"
+  
+  # 2. 文档生成目录 (所有实验共享)
+  doc_output_dir: "Data/Locomo1/processed_docs"
+  
+  # 3. 向量库路径 (所有实验共享)
+  vector_store: "Data/Locomo1/viking_store_index"
+  
+  # 4. 实验结果输出目录 (仅存放本次运行的结果)
+  output_dir: "Output/Locomo1/experiment_1"
+  
+  # 5. 日志文件
+  log_file: "Output/Locomo1/experiment_1/benchmark.log"
+
+execution:
+  max_workers: 5
+  max_queries: 10
+  retrieval_topk: 5
+  skip_ingestion: false
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "76aab4eb-95e0-453e-b898-7934260ae6a1"
