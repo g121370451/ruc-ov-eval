@@ -1,0 +1,7 @@
+__pycache__/
+experiment_data/
+viking_store_locomo/
+.run_state.json
+*.json
+ov.conf
+.venv/
