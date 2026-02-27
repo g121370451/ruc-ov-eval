@@ -45,7 +45,6 @@ git clone https://github.com/g121370451/ruc-ov-eval.git
 cd ruc-ov-eval
 git submodule update --init --recursive  # 下载OV的git子模块代码
 uv sync # 同步项目依赖并创建虚拟环境
-uv pip install -e ./OpenViking # 手动指定安装可编辑模式的 OpenViking
 source .venv/bin/activate  # macOS/Linux
 # Windows: .venv\Scripts\activate
 ```

@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Union, Optional
 
+from src.core.logger import get_logger
+
 @dataclass
 class StandardQA:
     """标准化的单个问答对"""
@@ -15,16 +17,32 @@ class StandardQA:
 class StandardSample:
     """标准化的样本（包含文档内容和对应的 QA 列表）"""
     sample_id: str
-    doc_content: str        # 转换后的 Markdown 文本，用于入库
     qa_pairs: List[StandardQA]
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass 
+class StandardDoc:
+    """标准化的sampleid 与 doc_path映射结构"""
+    sample_id:str
+    doc_path:str
 
 class BaseAdapter(ABC):
     """所有数据集适配器的基类"""
     
     def __init__(self, raw_file_path: str):
         self.raw_file_path = raw_file_path
+        self.logger = get_logger()
 
+    @abstractmethod
+    def data_prepare(self, doc_dir:str) -> List[StandardDoc]:
+        """_summary_
+            数据预处理。
+            1. 将数据集的数据格式转化为对ov友好的格式
+            2. 返回转化后(或不转化)的文件地址
+        Returns:
+            List[StandardDoc]: 预计输入到ov的文件地址数组
+        """
+        pass
     @abstractmethod
     def load_and_transform(self) -> List[StandardSample]:
         """

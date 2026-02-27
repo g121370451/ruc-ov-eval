@@ -3,7 +3,7 @@ import json
 import os
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardSample, StandardQA
+from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
 
 QA_PROMPT = """Based on the above context, write an answer in the form of a short phrase for the following question. Answer with exact words from the context whenever possible.
 
@@ -16,6 +16,35 @@ class LocomoAdapter(BaseAdapter):
     专门用于处理 LocoMo 数据集的适配器。
     将 Session 格式的 JSON 转换为带有时间信息的 Markdown。
     """
+    def data_prepare(self,doc_dir:str) -> List[StandardDoc]:
+        """
+        加载原始数据并转换为ov友好格式
+        """
+        if not os.path.exists(self.raw_file_path):
+            raise FileNotFoundError(f"Raw data file not found: {self.raw_file_path}")
+
+        res:List[StandardDoc] = []
+
+        with open(self.raw_file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            # 兼容 dataset 是列表或单字典的情况
+            dataset = [data] if isinstance(data, dict) else data
+        os.makedirs(doc_dir, exist_ok=True)
+        for item in dataset:
+            sample_id = item.get("sample_id", "unknown")
+            # 1. 转换文档内容
+            doc_content = self._convert_conversation_to_markdown(sample_id, item.get("conversation", {}))
+
+            # 2. 将文本存储到目标中
+            try:
+                doc_path = os.path.join(doc_dir, f"{sample_id}_doc.md")
+                with open(doc_path, "w", encoding="utf-8") as f:
+                    f.write(doc_content)
+                res.append(StandardDoc(sample_id, doc_path))
+            except Exception as e:
+                self.logger.error(f"[locomo adapter] doc:{sample_id} prepare error {e}")
+                raise e
+        return res
 
     def load_and_transform(self) -> List[StandardSample]:
         """
@@ -33,17 +62,14 @@ class LocomoAdapter(BaseAdapter):
 
         for item in dataset:
             sample_id = item.get("sample_id", "unknown")
-            
-            # 1. 转换文档内容
-            doc_content = self._convert_conversation_to_markdown(sample_id, item.get("conversation", {}))
-            
-            # 2. 转换 QA 对
+
+            # 转换 QA 对
             qa_pairs = []
             for q in item.get("qa", []):
                 if str(q.get("category")) == "5":
                     continue
                 raw_ans = q.get("answer")
-                
+
                 # --- 确保 golds 始终是可迭代的列表，即使原答案是 int 或 float ---
                 if isinstance(raw_ans, list):
                     golds = raw_ans
@@ -52,7 +78,7 @@ class LocomoAdapter(BaseAdapter):
                 else:
                     # 将单值（str, int, float 等）包装在列表中
                     golds = [raw_ans]
-                
+
                 qa_pairs.append(StandardQA(
                     question=q["question"],
                     # 确保将列表中的每个元素都转为字符串
@@ -64,7 +90,6 @@ class LocomoAdapter(BaseAdapter):
 
             standard_samples.append(StandardSample(
                 sample_id=sample_id,
-                doc_content=doc_content,
                 qa_pairs=qa_pairs
             ))
 
@@ -100,7 +125,7 @@ class LocomoAdapter(BaseAdapter):
             for turn in conv[s_key]:
                 spk = turn.get("speaker", "Unknown")
                 txt = turn.get("text", "")
-                
+
                 # 保留原始 dia_id 以支持证据回溯
                 raw_id = turn.get("dia_id") or turn.get("id")
                 suffix = f" [{raw_id}]" if raw_id else ""
@@ -110,7 +135,7 @@ class LocomoAdapter(BaseAdapter):
             session_idx += 1
 
         return "\n".join(md_lines)
-    
+
     def build_prompt(self, qa: StandardQA, context_blocks: List[str]) -> tuple[str, Dict[str, Any]]:
         category = str(qa.category)
         eff_q = qa.question

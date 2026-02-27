@@ -7,17 +7,21 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
+from src.adapters.base import BaseAdapter
+from src.core.logger import get_logger
+from src.core.vector_store import VikingStoreWrapper
+
 from .core.monitor import BenchmarkMonitor
 from .core.metrics import MetricsCalculator
 from .core.judge_util import llm_grader
 
 class BenchmarkPipeline:
-    def __init__(self, config, adapter, vector_db, llm, logger):
+    def __init__(self, config, adapter: BaseAdapter, vector_db: VikingStoreWrapper, llm):
         self.config = config
         self.adapter = adapter
         self.db = vector_db
         self.llm = llm
-        self.logger = logger
+        self.logger = get_logger()
         self.monitor = BenchmarkMonitor()
         
         # 结果文件路径
@@ -35,16 +39,17 @@ class BenchmarkPipeline:
         }
 
     def run_generation(self):
-        """Step 2 & 3: 数据入库 + 检索生成"""
+        """Step1 数据预处理"""
         self.logger.info(">>> Stage: Ingestion & Generation")
-        
-        # 1. 始终加载数据
-        samples = self.adapter.load_and_transform()
-        
-        skip_ingestion = self.config['execution'].get('skip_ingestion', False)
         doc_dir = self.config['paths'].get('doc_output_dir')
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
+        # 0. 预处理数据集
+        try:
+            doc_info = self.adapter.data_prepare(doc_dir)
+        except Exception as e:
+            exit(1)
+        skip_ingestion = self.config['execution'].get('skip_ingestion', False)
 
         if skip_ingestion:
             self.logger.info(f"Skipping Ingestion. Using existing docs at: {doc_dir}")
@@ -53,11 +58,9 @@ class BenchmarkPipeline:
             self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
             
         else:  # 正常执行入库
-            os.makedirs(doc_dir, exist_ok=True)
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
             ingest_stats = self.db.ingest(
-                samples, 
-                base_dir=doc_dir, 
+                doc_info, 
                 max_workers=ingest_workers, 
                 monitor=self.monitor
             )
@@ -72,7 +75,9 @@ class BenchmarkPipeline:
                     "Total Output Tokens": self.metrics_summary["insertion"]["output_tokens"]
                 }
             })
-            
+        """Step 2 & 3: 数据入库 + 检索生成"""
+        # 1. 始终加载数据
+        samples = self.adapter.load_and_transform()    
         # 2. 准备 QA 任务
         tasks = self._prepare_tasks(samples)
         results_map = {}

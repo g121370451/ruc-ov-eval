@@ -1,5 +1,7 @@
 import os
 import time
+from typing import List
+from src.adapters.base import StandardDoc, StandardSample
 import tiktoken
 import openviking as ov
 from openviking.storage.queuefs.queue_manager import get_queue_manager
@@ -28,17 +30,14 @@ class VikingStoreWrapper:
             return 0
         return len(self.enc.encode(str(text)))
 
-    def ingest(self, samples, base_dir, max_workers=10, monitor=None) -> dict:
+    def ingest(self, samples: List[StandardDoc], max_workers=10, monitor=None) -> dict:
         start_time = time.time()
         
-        def _submit_sample(sample):
+        def _submit_sample(sample:StandardDoc):
             if monitor:
                 monitor.worker_start() # 线程开始
             try:
-                doc_path = os.path.join(base_dir, f"{sample.sample_id}_doc.md")
-                with open(doc_path, "w", encoding="utf-8") as f:
-                    f.write(sample.doc_content)
-                self.client.add_resource(doc_path, wait=False)
+                self.client.add_resource(sample.doc_path, wait=False)
                 if monitor:
                     monitor.worker_end(success=True) # 线程正常结束
             except Exception as e:
