@@ -255,25 +255,44 @@ class BenchmarkPipeline:
             raise e
 
     def _process_evaluation_task(self, item):
+        """
+        处理单个评估任务，计算 F1 和 Accuracy 指标。
+        
+        对于多标注者场景（如 Qasper 数据集），一个问题可能有多个 gold answers。
+        评估逻辑：
+        - F1: 对每个 gold answer 分别计算，取最大值
+        - Accuracy: 对每个 gold answer 分别让 LLM 判断，取最高值
+        
+        这样可以正确处理多标注者场景，同时保持对单答案数据集（如 Locomo）的兼容性。
+        """
         ans, golds = item['llm']['final_answer'], item['gold_answers']
+        
+        # F1: 对每个 gold answer 分别计算，取最大值
         f1 = max((MetricsCalculator.calculate_f1(ans, gt) for gt in golds), default=0.0)
         
         dataset_name = self.config.get('dataset_name', 'Unknown_Dataset')
         
-        # Accuracy via LLM Judge (使用通用 llm_grader 接口)
-        try:
-            acc = 1.0 if llm_grader(
-                self.llm.llm, 
-                self.config['llm']['model'], 
-                item['question'], 
-                "\n".join(golds), 
-                ans,
-                dataset_name=dataset_name
-            ) else 0.0
-        except Exception as e:
-            self.logger.error(f"Grader error: {e}")
-            acc = 0.0
+        # Accuracy via LLM Judge
+        # 对每个 gold answer 分别判断，取最高值作为最终 accuracy
+        # 这样可以正确处理多标注者场景（如 Qasper 数据集）
+        # 对于单答案数据集（如 Locomo），循环只执行一次，结果不变
+        max_acc = 0.0
+        for gt in golds:
+            try:
+                acc = 1.0 if llm_grader(
+                    self.llm.llm, 
+                    self.config['llm']['model'], 
+                    item['question'], 
+                    gt,  # 单个 gold answer
+                    ans,
+                    dataset_name=dataset_name
+                ) else 0.0
+                max_acc = max(max_acc, acc)
+            except Exception as e:
+                self.logger.error(f"Grader error for gold answer '{gt[:50]}...': {e}")
+        acc = max_acc
 
+        # 处理拒绝回答的情况：如果 LLM 拒绝回答且 gold answer 也是拒绝，则视为正确
         if MetricsCalculator.check_refusal(ans) and any(MetricsCalculator.check_refusal(gt) for gt in golds):
             f1, acc = 1.0, 1.0
 

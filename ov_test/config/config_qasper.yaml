@@ -1,0 +1,30 @@
+project_name: "RAG_Benchmark"
+
+# ===========修改配置================
+dataset_name: "Qasper_test" 
+
+adapter:
+  module: "src.adapters.qasper_adapter"  
+  class_name: "QasperAdapter"     
+
+execution:
+  max_workers: 5
+  ingest_workers: 5
+  retrieval_topk: 5
+  max_queries: 10
+  skip_ingestion: true
+# ==================================  
+
+paths:
+  raw_data: "Data/{dataset_name}/Qasper_test.json"
+  doc_output_dir: "Data/{dataset_name}/processed_docs"
+  vector_store: "Data/{dataset_name}/viking_store_index"
+  output_dir: "Output/{dataset_name}/experiment_1"
+  log_file: "Output/{dataset_name}/experiment_1/benchmark.log"
+
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "76aab4eb-95e0-453e-b898-7934260ae6a1"
