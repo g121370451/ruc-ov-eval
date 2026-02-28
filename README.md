@@ -10,6 +10,13 @@
 
 ```text
 ├─ Data/                               # 数据集（需按此目录结构放置）
+│   ├─ Locomo/
+│   │   └─ Locomo.json                 # Locomo 数据集
+│   ├─ Qasper/
+│   │   ├─ Qasper.json                 # Qasper 数据集（处理后）
+│   │   ├─ qasper-train-v0.3.json      # 训练集
+│   │   ├─ qasper-test-v0.3.json       # 测试集
+│   │   └─ qasper-dev-v0.3.json        # 验证集
 │   └─ SyllabusQA/
 │       ├─ train.csv                   # 训练集 QA
 │       ├─ test.csv                    # 测试集 QA
