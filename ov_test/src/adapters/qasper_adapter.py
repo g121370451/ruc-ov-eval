@@ -28,9 +28,28 @@ from typing import List, Dict, Any
 from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
 
 # 问答提示词模板
-QA_PROMPT = """Based on the above context, write an answer in the form of a short phrase for the following question. Answer with exact words from the context whenever possible.
+QA_PROMPT = """You are a professional academic research assistant. Your task is to answer questions based on the provided research paper snippets.
 
-Question: {} Short answer:
+### INSTRUCTIONS:
+1. **Source Grounding**: Answer the question using ONLY the provided context. 
+2. **Conciseness**: Provide the answer as a short phrase, entity, or specific value. Avoid full sentences unless absolutely necessary.
+3. **Yes/No Questions**: If the question is a Yes/No question, respond with ONLY "Yes" or "No".
+4. **Lists**: If the answer involves multiple items, separate them with a comma.
+5. **Exact Extraction**: Use exact terminology from the text whenever possible.
+
+### ABSENCE RULE:
+{missing_rule}
+
+---
+### CONTEXT (Excerpts from the paper):
+{context_text}
+
+---
+### QUESTION:
+{question}
+
+---
+### ANSWER:
 """
 
 # 无法回答时的规则说明
@@ -126,6 +145,17 @@ class QasperAdapter(BaseAdapter):
             paper_title = paper_data.get("title", "Unknown Title")
             
             for qa_item in paper_data.get("qas", []):
+    
+                # --- unanswerable过滤逻辑 ---
+                # 检查是否所有答案都被标记为无法回答
+                is_unanswerable = all(
+                    ans.get("answer", {}).get("unanswerable", False) 
+                    for ans in qa_item.get("answers", [])
+                )
+                if is_unanswerable:
+                    continue  # 直接跳过该问题，不进入后续处理
+                # ------------------
+                
                 raw_question = qa_item.get("question", "")
                 question_id = qa_item.get("question_id", "")
                 # 将论文标题附加到问题上，便于检索时定位到正确的论文
@@ -326,30 +356,18 @@ class QasperAdapter(BaseAdapter):
         return "\n".join(md_lines)
 
     def build_prompt(self, qa: StandardQA, context_blocks: List[str]) -> tuple[str, Dict[str, Any]]:
-        """
-        构建发送给 LLM 的完整提示词。
+        context_text = "\n\n".join(context_blocks) if context_blocks else "No relevant context found."
         
-        提示词结构：
-        1. 上下文内容（检索到的文档片段）
-        2. 无法回答的规则说明
-        3. 问题模板
-        
-        Args:
-            qa: 标准化问答对象
-            context_blocks: 检索到的上下文文本块列表
-            
-        Returns:
-            tuple[str, Dict[str, Any]]: 
-                - 完整的提示词字符串
-                - 元数据字典，包含 question_id
-        """
-        eff_q = qa.question
-        tmpl = QA_PROMPT
+        full_prompt = QA_PROMPT.format(
+            missing_rule=MISSING_RULE,
+            context_text=context_text,
+            question=qa.question
+        )
 
-        context_text = "\n\n".join(context_blocks)
-        full_prompt = f"{context_text}\n\n{MISSING_RULE}\n\n{tmpl.format(eff_q)}"
-
-        meta = {"question_id": qa.metadata.get("question_id", "")}
+        meta = {
+            "question_id": qa.metadata.get("question_id", ""),
+            "answer_types": qa.metadata.get("answer_types", [])
+        }
         return full_prompt, meta
 
     def post_process_answer(self, qa: StandardQA, raw_answer: str, meta: Dict[str, Any]) -> str:
