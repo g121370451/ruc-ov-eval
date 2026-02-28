@@ -279,14 +279,15 @@ class BenchmarkPipeline:
         max_acc = 0.0
         for gt in golds:
             try:
-                acc = 1.0 if llm_grader(
+                # 直接接收 llm_grader 返回的 float 分数 (0.0 ~ 1.0)
+                acc = llm_grader(
                     self.llm.llm, 
                     self.config['llm']['model'], 
                     item['question'], 
                     gt,  # 单个 gold answer
                     ans,
                     dataset_name=dataset_name
-                ) else 0.0
+                )
                 max_acc = max(max_acc, acc)
             except Exception as e:
                 self.logger.error(f"Grader error for gold answer '{gt[:50]}...': {e}")
