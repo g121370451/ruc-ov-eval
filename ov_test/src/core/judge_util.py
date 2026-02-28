@@ -8,16 +8,19 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import json
 from langchain_core.messages import HumanMessage, SystemMessage
 
+import json
+from langchain_core.messages import HumanMessage, SystemMessage
+
 def llm_grader(
     llm_client, model: str, question: str, gold_answer: str, response: str, dataset_name: str = "Locomo"
-) -> float:
+) -> dict:
     """
-    1.使用大模型裁判对生成的答案进行细粒度的 5 档评分（1-5分），并归一化为 0.0~1.0 的最终得分。
+    1.使用大模型裁判对生成的答案进行细粒度的 5 档评分，并返回包含得分、理由和所用 Prompt 类型的完整评估字典。
     2.思路说明：
-      - 依据 dataset_name 路由选择特定数据集的评分标准（Rubric）。
-      - 引入业界标准的 5 档计分制（1到5分），并在 Prompt 中为每个档位明确具体的判定依据（如完美、微小遗漏、部分正确、严重错误、完全无关/幻觉）。
-      - 强制模型输出包含 `score` (1-5的整数) 和 `reasoning` 的 JSON 格式。
-      - 解析结果后，将 1-5 分线性映射/归一化到 0.0~1.0区间。
+      - 依据 dataset_name 路由选择特定数据集的评分标准，并记录对应的 prompt_type 标签。
+      - 强制模型输出包含 `score` 和 `reasoning` 的 JSON 格式。
+      - 异常处理：若 JSON 解析失败，从文本提取数字并保留原始输出作为 reasoning。
+      - 最终将归一化得分（0.0~1.0）、理由和 Prompt 类型打包为字典返回，供上层写入评测报告。
     3.输入参数：
       - llm_client: Any，大模型客户端实例（必填）
       - model: str，使用的模型名称标识（必填）
@@ -25,10 +28,16 @@ def llm_grader(
       - gold_answer: str，标准答案文本（必填）
       - response: str，待评测的生成答案文本（必填）
       - dataset_name: str，数据集名称（可选，默认 "Locomo"）
-    4.返回值类型和具体含义：float 类型，表示生成的答案与标准答案的语义匹配归一化得分，取值范围通常为 0.0 到 1.0。
+    4.返回值类型和具体含义：dict，包含以下键值对：
+      - 'score' (float): 归一化后的匹配得分 (0.0~1.0)
+      - 'reasoning' (str): 大模型给出的评分理由
+      - 'prompt_type' (str): 评测所使用的 Prompt 模板类型
     """
     
-    if "Locomo" in dataset_name.lower():
+    prompt_type = "Generic_5-Point"
+    
+    if "locomo" in dataset_name.lower():
+        prompt_type = "Locomo_5-Point"
         system_prompt = """
         You are an expert evaluator scoring an AI's ability to remember and retrieve personal facts or past conversational context.
         """
@@ -51,7 +60,8 @@ def llm_grader(
         Respond ONLY with a JSON object: {{"score": integer, "reasoning": "string"}}
         """
 
-    elif "Qasper" in dataset_name.lower():
+    elif "qasper" in dataset_name.lower():
+        prompt_type = "Qasper_5-Point"
         system_prompt = """
         You are a strict academic peer reviewer scoring an AI's answer against a gold standard derived from a scientific paper.
         """
@@ -100,6 +110,9 @@ def llm_grader(
         HumanMessage(content=ACCURACY_PROMPT)
     ]
     
+    reasoning = "Parsing failed. Defaulting to 1."
+    raw_score = 1
+    
     try:
         resp = llm_client.invoke(messages)
         content = resp.content
@@ -107,22 +120,25 @@ def llm_grader(
         # 尝试解析 JSON
         result = json.loads(content)
         raw_score = int(result.get("score", 1))
+        reasoning = result.get("reasoning", "No reasoning provided.")
         
     except Exception:
-        # 容错：如果 JSON 解析失败，尝试从文本中直接提取 1-5 的数字，兜底给 1 分 (最差)
-        raw_score = 1
-        if "score\": 5" in content or "\"score\":5" in content: raw_score = 5
-        elif "score\": 4" in content or "\"score\":4" in content: raw_score = 4
-        elif "score\": 3" in content or "\"score\":3" in content: raw_score = 3
-        elif "score\": 2" in content or "\"score\":2" in content: raw_score = 2
+        # 容错：兜底给 1 分，并将完整文本存入 reasoning
+        if content:
+            reasoning = f"Parse Error. Raw Output: {content.strip()}"
+            if "score\": 5" in content or "\"score\":5" in content: raw_score = 5
+            elif "score\": 4" in content or "\"score\":4" in content: raw_score = 4
+            elif "score\": 3" in content or "\"score\":3" in content: raw_score = 3
+            elif "score\": 2" in content or "\"score\":2" in content: raw_score = 2
 
-    # 限制范围在 1-5 之间
     raw_score = max(1, min(5, raw_score))
-    
-    # 归一化到 0.0 - 1.0 区间 (1分->0.0, 2分->0.25, 3分->0.5, 4分->0.75, 5分->1.0)
     normalized_score = (raw_score - 1) / 4.0
     
-    return normalized_score
+    return {
+        "score": normalized_score,
+        "reasoning": reasoning,
+        "prompt_type": prompt_type
+    }
 
 
 
