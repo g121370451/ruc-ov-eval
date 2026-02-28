@@ -272,31 +272,50 @@ class BenchmarkPipeline:
         
         dataset_name = self.config.get('dataset_name', 'Unknown_Dataset')
         
-        # Accuracy via LLM Judge
-        # 对每个 gold answer 分别判断，取最高值作为最终 accuracy
-        # 这样可以正确处理多标注者场景（如 Qasper 数据集）
-        # 对于单答案数据集（如 Locomo），循环只执行一次，结果不变
-        max_acc = 0.0
+        # 初始化最优评测结果存储字典
+        best_eval_record = {
+            "score": 0.0,
+            "reasoning": "",
+            "prompt_type": ""
+        }
+        
         for gt in golds:
             try:
-                acc = 1.0 if llm_grader(
+                eval_res = llm_grader(
                     self.llm.llm, 
                     self.config['llm']['model'], 
                     item['question'], 
                     gt,  # 单个 gold answer
                     ans,
                     dataset_name=dataset_name
-                ) else 0.0
-                max_acc = max(max_acc, acc)
+                )
+                
+                # 如果有多个答案，保留得分最高的那次评测的理由和分数
+                if eval_res["score"] >= best_eval_record["score"]:
+                    best_eval_record = eval_res
+                    
             except Exception as e:
                 self.logger.error(f"Grader error for gold answer '{gt[:50]}...': {e}")
-        acc = max_acc
-
-        # 处理拒绝回答的情况：如果 LLM 拒绝回答且 gold answer 也是拒绝，则视为正确
+                
+        # 兜底：处理拒绝回答的情况
         if MetricsCalculator.check_refusal(ans) and any(MetricsCalculator.check_refusal(gt) for gt in golds):
-            f1, acc = 1.0, 1.0
+            f1 = 1.0
+            best_eval_record["score"] = 1.0
+            best_eval_record["reasoning"] = "System successfully identified Unanswerable/Refusal condition."
+            best_eval_record["prompt_type"] = "Heuristic_Refusal_Check"
 
+        acc = best_eval_record["score"]
+
+        # 将基础数值指标写入 metrics
         item["metrics"].update({"F1": f1, "Accuracy": acc})
+        
+        # 将 LLM 裁判的详细打分信息挂载到 item 下，它会被自动导出到 JSON 文件中
+        item["llm_evaluation"] = {
+            "prompt_used": best_eval_record["prompt_type"],
+            "reasoning": best_eval_record["reasoning"],
+            "normalized_score": acc
+        }
+
         detailed_info = (
             f"\n" + "="*60 +
             f"\n[Query ID]: {item['_global_index']}"
@@ -305,6 +324,7 @@ class BenchmarkPipeline:
             f"\n[LLM Answer]: {ans}"
             f"\n[Gold Answer]: {golds}"
             f"\n[Metrics]: {item['metrics']}"
+            f"\n[LLM Judge Reasoning]: {best_eval_record['reasoning']}"
             f"\n" + "="*60
         )
         self.logger.info(detailed_info)

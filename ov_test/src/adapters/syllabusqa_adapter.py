@@ -65,7 +65,10 @@ class SyllabusQAAdapter(BaseAdapter):
         """
         super().__init__(raw_file_path)
         # docx 文件目录，默认为数据目录下的 syllabi 子目录
-        self.syllabus_dir = os.path.join(os.path.dirname(raw_file_path), 'syllabi')
+        if os.path.isdir(raw_file_path):
+            self.syllabus_dir = os.path.join(raw_file_path, 'syllabi')
+        else:
+            self.syllabus_dir = os.path.join(os.path.dirname(raw_file_path), 'syllabi')
     
     def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
         """
