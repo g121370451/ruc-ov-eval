@@ -9,8 +9,12 @@
 项目根目录 `ruc-ov-eval` ：
 
 ```text
-├─ Data/                               # 数据集
-│   └─ Locomo/
+├─ Data/                               # 数据集（需按此目录结构放置）
+│   └─ SyllabusQA/
+│       ├─ train.csv                   # 训练集 QA
+│       ├─ test.csv                    # 测试集 QA
+│       ├─ val.csv                     # 验证集 QA
+│       └─ syllabi/                    # 原始 syllabus 文档 (docx)
 ├─ Output/                             # 输出
 │   └─ Locomo/
 └─ ruc-ov-eval/
@@ -25,7 +29,9 @@
             ├─ pipeline.py                 # 流水线：编排入库、检索生成、评测的具体步骤
             ├─ adapters/                   # 数据适配层：
             │   ├─ base.py                     # 定义抽象基类与 StandardSample 数据结构
-            │   └─ locomo_adapter.py           # LocoMo 数据集专用转换器
+            │   ├─ locomo_adapter.py           # LocoMo 数据集专用转换器
+            │   ├─ qasper_adapter.py           # Qasper 数据集专用转换器
+            │   └─ syllabusqa_adapter.py       # SyllabusQA 数据集专用转换器
             └─ core/                       # 核心功能组件：
                 ├─ vector_store.py             # 封装 OV 入库、检索及 Token 统计
                 ├─ llm_client.py               # 封装 LLM 调用及重试机制
@@ -34,6 +40,8 @@
                 └─ monitor.py                  # 线程安全的终端运行状态与 QPS 监控
 
 ```
+
+> **注意**：`Data/` 目录包含原始数据集文件，使用时需确保数据集放置在上述目录结构中。
 
 ## 2. 环境创建与运行
 
