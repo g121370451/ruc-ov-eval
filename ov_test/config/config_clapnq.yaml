@@ -1,0 +1,32 @@
+
+project_name: "RAG_Benchmark"
+
+# ===========修改配置================
+dataset_name: "ClapNQ" 
+
+adapter:
+  module: "src.adapters.clapnq_adapter"  
+  class_name: "ClapNQAdapter"     
+
+execution:
+  max_workers: 5         # LLM 生成任务的并发数
+  ingest_workers: 5      # 数据入库任务的并发数，提交到ov的并发数
+  retrieval_topk: 5
+  max_queries: null        # 最大查询数，null表示全部查询
+  skip_ingestion: false  # 是否关闭数据插入
+# ==================================  
+
+paths:
+  raw_data: "Data/clapnq-main"
+  doc_output_dir: "Data/clapnq-main/processed_docs"
+  vector_store: "Data/clapnq-main/viking_store_index"
+  output_dir: "Output/ClapNQ/experiment_1"
+  log_file: "Output/ClapNQ/experiment_1/benchmark.log"
+
+
+llm:
+  model: "doubao-seed-2-0-pro-260215"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "269f7ee6-212a-4f46-9472-978a55cdb625"
+

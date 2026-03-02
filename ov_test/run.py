@@ -61,7 +61,8 @@ def resolve_path(path_str, base_path):
 
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
-    default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
+    # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config/config_clapnq.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
