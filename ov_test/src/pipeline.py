@@ -218,13 +218,10 @@ class BenchmarkPipeline:
             context_blocks = []
             for r in search_res.resources:
                 retrieved_uris.append(r.uri)
-                content = self.db.read_resource(r.uri) if getattr(r, 'is_leaf', False) else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
+                content = self.db.read_resource(r.uri) if getattr(r, 'level', 2) == 2 else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
                 retrieved_texts.append(content)
-                import re
-                # clean = re.sub(r' \[.*?\]', '', content)[:2000]
                 clean = content[:2000]
                 context_blocks.append(clean)
-
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
             
             # 2. Prompting logic (调用 Adapter 动态生成)
