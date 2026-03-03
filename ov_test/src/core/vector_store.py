@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 from typing import List
 from src.adapters.base import StandardDoc, StandardSample
 import tiktoken
