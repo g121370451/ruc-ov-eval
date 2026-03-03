@@ -167,7 +167,8 @@ class BenchmarkPipeline:
                 "Performance Metrics": {
                     "Average F1 Score": sum(r['metrics']['F1'] for r in eval_records) / total,
                     "Average Recall": sum(r['metrics']['Recall'] for r in eval_records) / total,
-                    "Average Accuracy (Hit Rate)": sum(r['metrics']['Accuracy'] for r in eval_records) / total,
+                    "Average Accuracy (Hit  0-4 )": sum(r['metrics']['Accuracy'] for r in eval_records) / total,
+                    "Average Accuracy (normalization)": (sum(r['metrics']['Accuracy'] for r in eval_records) / total)/4,
                 }
             })
 
@@ -218,13 +219,10 @@ class BenchmarkPipeline:
             context_blocks = []
             for r in search_res.resources:
                 retrieved_uris.append(r.uri)
-                content = self.db.read_resource(r.uri) if getattr(r, 'is_leaf', False) else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
+                content = self.db.read_resource(r.uri) if getattr(r, 'level', 2) == 2 else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
                 retrieved_texts.append(content)
-                import re
-                # clean = re.sub(r' \[.*?\]', '', content)[:2000]
                 clean = content[:2000]
                 context_blocks.append(clean)
-
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
             
             # 2. Prompting logic (调用 Adapter 动态生成)
@@ -255,29 +253,68 @@ class BenchmarkPipeline:
             raise e
 
     def _process_evaluation_task(self, item):
+        """
+        处理单个评估任务，计算 F1 和 Accuracy 指标。
+        
+        对于多标注者场景（如 Qasper 数据集），一个问题可能有多个 gold answers。
+        评估逻辑：
+        - F1: 对每个 gold answer 分别计算，取最大值
+        - Accuracy: 对每个 gold answer 分别让 LLM 判断，取最高值
+        
+        这样可以正确处理多标注者场景，同时保持对单答案数据集（如 Locomo）的兼容性。
+        """
         ans, golds = item['llm']['final_answer'], item['gold_answers']
+        
+        # F1: 对每个 gold answer 分别计算，取最大值
         f1 = max((MetricsCalculator.calculate_f1(ans, gt) for gt in golds), default=0.0)
         
         dataset_name = self.config.get('dataset_name', 'Unknown_Dataset')
         
-        # Accuracy via LLM Judge (使用通用 llm_grader 接口)
-        try:
-            acc = 1.0 if llm_grader(
-                self.llm.llm, 
-                self.config['llm']['model'], 
-                item['question'], 
-                "\n".join(golds), 
-                ans,
-                dataset_name=dataset_name
-            ) else 0.0
-        except Exception as e:
-            self.logger.error(f"Grader error: {e}")
-            acc = 0.0
-
+        # 初始化最优评测结果存储字典
+        best_eval_record = {
+            "score": 0.0,
+            "reasoning": "",
+            "prompt_type": ""
+        }
+        
+        for gt in golds:
+            try:
+                eval_res = llm_grader(
+                    self.llm.llm, 
+                    self.config['llm']['model'], 
+                    item['question'], 
+                    gt,  # 单个 gold answer
+                    ans,
+                    dataset_name=dataset_name
+                )
+                
+                # 如果有多个答案，保留得分最高的那次评测的理由和分数
+                if eval_res["score"] >= best_eval_record["score"]:
+                    best_eval_record = eval_res
+                    
+            except Exception as e:
+                self.logger.error(f"Grader error for gold answer '{gt[:50]}...': {e}")
+                
+        # 兜底：处理拒绝回答的情况
         if MetricsCalculator.check_refusal(ans) and any(MetricsCalculator.check_refusal(gt) for gt in golds):
-            f1, acc = 1.0, 1.0
+            f1 = 1.0
+            # best_eval_record["score"] = 1.0
+            best_eval_record["score"] = 4.0
+            best_eval_record["reasoning"] = "System successfully identified Unanswerable/Refusal condition."
+            best_eval_record["prompt_type"] = "Heuristic_Refusal_Check"
 
+        acc = best_eval_record["score"]
+
+        # 将基础数值指标写入 metrics
         item["metrics"].update({"F1": f1, "Accuracy": acc})
+        
+        # 将 LLM 裁判的详细打分信息挂载到 item 下，它会被自动导出到 JSON 文件中
+        item["llm_evaluation"] = {
+            "prompt_used": best_eval_record["prompt_type"],
+            "reasoning": best_eval_record["reasoning"],
+            "normalized_score": acc
+        }
+
         detailed_info = (
             f"\n" + "="*60 +
             f"\n[Query ID]: {item['_global_index']}"
@@ -286,6 +323,7 @@ class BenchmarkPipeline:
             f"\n[LLM Answer]: {ans}"
             f"\n[Gold Answer]: {golds}"
             f"\n[Metrics]: {item['metrics']}"
+            f"\n[LLM Judge Reasoning]: {best_eval_record['reasoning']}"
             f"\n" + "="*60
         )
         self.logger.info(detailed_info)
