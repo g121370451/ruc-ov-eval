@@ -167,7 +167,8 @@ class BenchmarkPipeline:
                 "Performance Metrics": {
                     "Average F1 Score": sum(r['metrics']['F1'] for r in eval_records) / total,
                     "Average Recall": sum(r['metrics']['Recall'] for r in eval_records) / total,
-                    "Average Accuracy (Hit Rate)": sum(r['metrics']['Accuracy'] for r in eval_records) / total,
+                    "Average Accuracy (Hit  0-4 )": sum(r['metrics']['Accuracy'] for r in eval_records) / total,
+                    "Average Accuracy (normalization)": (sum(r['metrics']['Accuracy'] for r in eval_records) / total)/4,
                 }
             })
 
@@ -297,7 +298,8 @@ class BenchmarkPipeline:
         # 兜底：处理拒绝回答的情况
         if MetricsCalculator.check_refusal(ans) and any(MetricsCalculator.check_refusal(gt) for gt in golds):
             f1 = 1.0
-            best_eval_record["score"] = 1.0
+            # best_eval_record["score"] = 1.0
+            best_eval_record["score"] = 4.0
             best_eval_record["reasoning"] = "System successfully identified Unanswerable/Refusal condition."
             best_eval_record["prompt_type"] = "Heuristic_Refusal_Check"
 

@@ -9,9 +9,9 @@ adapter:
 
 execution:
   max_workers: 5         # LLM 生成任务的并发数
-  ingest_workers: 5      # 数据入库任务的并发数，提交到ov的并发数
+  ingest_workers: 10      # 数据入库任务的并发数，提交到ov的并发数
   retrieval_topk: 5
-  max_queries: 10        # 最大查询数，null表示全部查询
+  max_queries: null        # 最大查询数，null表示全部查询
   skip_ingestion: true  # 是否关闭数据插入
 # ==================================  
 
@@ -19,8 +19,8 @@ paths:
   raw_data: "Data/{dataset_name}/{dataset_name}.json"
   doc_output_dir: "Data/{dataset_name}/processed_docs"
   vector_store: "Data/{dataset_name}/viking_store_index"
-  output_dir: "Output/{dataset_name}/experiment_2"
-  log_file: "Output/{dataset_name}/experiment_2/benchmark.log"
+  output_dir: "Output/{dataset_name}/experiment_2_v21"
+  log_file: "Output/{dataset_name}/experiment_2_v21/benchmark.log"
 
 
 llm:

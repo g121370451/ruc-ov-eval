@@ -11,16 +11,16 @@ execution:
   max_workers: 5
   ingest_workers: 5
   retrieval_topk: 5
-  max_queries: 10
-  skip_ingestion: false
+  max_queries: null
+  skip_ingestion: true
 # ==================================  
 
 paths:
-  raw_data: "Data/{dataset_name}/Qasper_test.json"
+  raw_data: "Data/{dataset_name}/qasper-dev-v0.3.json"
   doc_output_dir: "Data/{dataset_name}/processed_docs"
   vector_store: "Data/{dataset_name}/viking_store_index"
-  output_dir: "Output/{dataset_name}/experiment_1"
-  log_file: "Output/{dataset_name}/experiment_1/benchmark.log"
+  output_dir: "Output/{dataset_name}/experiment_v21"
+  log_file: "Output/{dataset_name}/experiment_v21/benchmark.log"
 
 
 llm:
