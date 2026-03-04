@@ -67,7 +67,7 @@ def main():
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
     
-    parser.add_argument("--step", choices=["all", "gen", "eval"], default="all", 
+    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all", 
                         help="Execution step: 'gen' (Retrieval+LLM), 'eval' (Judge), or 'all'")
     
     args = parser.parse_args()
@@ -155,6 +155,10 @@ def main():
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 
+        if args.step in ["all", "del"]:
+            logger.info("Stage: Delete Vector Store")
+            pipeline.run_deletion()
+        
         logger.info("Benchmark finished successfully.")
 
     except KeyboardInterrupt:
