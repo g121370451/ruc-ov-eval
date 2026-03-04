@@ -24,7 +24,8 @@ PROJECT_ROOT = WORKSPACE_ROOT
 # 导入模块
 try:
     from src.pipeline import BenchmarkPipeline 
-    from src.core.vector_store import VikingStoreWrapper
+    # from src.core.vector_store import VikingStoreWrapper
+    from src.core.pageindex_store import LocalPageIndexWrapper
     from src.core.llm_client import LLMClientWrapper 
 except SyntaxError as e:
     print(f"\n[Fatal Error] 导入模块时发生语法错误: {e}")
@@ -62,7 +63,7 @@ def resolve_path(path_str, base_path):
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
     # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config/config_clapnq.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
@@ -126,7 +127,7 @@ def main():
             raise e
         
         # 2. Vector Store
-        vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
+        vector_store = LocalPageIndexWrapper(store_path=config['paths']['vector_store'])
         
         # 3. LLM Client
         api_key = os.environ.get(

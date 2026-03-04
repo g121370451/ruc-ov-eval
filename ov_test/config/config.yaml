@@ -12,7 +12,7 @@ execution:
   ingest_workers: 1      # 数据入库任务的并发数，提交到ov的并发数
   retrieval_topk: 5
   max_queries: 10        # 最大查询数，null表示全部查询
-  skip_ingestion: true  # 是否关闭数据插入
+  skip_ingestion: false  # 是否关闭数据插入
 # ==================================  
 
 paths:
