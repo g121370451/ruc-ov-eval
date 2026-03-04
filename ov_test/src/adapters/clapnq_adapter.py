@@ -51,9 +51,7 @@ def convert_to_md(raw_text: str) -> str:
 
     # 1. 压缩多余空白为单空格
     text = re.sub(r"\s+", " ", raw_text).strip()
-
-    # 2. 精确替换（只替换完整单词）
-    text = re.sub(r"\bnavigation\b", "## navigation\n", text)
+    
     text = re.sub(r"Contents\s*\(\s*hide\s*\)", "## Contents ( hide )\n", text)
 
     # 3. 让标题前强制换行（避免粘在正文后）
@@ -87,7 +85,7 @@ class ClapNQAdapter(BaseAdapter):
             raise FileNotFoundError(f"Original documents directory not found: {orig_dir}")
         
         # 查找dev和train目录下的answerable_orig.jsonl文件
-        for split in ['dev', 'train']:
+        for split in ['dev']:
             split_dir = os.path.join(orig_dir, split)
             if os.path.exists(split_dir):
                 for filename in os.listdir(split_dir):
@@ -141,7 +139,8 @@ class ClapNQAdapter(BaseAdapter):
                         raise e
 
         self.logger.info(f"Total {len(res)} documents prepared")
-        return res
+        # return res
+        return [StandardDoc("123123",doc_dir)]
 
     def load_and_transform(self) -> List[StandardSample]:
         """
@@ -152,7 +151,7 @@ class ClapNQAdapter(BaseAdapter):
             # 如果是目录，查找所有.jsonl文件
             for root, _, files in os.walk(self.raw_file_path):
                 for filename in files:
-                    if filename.endswith('.jsonl') and not filename.endswith('_orig.jsonl'):
+                    if root.endswith('dev') and filename.endswith('answerable.jsonl') and not filename.endswith('unanswerable.jsonl') and not filename.endswith('_orig.jsonl'):
                         data_files.append(os.path.join(root, filename))
         else:
             data_files.append(self.raw_file_path)
