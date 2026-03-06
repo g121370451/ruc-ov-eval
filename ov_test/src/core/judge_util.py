@@ -68,20 +68,19 @@ Respond with JSON only: {{"score": 4 or 0, "reasoning": "your explanation"}}
 
     else:
         prompt_type = "Generic_0-4"
-
-        system_prompt = """
-You are an expert evaluator scoring how well an AI-generated answer matches a gold standard (ground truth).
-"""
-
+        system_prompt = "You are an expert evaluator scoring how well an AI-generated answer matches a gold standard."
         ACCURACY_PROMPT = f"""
-Please score the Generated Answer against the Gold Answer on a scale of 0 to 4.
+Score Generated Answer vs Gold Answer (0-4).
+RULE: 
+1: Strictly penalize core factual errors. DO NOT penalize verbosity, expanded lists, or non-contradictory redundancy.
+2: Refusal Check: If Gold contains facts but Gen says "Not mentioned", score 0. If both say "Not mentioned", score 4.
 
-[Evaluation Rubric]
-- Score 4 (Perfect): Completely and accurately captures the core meaning and facts of the gold answer.
-- Score 3 (Good): Captures the main facts but includes unnecessary verbosity or minor non-contradictory details.
-- Score 2 (Partial): Missing some key factual information but touches on the correct topic.
-- Score 1 (Poor): Mostly incorrect or severely incomplete.
-- Score 0 (Wrong): Completely wrong, contradicts the gold answer, or hallucinates.
+[Rubric]
+4: Fully captures Gold Answer. No factual errors. Extra valid info allowed.
+3: Accurate but incomplete. No core errors.
+2: Misses core facts but relevant, OR minor secondary errors.
+1: Core factual errors (e.g., wrong dates/methods).
+0: Completely wrong or hallucinates conflicting info.
 
 Question: {question}
 Gold Answer: {gold_answer}
