@@ -1,0 +1,32 @@
+project_name: "RAG_Benchmark"
+
+dataset_name: "Qasper"
+
+adapter:
+  module: "bench_framework.adapters.qasper_adapter"
+  class_name: "QasperAdapter"
+
+vector_store:
+  module: "bench_framework.stores.pageindex_store"
+  class_name: "PageIndexStoreWrapper"
+
+execution:
+  max_workers: 1
+  ingest_workers: 1
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: false
+
+paths:
+  raw_data: "Data/{dataset_name}/qasper-dev-v0.3.json"
+  doc_output_dir: "Data/{dataset_name}/processed_docs"
+  vector_store: "Data/{dataset_name}/pageindex_store"
+  output_dir: "Output/{dataset_name}/pageindex_exp"
+  log_file: "Output/{dataset_name}/pageindex_exp/benchmark.log"
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key_env_var: "LLM_API_KEY"
+  api_key: "76aab4eb-95e0-453e-b898-7934260ae6a1"
