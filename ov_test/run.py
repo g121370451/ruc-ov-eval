@@ -12,6 +12,12 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR) # 代码仓库根目录
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
 
+# 设置 OpenViking 配置文件路径（必须在 import openviking 之前）
+ov_config_path = os.path.join(SCRIPT_DIR, "ov.conf")
+if os.path.exists(ov_config_path):
+    os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
+    print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
+
 # # 将 SCRIPT_DIR 加入 path 确保能导入 src.*
 # if SCRIPT_DIR not in sys.path:
 #     sys.path.append(SCRIPT_DIR)
@@ -71,12 +77,6 @@ def main():
                         help="Execution step: 'gen' (Retrieval+LLM), 'eval' (Judge), or 'all'")
     
     args = parser.parse_args()
-
-    # --- A. 处理环境配置 ---
-    ov_config_path = os.path.join(SCRIPT_DIR, "ov.conf")
-    if os.path.exists(ov_config_path):
-        os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
-        print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
 
     # --- B. 加载与解析 Config ---
     config_path = os.path.abspath(args.config)
