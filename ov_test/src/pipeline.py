@@ -9,14 +9,13 @@ from tqdm import tqdm
 
 from src.adapters.base import BaseAdapter
 from src.core.logger import get_logger
-from src.core.vector_store import VikingStoreWrapper
 
 from .core.monitor import BenchmarkMonitor
 from .core.metrics import MetricsCalculator
 from .core.judge_util import llm_grader
 
 class BenchmarkPipeline:
-    def __init__(self, config, adapter: BaseAdapter, vector_db: VikingStoreWrapper, llm):
+    def __init__(self, config, adapter: BaseAdapter, vector_db, llm):
         self.config = config
         self.adapter = adapter
         self.db = vector_db

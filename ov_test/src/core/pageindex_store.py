@@ -235,6 +235,7 @@ Directly return the JSON. Do not output anything else."""
 
         try:
             response = self.llm_client.invoke([HumanMessage(content=rank_prompt)])
+            token_tracker.add(self.count_tokens(rank_prompt), self.count_tokens(response.content))
             result_json = self._extract_json(response.content)
             results = result_json.get("results", [])
             scored = [(r["doc_id"], float(r.get("score", 0))) for r in results if r.get("score", 0) > 0]
@@ -269,6 +270,7 @@ Please reply in the following JSON format:
 Directly return the final JSON structure. Do not output anything else."""
 
         response = self.llm_client.invoke([HumanMessage(content=search_prompt)])
+        token_tracker.add(self.count_tokens(search_prompt), self.count_tokens(response.content))
         result_json = self._extract_json(response.content)
 
         raw_node_list = result_json.get("node_list", [])
@@ -296,6 +298,17 @@ Directly return the final JSON structure. Do not output anything else."""
             retrieved_texts.append(r.content)
             context_blocks.append(r.content[:2000])
         return retrieved_texts, context_blocks, retrieved_uris
+
+    def build_uri_map(self, doc_info: List[StandardDoc]) -> Dict[str, list]:
+        """构建 sample_id -> [doc_id] 映射，doc_id 为文件名，在 doc_trees 中验证存在性"""
+        uri_map = {}
+        for doc in doc_info:
+            doc_id = os.path.basename(doc.doc_path)
+            if doc_id in self.doc_trees:
+                uri_map.setdefault(doc.sample_id, []).append(doc_id)
+            else:
+                self.logger.warning(f"Doc not found in PageIndex: {doc_id} (sample_id={doc.sample_id})")
+        return uri_map
 
     def read_resource(self, uri: str) -> str:
         """读取资源内容"""
