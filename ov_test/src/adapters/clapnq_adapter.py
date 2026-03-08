@@ -139,8 +139,8 @@ class ClapNQAdapter(BaseAdapter):
                         raise e
 
         self.logger.info(f"Total {len(res)} documents prepared")
-        # return res
-        return [StandardDoc("123123",doc_dir)]
+        return res
+        # return [StandardDoc("123123",doc_dir)]
 
     def load_and_transform(self) -> List[StandardSample]:
         """
