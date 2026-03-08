@@ -30,4 +30,4 @@ llm:
   model: "doubao-seed-1-8-251228"
   temperature: 0
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  api_key: "76aab4eb-95e0-453e-b898-7934260ae6a1"
+  api_key: "269f7ee6-212a-4f46-9472-978a55cdb625"

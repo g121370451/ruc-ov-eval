@@ -27,7 +27,7 @@ paths:
   log_file: "Output/{dataset_name}/pageindex_experiment/benchmark.log"
 
 llm:
-  model: "doubao-seed-2-0-pro-260215"
+  model: "doubao-seed-1-8-251228"
   temperature: 0
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
   api_key: "269f7ee6-212a-4f46-9472-978a55cdb625"
