@@ -118,11 +118,15 @@ class PerQuestionPipeline(BenchmarkPipeline):
             # 1. 限定路径检索
             t0 = time.time()
             all_resources = []
+            retrieve_in_tokens = 0
+            retrieve_out_tokens = 0
             if target_uris:
                 for uri in target_uris:
                     try:
                         res = self.db.retrieve(query=qa.question, topk=topk, target_uri=uri)
                         all_resources.extend(res.resources)
+                        retrieve_in_tokens += getattr(res, 'retrieve_input_tokens', 0)
+                        retrieve_out_tokens += getattr(res, 'retrieve_output_tokens', 0)
                     except Exception as e:
                         self.logger.warning(f"Retrieve from {uri} failed: {e}")
             else:
@@ -130,6 +134,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 self.logger.warning("No target URIs found for sample_id %s, falling back to global retrieval.", task['sample_id'])
                 res = self.db.retrieve(query=qa.question, topk=topk)
                 all_resources = list(res.resources)
+                retrieve_in_tokens += getattr(res, 'retrieve_input_tokens', 0)
+                retrieve_out_tokens += getattr(res, 'retrieve_output_tokens', 0)
 
             # 按 score 降序取 topK
             all_resources.sort(key=lambda r: getattr(r, 'score', 0), reverse=True)
@@ -147,9 +153,9 @@ class PerQuestionPipeline(BenchmarkPipeline):
             ans_raw = self.llm.generate(full_prompt)
             ans = self.adapter.post_process_answer(qa, ans_raw, meta)
 
-            # 4. Token stats（与父类一致）
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question)
-            out_tokens = self.db.count_tokens(ans)
+            # 4. Token stats（含检索阶段 token）
+            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in_tokens
+            out_tokens = self.db.count_tokens(ans) + retrieve_out_tokens
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
 
             self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")

@@ -225,9 +225,11 @@ class BenchmarkPipeline:
             # 4. Post-processing (调用 Adapter 动态解析)
             ans = self.adapter.post_process_answer(qa, ans_raw, meta)
 
-            # 5. Token stats
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question)
-            out_tokens = self.db.count_tokens(ans)
+            # 5. Token stats（含检索阶段 token）
+            retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
+            retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
+            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
+            out_tokens = self.db.count_tokens(ans) + retrieve_out
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
             
             self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")
