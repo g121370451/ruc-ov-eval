@@ -17,8 +17,8 @@ execution:
 
 paths:
   raw_data: "Data/clapnq-main"
-  doc_output_dir: "Data/clapnq-main/processed_docs"
-  vector_store: "Data/clapnq-main/viking_store_index"
+  doc_output_dir: "Data/clapnq-main/per_query/processed_docs"
+  vector_store: "Data/clapnq-main/per_query/viking_store_index"
   output_dir: "Output/ClapNQ/per_question_experiment_1"
   log_file: "Output/ClapNQ/per_question_experiment_1/benchmark.log"
 
