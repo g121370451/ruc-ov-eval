@@ -9,6 +9,7 @@ from src.core.logger import setup_logging
 # ==========================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR) # 代码仓库根目录
+sys.path.append(REPO_ROOT)
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
 
@@ -29,7 +30,6 @@ except ImportError as e:
     print(f"\n[Fatal Error] 无法导入模块: {e}")
     print(f"当前 sys.path: {sys.path}\n")
     sys.exit(1)
-
 # ==========================================
 # 2. 辅助函数
 # ==========================================
@@ -57,7 +57,7 @@ def resolve_path(path_str, base_path):
 
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Per-Question Strategy)")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question/syllabusqa_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question_pageindex/locomo_config.yaml")
 
     parser.add_argument("--config", default=default_config_path,
                         help=f"Path to config file. Default: {default_config_path}")

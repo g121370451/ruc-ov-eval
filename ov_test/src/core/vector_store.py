@@ -1,6 +1,7 @@
 import os
 import time
-from typing import List
+import logging
+from typing import List, Dict
 from src.adapters.base import StandardDoc, StandardSample
 import tiktoken
 import openviking as ov
@@ -102,6 +103,24 @@ class VikingStoreWrapper:
             retrieved_texts.append(content)
             context_blocks.append(content[:2000])
         return retrieved_texts, context_blocks, retrieved_uris
+
+    def build_uri_map(self, doc_info: List[StandardDoc]) -> Dict[str, list]:
+        """构建 sample_id -> [viking:// URI] 映射，通过 client.ls 验证 URI 存在性"""
+        logger = logging.getLogger(__name__)
+        uri_map = {}
+        for doc in doc_info:
+            basename = os.path.splitext(os.path.basename(doc.doc_path))[0]
+            basename = basename.replace('.', '')
+            basename = basename.replace(' ', '_')
+            basename = basename.replace('(', '')
+            basename = basename.replace(')', '')
+            candidate_uri = f"viking://resources/{basename}"
+            try:
+                self.client.ls(candidate_uri)
+                uri_map.setdefault(doc.sample_id, []).append(candidate_uri)
+            except Exception:
+                logger.warning(f"URI not found for doc: {basename} (sample_id={doc.sample_id})")
+        return uri_map
 
     def read_resource(self, uri: str) -> str:
         """读取资源内容"""

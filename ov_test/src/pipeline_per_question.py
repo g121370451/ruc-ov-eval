@@ -53,8 +53,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 }
             })
 
-        # 2. 构建 URI 映射（直接用 data_prepare 返回的 StandardDoc）
-        self._uri_map = self._build_uri_map(doc_info)
+        # 2. 构建 URI 映射（委托给 store 实现）
+        self._uri_map = self.db.build_uri_map(doc_info)
         self.logger.info(f"URI map built: {len(self._uri_map)} samples mapped")
 
         # 3. 加载数据 + 检索生成（与父类一致，但 _process_generation_task 被覆写）
@@ -104,29 +104,6 @@ class PerQuestionPipeline(BenchmarkPipeline):
             })
         with open(self.generated_file, "w", encoding="utf-8") as f:
             json.dump(save_data, f, indent=2, ensure_ascii=False)
-    def _build_uri_map(self, doc_info):
-        """
-        用 data_prepare 返回的 StandardDoc 列表构建 sample_id -> [URI] 映射。
-        直接用 doc.doc_path 的文件名（去扩展名）作为 OV 中的资源名探测。
-        """
-        uri_map = {}
-        for doc in doc_info:
-            basename = os.path.splitext(os.path.basename(doc.doc_path))[0]
-            # 适配qasper 删除basename中'.'
-            basename = basename.replace('.', '')
-            # 适配syllabusqa 文件名中包含'_'
-            basename = basename.replace(' ', '_')
-            # 适配syllabusqa 文件名中包含'(',')'
-            basename = basename.replace('(', '')
-            basename = basename.replace(')', '')
-            candidate_uri = f"viking://resources/{basename}"
-            try:
-                self.db.client.ls(candidate_uri)
-                uri_map.setdefault(doc.sample_id, []).append(candidate_uri)
-            except Exception:
-                self.logger.warning(f"URI not found for doc: {basename} (sample_id={doc.sample_id})")
-        return uri_map
-
     def _process_generation_task(self, task):
         """
         覆写父类：检索时对每个 target_uri 分别检索，合并结果按 score 取 topK。
