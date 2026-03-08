@@ -1,7 +1,7 @@
 import os
 import sys
 import yaml
-import importlib 
+import importlib
 from argparse import ArgumentParser
 from src.core.logger import setup_logging
 # ==========================================
@@ -18,20 +18,11 @@ if os.path.exists(ov_config_path):
     os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
     print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
 
-# # 将 SCRIPT_DIR 加入 path 确保能导入 src.*
-# if SCRIPT_DIR not in sys.path:
-#     sys.path.append(SCRIPT_DIR)
-
-# # 将 OpenViking 的路径也加入 sys.path
-# OV_PATH = os.path.join(PROJECT_ROOT, "OpenViking")
-# if OV_PATH not in sys.path:
-#     sys.path.append(OV_PATH)
-
 # 导入模块
 try:
-    from src.pipeline import BenchmarkPipeline 
+    from src.pipeline_per_question import PerQuestionPipeline
     from src.core.vector_store import VikingStoreWrapper
-    from src.core.llm_client import LLMClientWrapper 
+    from src.core.llm_client import LLMClientWrapper
 except SyntaxError as e:
     print(f"\n[Fatal Error] 导入模块时发生语法错误: {e}")
     sys.exit(1)
@@ -66,22 +57,21 @@ def resolve_path(path_str, base_path):
 # ==========================================
 
 def main():
-    parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
-    # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config/config_clapnq.yaml")
-    
-    parser.add_argument("--config", default=default_config_path, 
+    parser = ArgumentParser(description="Run RAG Benchmark (Per-Question Strategy)")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question/syllabusqa_config.yaml")
+
+    parser.add_argument("--config", default=default_config_path,
                         help=f"Path to config file. Default: {default_config_path}")
-    
-    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all", 
-                        help="Execution step: 'gen' (Retrieval+LLM), 'eval' (Judge), or 'all'")
-    
+
+    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all",
+                        help="Execution step: 'gen' (Ingest+Retrieve+Generate+Eval), 'eval' (Re-Eval only), 'del' (Delete only), or 'all'")
+
     args = parser.parse_args()
 
     # --- B. 加载与解析 Config ---
     config_path = os.path.abspath(args.config)
     print(f"[Init] Loading configuration from: {config_path}")
-    
+
     try:
         config = load_config(config_path)
     except FileNotFoundError as e:
@@ -91,7 +81,7 @@ def main():
     # --- C. 路径修正 ---
     print(f"[Init] Resolving paths relative to Project Root: {PROJECT_ROOT}")
     dataset_name = config.get('dataset_name', 'UnknownDataset')
-    
+
     path_keys = ['raw_data', 'output_dir', 'vector_store', 'log_file', 'doc_output_dir']
     for key in path_keys:
         if key in config.get('paths', {}):
@@ -104,16 +94,16 @@ def main():
     # --- D. 初始化组件 ---
     try:
         logger = setup_logging(config['paths']['log_file'])
-        logger.info(">>> Benchmark Session Started")
-        
+        logger.info(">>> Per-Question Benchmark Session Started")
+
         # 1. Adapter (动态加载)
         adapter_cfg = config.get('adapter', {})
         module_path = adapter_cfg.get('module', 'src.adapters.locomo_adapter')
         class_name = adapter_cfg.get('class_name', 'LocomoAdapter')
-        
+
         logger.info(f"Dynamically loading Adapter: {class_name} from {module_path}")
         logger.info(f"Loading raw data from: {config['paths']['raw_data']}")
-        
+
         try:
             mod = importlib.import_module(module_path)
             AdapterClass = getattr(mod, class_name)
@@ -124,22 +114,22 @@ def main():
         except AttributeError as e:
             logger.error(f"Class '{class_name}' not found in module '{module_path}'. Please check your config 'adapter.class_name'. Error: {e}")
             raise e
-        
+
         # 2. Vector Store
         vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
-        
+
         # 3. LLM Client
         api_key = os.environ.get(
-            config['llm'].get('api_key_env_var', ''), 
+            config['llm'].get('api_key_env_var', ''),
             config['llm'].get('api_key')
         )
         if not api_key:
             logger.warning("No API Key found in config or environment variables!")
-            
+
         llm_client = LLMClientWrapper(config=config['llm'], api_key=api_key)
 
         # 4. Pipeline
-        pipeline = BenchmarkPipeline(
+        pipeline = PerQuestionPipeline(
             config=config,
             adapter=adapter,
             vector_db=vector_store,
@@ -150,7 +140,7 @@ def main():
         if args.step in ["all", "gen"]:
             logger.info("Stage: Generation (Ingest -> Retrieve -> Generate)")
             pipeline.run_generation()
-            
+
         if args.step in ["all", "eval"]:
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
@@ -158,8 +148,8 @@ def main():
         if args.step in ["del"]:
             logger.info("Stage: Delete Vector Store")
             pipeline.run_deletion()
-        
-        logger.info("Benchmark finished successfully.")
+
+        logger.info("Per-Question benchmark finished successfully.")
 
     except KeyboardInterrupt:
         print("\n[Stop] Execution interrupted by user.")
