@@ -58,7 +58,7 @@ def resolve_path(path_str, base_path):
 
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Per-Question Strategy)")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question/qasper_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question/syllabusqa_config.yaml")
 
     parser.add_argument("--config", default=default_config_path,
                         help=f"Path to config file. Default: {default_config_path}")
