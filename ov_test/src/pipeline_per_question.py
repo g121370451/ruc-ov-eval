@@ -112,6 +112,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
         uri_map = {}
         for doc in doc_info:
             basename = os.path.splitext(os.path.basename(doc.doc_path))[0]
+            # 适配qasper 删除basename中'.'
+            basename = basename.replace('.', '')
             candidate_uri = f"viking://resources/{basename}"
             try:
                 self.db.client.ls(candidate_uri)

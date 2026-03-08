@@ -12,7 +12,7 @@ execution:
   ingest_workers: 5
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: false
+  skip_ingestion: true
 # ==================================
 
 paths:
