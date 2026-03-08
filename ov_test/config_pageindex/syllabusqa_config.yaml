@@ -1,0 +1,33 @@
+project_name: "RAG_Benchmark"
+
+# ===========修改配置================
+dataset_name: "SyllabusQA"
+
+adapter:
+  module: "src.adapters.syllabusqa_adapter"
+  class_name: "SyllabusQAAdapter"
+
+store:
+  type: "pageindex"
+  pageindex_config_path: "ov_test/pageindex.conf"
+
+execution:
+  max_workers: 10
+  ingest_workers: 4
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: false
+# ==================================
+
+paths:
+  raw_data: "Data/{dataset_name}"
+  doc_output_dir: "Data/{dataset_name}/pageindex/processed_docs"
+  vector_store: "Data/{dataset_name}/pageindex/store_index"
+  output_dir: "Output/{dataset_name}/pageindex_experiment"
+  log_file: "Output/{dataset_name}/pageindex_experiment/benchmark.log"
+
+llm:
+  model: "doubao-seed-2-0-pro-260215"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "76aab4eb-95e0-453e-b898-7934260ae6a1"

@@ -158,15 +158,11 @@ class PerQuestionPipeline(BenchmarkPipeline):
             all_resources.sort(key=lambda r: getattr(r, 'score', 0), reverse=True)
             top_resources = all_resources[:topk]
             latency = time.time() - t0
-            # 2. 读取内容（与父类一致）
-            retrieved_texts = []
-            retrieved_uris = []
-            context_blocks = []
-            for r in top_resources:
-                retrieved_uris.append(r.uri)
-                content = self.db.read_resource(r.uri) if getattr(r, 'level', 2) == 2 else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
-                retrieved_texts.append(content)
-                context_blocks.append(content[:2000])
+            # 2. 构造临时结果对象，复用 process_retrieval_results 接口
+            class _TempResult:
+                def __init__(self, resources):
+                    self.resources = resources
+            retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(_TempResult(top_resources))
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
             # 3. Prompt + 生成（与父类一致）
