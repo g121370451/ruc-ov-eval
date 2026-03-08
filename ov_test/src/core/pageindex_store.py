@@ -35,6 +35,8 @@ class PageIndexResource:
 class PageIndexResult:
     """PageIndex 检索返回结果，与 OpenViking 的 find 返回格式对齐"""
     resources: List[PageIndexResource] = field(default_factory=list)
+    retrieve_input_tokens: int = 0
+    retrieve_output_tokens: int = 0
 
 
 class PageIndexStoreWrapper:
@@ -168,6 +170,9 @@ class PageIndexStoreWrapper:
         if not self.doc_trees:
             return PageIndexResult()
 
+        # 记录检索前的 token 快照
+        before = token_tracker.get()
+
         # --- 阶段 1：确定要搜索的文档 ---
         if target_uri is not None:
             # 指定了 target_uri，直接搜索该文档，跳过筛选
@@ -197,7 +202,14 @@ class PageIndexStoreWrapper:
             except Exception as e:
                 print(f"[Warning] Retrieval failed for {doc_id}: {e}")
 
-        return PageIndexResult(resources=resources)
+        result = PageIndexResult(resources=resources)
+
+        # 计算本次检索消耗的 token
+        after = token_tracker.get()
+        result.retrieve_input_tokens = after["input_tokens"] - before["input_tokens"]
+        result.retrieve_output_tokens = after["output_tokens"] - before["output_tokens"]
+
+        return result
 
     def _rank_documents(self, query: str, topk: int) -> List[tuple]:
         """阶段 1：一次 LLM 调用，对所有文档做相关性打分，返回 [(doc_id, score), ...] 降序排列"""
