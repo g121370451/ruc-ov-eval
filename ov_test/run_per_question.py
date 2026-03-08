@@ -21,7 +21,6 @@ if os.path.exists(ov_config_path):
 # 导入模块
 try:
     from src.pipeline_per_question import PerQuestionPipeline
-    from src.core.vector_store import VikingStoreWrapper
     from src.core.llm_client import LLMClientWrapper
 except SyntaxError as e:
     print(f"\n[Fatal Error] 导入模块时发生语法错误: {e}")
@@ -115,8 +114,23 @@ def main():
             logger.error(f"Class '{class_name}' not found in module '{module_path}'. Please check your config 'adapter.class_name'. Error: {e}")
             raise e
 
-        # 2. Vector Store
-        vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
+        # 2. Vector Store（根据配置选择）
+        store_cfg = config.get('store', {})
+        store_type = store_cfg.get('type', 'viking')
+
+        if store_type == 'pageindex':
+            from src.core.pageindex_store import PageIndexStoreWrapper
+            pageindex_conf = store_cfg.get('pageindex_config_path')
+            if pageindex_conf:
+                pageindex_conf = resolve_path(pageindex_conf, PROJECT_ROOT)
+            vector_store = PageIndexStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                doc_output_dir=config['paths'].get('doc_output_dir', ''),
+                config_path=pageindex_conf
+            )
+        else:
+            from src.core.vector_store import VikingStoreWrapper
+            vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
 
         # 3. LLM Client
         api_key = os.environ.get(

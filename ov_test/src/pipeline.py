@@ -214,15 +214,7 @@ class BenchmarkPipeline:
             search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
             latency = time.time() - t0
             
-            retrieved_texts = []
-            retrieved_uris = []
-            context_blocks = []
-            for r in search_res.resources:
-                retrieved_uris.append(r.uri)
-                content = self.db.read_resource(r.uri) if getattr(r, 'level', 2) == 2 else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
-                retrieved_texts.append(content)
-                clean = content[:2000]
-                context_blocks.append(clean)
+            retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
             
             # 2. Prompting logic (调用 Adapter 动态生成)

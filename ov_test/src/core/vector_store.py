@@ -85,6 +85,24 @@ class VikingStoreWrapper:
         """执行检索"""
         return self.client.find(query=query, limit=topk, target_uri=target_uri)
 
+    def process_retrieval_results(self, search_res):
+        """
+        从检索结果中提取 retrieved_texts / context_blocks / retrieved_uris。
+        Viking 根据 resource.level 决定读全文还是拼接 abstract+overview。
+        """
+        retrieved_texts = []
+        context_blocks = []
+        retrieved_uris = []
+        for r in search_res.resources:
+            retrieved_uris.append(r.uri)
+            if getattr(r, 'level', 2) == 2:
+                content = self.read_resource(r.uri)
+            else:
+                content = f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
+            retrieved_texts.append(content)
+            context_blocks.append(content[:2000])
+        return retrieved_texts, context_blocks, retrieved_uris
+
     def read_resource(self, uri: str) -> str:
         """读取资源内容"""
         return str(self.client.read(uri))
