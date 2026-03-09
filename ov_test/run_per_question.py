@@ -128,6 +128,15 @@ def main():
                 doc_output_dir=config['paths'].get('doc_output_dir', ''),
                 config_path=pageindex_conf
             )
+        elif store_type == 'lightrag':
+            from src.core.lightrag_store import LightRAGStoreWrapper
+            lightrag_conf = store_cfg.get('lightrag_config_path')
+            if lightrag_conf:
+                lightrag_conf = resolve_path(lightrag_conf, PROJECT_ROOT)
+            vector_store = LightRAGStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                config_path=lightrag_conf
+            )
         else:
             from src.core.vector_store import VikingStoreWrapper
             vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])

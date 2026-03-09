@@ -58,7 +58,7 @@ def resolve_path(path_str, base_path):
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
     # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_pageindex/locomo_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_lightrag/locomo_config.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
@@ -128,6 +128,15 @@ def main():
                 store_path=config['paths']['vector_store'],
                 doc_output_dir=config['paths'].get('doc_output_dir', ''),
                 config_path=pageindex_conf
+            )
+        elif store_type == 'lightrag':
+            from src.core.lightrag_store import LightRAGStoreWrapper
+            lightrag_conf = store_cfg.get('lightrag_config_path')
+            if lightrag_conf:
+                lightrag_conf = resolve_path(lightrag_conf, SCRIPT_DIR)
+            vector_store = LightRAGStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                config_path=lightrag_conf
             )
         else:
             from src.core.vector_store import VikingStoreWrapper

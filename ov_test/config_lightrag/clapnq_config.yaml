@@ -1,0 +1,31 @@
+project_name: "RAG_Benchmark"
+
+dataset_name: "ClapNQ"
+
+adapter:
+  module: "src.adapters.clapnq_adapter"
+  class_name: "ClapNQAdapter"
+
+store:
+  type: "lightrag"
+  lightrag_config_path: "lightrag.conf"
+
+execution:
+  max_workers: 10
+  ingest_workers: 4
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: false
+
+paths:
+  raw_data: "Data/clapnq-main"
+  doc_output_dir: "Data/clapnq-main/lightrag/processed_docs"
+  vector_store: "Data/clapnq-main/lightrag/store_index"
+  output_dir: "Output/ClapNQ/lightrag_experiment"
+  log_file: "Output/ClapNQ/lightrag_experiment/benchmark.log"
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "269f7ee6-212a-4f46-9472-978a55cdb625"
