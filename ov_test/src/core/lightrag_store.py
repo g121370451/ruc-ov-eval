@@ -8,7 +8,6 @@ import tiktoken
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
-from functools import partial
 from tqdm import tqdm
 
 from src.adapters.base import StandardDoc
@@ -93,43 +92,76 @@ class LightRAGStoreWrapper:
         return asyncio.run(coro)
 
     def _build_llm_func(self):
-        """Build async LLM function for LightRAG"""
-        from lightrag.llm.openai import openai_complete_if_cache
+        """Build async LLM function using Volcengine AsyncArk"""
+        import volcenginesdkarkruntime
         model = self.conf.get("llm_model_name", "doubao-seed-1-8-251228")
         base_url = self.conf.get("llm_base_url", "https://ark.cn-beijing.volces.com/api/v3")
         api_key = self.conf.get("api_key", "")
 
+        client = volcenginesdkarkruntime.AsyncArk(api_key=api_key, base_url=base_url)
+
         async def llm_func(prompt, system_prompt=None, history_messages=[], keyword_extraction=False, **kwargs):
-            return await openai_complete_if_cache(
-                model,
-                prompt,
-                system_prompt=system_prompt,
-                history_messages=history_messages,
-                api_key=api_key,
-                base_url=base_url,
-                **kwargs,
+            # Pop LightRAG internal kwargs that shouldn't go to the API
+            kwargs.pop("hashing_kv", None)
+            kwargs.pop("openai_client_configs", None)
+
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            if history_messages:
+                messages.extend(history_messages)
+            messages.append({"role": "user", "content": prompt})
+
+            # Filter to only supported kwargs
+            api_kwargs = {}
+            for k in ("temperature", "max_tokens", "top_p"):
+                if k in kwargs:
+                    api_kwargs[k] = kwargs[k]
+
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                **api_kwargs,
             )
+            return response.choices[0].message.content or ""
+
         return llm_func
 
     def _build_embed_func(self):
-        """Build embedding function for LightRAG"""
-        from lightrag.llm.openai import openai_embed
-        from lightrag.utils import wrap_embedding_func_with_attrs
+        """Build embedding function using Volcengine AsyncArk"""
+        import volcenginesdkarkruntime
+        from lightrag.utils import EmbeddingFunc
         model = self.conf.get("embedding_model_name", "doubao-embedding-vision-250615")
         base_url = self.conf.get("embedding_base_url", "https://ark.cn-beijing.volces.com/api/v3")
         api_key = self.conf.get("api_key", "")
-        dim = self.conf.get("embedding_dim", 2048)
+        dim = self.conf.get("embedding_dim", 1024)
         max_tokens = self.conf.get("max_token_size", 8192)
 
-        @wrap_embedding_func_with_attrs(embedding_dim=dim, max_token_size=max_tokens, model_name=model)
-        async def embed_func(texts: list[str], **kwargs) -> np.ndarray:
-            return await openai_embed.func(
-                texts,
-                model=model,
-                api_key=api_key,
-                base_url=base_url,
-            )
-        return embed_func
+        client = volcenginesdkarkruntime.AsyncArk(api_key=api_key, base_url=base_url)
+
+        async def _embed(texts: list[str], **kwargs) -> np.ndarray:
+            all_embeddings = []
+            for t in texts:
+                response = await client.multimodal_embeddings.create(
+                    model=model,
+                    input=[{"type": "text", "text": t}],
+                )
+                vec = response.data.embedding
+                if isinstance(vec[0], list):
+                    vec = vec[0]
+                # 截断到目标维度 + L2 归一化
+                vec = vec[:dim]
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = [v / norm for v in vec]
+                all_embeddings.append(vec)
+            return np.array(all_embeddings, dtype=np.float32)
+
+        return EmbeddingFunc(
+            embedding_dim=dim,
+            max_token_size=max_tokens,
+            func=_embed,
+        )
 
     # ---- Public interface methods ----
 
