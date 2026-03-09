@@ -1,6 +1,7 @@
 import os
 import time
-from typing import List
+import logging
+from typing import List, Dict
 from src.adapters.base import StandardDoc, StandardSample
 import tiktoken
 import openviking as ov
@@ -84,6 +85,42 @@ class VikingStoreWrapper:
     def retrieve(self, query: str, topk: int, target_uri: str = "viking://resources"):
         """执行检索"""
         return self.client.find(query=query, limit=topk, target_uri=target_uri)
+
+    def process_retrieval_results(self, search_res):
+        """
+        从检索结果中提取 retrieved_texts / context_blocks / retrieved_uris。
+        Viking 根据 resource.level 决定读全文还是拼接 abstract+overview。
+        """
+        retrieved_texts = []
+        context_blocks = []
+        retrieved_uris = []
+        for r in search_res.resources:
+            retrieved_uris.append(r.uri)
+            if getattr(r, 'level', 2) == 2:
+                content = self.read_resource(r.uri)
+            else:
+                content = f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
+            retrieved_texts.append(content)
+            context_blocks.append(content[:2000])
+        return retrieved_texts, context_blocks, retrieved_uris
+
+    def build_uri_map(self, doc_info: List[StandardDoc]) -> Dict[str, list]:
+        """构建 sample_id -> [viking:// URI] 映射，通过 client.ls 验证 URI 存在性"""
+        logger = logging.getLogger(__name__)
+        uri_map = {}
+        for doc in doc_info:
+            basename = os.path.splitext(os.path.basename(doc.doc_path))[0]
+            basename = basename.replace('.', '')
+            basename = basename.replace(' ', '_')
+            basename = basename.replace('(', '')
+            basename = basename.replace(')', '')
+            candidate_uri = f"viking://resources/{basename}"
+            try:
+                self.client.ls(candidate_uri)
+                uri_map.setdefault(doc.sample_id, []).append(candidate_uri)
+            except Exception:
+                logger.warning(f"URI not found for doc: {basename} (sample_id={doc.sample_id})")
+        return uri_map
 
     def read_resource(self, uri: str) -> str:
         """读取资源内容"""

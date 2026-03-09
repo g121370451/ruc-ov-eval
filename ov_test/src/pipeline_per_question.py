@@ -53,8 +53,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 }
             })
 
-        # 2. 构建 URI 映射（直接用 data_prepare 返回的 StandardDoc）
-        self._uri_map = self._build_uri_map(doc_info)
+        # 2. 构建 URI 映射（委托给 store 实现）
+        self._uri_map = self.db.build_uri_map(doc_info)
         self.logger.info(f"URI map built: {len(self._uri_map)} samples mapped")
 
         # 3. 加载数据 + 检索生成（与父类一致，但 _process_generation_task 被覆写）
@@ -104,29 +104,6 @@ class PerQuestionPipeline(BenchmarkPipeline):
             })
         with open(self.generated_file, "w", encoding="utf-8") as f:
             json.dump(save_data, f, indent=2, ensure_ascii=False)
-    def _build_uri_map(self, doc_info):
-        """
-        用 data_prepare 返回的 StandardDoc 列表构建 sample_id -> [URI] 映射。
-        直接用 doc.doc_path 的文件名（去扩展名）作为 OV 中的资源名探测。
-        """
-        uri_map = {}
-        for doc in doc_info:
-            basename = os.path.splitext(os.path.basename(doc.doc_path))[0]
-            # 适配qasper 删除basename中'.'
-            basename = basename.replace('.', '')
-            # 适配syllabusqa 文件名中包含'_'
-            basename = basename.replace(' ', '_')
-            # 适配syllabusqa 文件名中包含'(',')'
-            basename = basename.replace('(', '')
-            basename = basename.replace(')', '')
-            candidate_uri = f"viking://resources/{basename}"
-            try:
-                self.db.client.ls(candidate_uri)
-                uri_map.setdefault(doc.sample_id, []).append(candidate_uri)
-            except Exception:
-                self.logger.warning(f"URI not found for doc: {basename} (sample_id={doc.sample_id})")
-        return uri_map
-
     def _process_generation_task(self, task):
         """
         覆写父类：检索时对每个 target_uri 分别检索，合并结果按 score 取 topK。
@@ -141,11 +118,15 @@ class PerQuestionPipeline(BenchmarkPipeline):
             # 1. 限定路径检索
             t0 = time.time()
             all_resources = []
+            retrieve_in_tokens = 0
+            retrieve_out_tokens = 0
             if target_uris:
                 for uri in target_uris:
                     try:
                         res = self.db.retrieve(query=qa.question, topk=topk, target_uri=uri)
                         all_resources.extend(res.resources)
+                        retrieve_in_tokens += getattr(res, 'retrieve_input_tokens', 0)
+                        retrieve_out_tokens += getattr(res, 'retrieve_output_tokens', 0)
                     except Exception as e:
                         self.logger.warning(f"Retrieve from {uri} failed: {e}")
             else:
@@ -153,20 +134,18 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 self.logger.warning("No target URIs found for sample_id %s, falling back to global retrieval.", task['sample_id'])
                 res = self.db.retrieve(query=qa.question, topk=topk)
                 all_resources = list(res.resources)
+                retrieve_in_tokens += getattr(res, 'retrieve_input_tokens', 0)
+                retrieve_out_tokens += getattr(res, 'retrieve_output_tokens', 0)
 
             # 按 score 降序取 topK
             all_resources.sort(key=lambda r: getattr(r, 'score', 0), reverse=True)
             top_resources = all_resources[:topk]
             latency = time.time() - t0
-            # 2. 读取内容（与父类一致）
-            retrieved_texts = []
-            retrieved_uris = []
-            context_blocks = []
-            for r in top_resources:
-                retrieved_uris.append(r.uri)
-                content = self.db.read_resource(r.uri) if getattr(r, 'level', 2) == 2 else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
-                retrieved_texts.append(content)
-                context_blocks.append(content[:2000])
+            # 2. 构造临时结果对象，复用 process_retrieval_results 接口
+            class _TempResult:
+                def __init__(self, resources):
+                    self.resources = resources
+            retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(_TempResult(top_resources))
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
             # 3. Prompt + 生成（与父类一致）
@@ -174,9 +153,9 @@ class PerQuestionPipeline(BenchmarkPipeline):
             ans_raw = self.llm.generate(full_prompt)
             ans = self.adapter.post_process_answer(qa, ans_raw, meta)
 
-            # 4. Token stats（与父类一致）
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question)
-            out_tokens = self.db.count_tokens(ans)
+            # 4. Token stats（含检索阶段 token）
+            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in_tokens
+            out_tokens = self.db.count_tokens(ans) + retrieve_out_tokens
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
 
             self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")

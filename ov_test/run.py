@@ -9,6 +9,7 @@ from src.core.logger import setup_logging
 # ==========================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR) # 代码仓库根目录
+sys.path.append(REPO_ROOT)
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
 
@@ -18,20 +19,10 @@ if os.path.exists(ov_config_path):
     os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
     print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
 
-# # 将 SCRIPT_DIR 加入 path 确保能导入 src.*
-# if SCRIPT_DIR not in sys.path:
-#     sys.path.append(SCRIPT_DIR)
-
-# # 将 OpenViking 的路径也加入 sys.path
-# OV_PATH = os.path.join(PROJECT_ROOT, "OpenViking")
-# if OV_PATH not in sys.path:
-#     sys.path.append(OV_PATH)
-
 # 导入模块
 try:
-    from src.pipeline import BenchmarkPipeline 
-    from src.core.vector_store import VikingStoreWrapper
-    from src.core.llm_client import LLMClientWrapper 
+    from src.pipeline import BenchmarkPipeline
+    from src.core.llm_client import LLMClientWrapper
 except SyntaxError as e:
     print(f"\n[Fatal Error] 导入模块时发生语法错误: {e}")
     sys.exit(1)
@@ -39,7 +30,6 @@ except ImportError as e:
     print(f"\n[Fatal Error] 无法导入模块: {e}")
     print(f"当前 sys.path: {sys.path}\n")
     sys.exit(1)
-
 # ==========================================
 # 2. 辅助函数
 # ==========================================
@@ -68,7 +58,7 @@ def resolve_path(path_str, base_path):
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
     # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config/config_clapnq.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_pageindex/locomo_config.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
@@ -125,8 +115,23 @@ def main():
             logger.error(f"Class '{class_name}' not found in module '{module_path}'. Please check your config 'adapter.class_name'. Error: {e}")
             raise e
         
-        # 2. Vector Store
-        vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
+        # 2. Vector Store（根据配置选择）
+        store_cfg = config.get('store', {})
+        store_type = store_cfg.get('type', 'viking')
+
+        if store_type == 'pageindex':
+            from src.core.pageindex_store import PageIndexStoreWrapper
+            pageindex_conf = store_cfg.get('pageindex_config_path')
+            if pageindex_conf:
+                pageindex_conf = resolve_path(pageindex_conf, PROJECT_ROOT)
+            vector_store = PageIndexStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                doc_output_dir=config['paths'].get('doc_output_dir', ''),
+                config_path=pageindex_conf
+            )
+        else:
+            from src.core.vector_store import VikingStoreWrapper
+            vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
         
         # 3. LLM Client
         api_key = os.environ.get(
