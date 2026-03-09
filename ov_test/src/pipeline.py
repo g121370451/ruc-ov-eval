@@ -9,14 +9,13 @@ from tqdm import tqdm
 
 from src.adapters.base import BaseAdapter
 from src.core.logger import get_logger
-from src.core.vector_store import VikingStoreWrapper
 
 from .core.monitor import BenchmarkMonitor
 from .core.metrics import MetricsCalculator
 from .core.judge_util import llm_grader
 
 class BenchmarkPipeline:
-    def __init__(self, config, adapter: BaseAdapter, vector_db: VikingStoreWrapper, llm):
+    def __init__(self, config, adapter: BaseAdapter, vector_db, llm):
         self.config = config
         self.adapter = adapter
         self.db = vector_db
@@ -214,15 +213,7 @@ class BenchmarkPipeline:
             search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
             latency = time.time() - t0
             
-            retrieved_texts = []
-            retrieved_uris = []
-            context_blocks = []
-            for r in search_res.resources:
-                retrieved_uris.append(r.uri)
-                content = self.db.read_resource(r.uri) if getattr(r, 'level', 2) == 2 else f"{getattr(r, 'abstract', '')}\n{getattr(r, 'overview', '')}"
-                retrieved_texts.append(content)
-                clean = content[:2000]
-                context_blocks.append(clean)
+            retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
             
             # 2. Prompting logic (调用 Adapter 动态生成)
@@ -234,9 +225,11 @@ class BenchmarkPipeline:
             # 4. Post-processing (调用 Adapter 动态解析)
             ans = self.adapter.post_process_answer(qa, ans_raw, meta)
 
-            # 5. Token stats
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question)
-            out_tokens = self.db.count_tokens(ans)
+            # 5. Token stats（含检索阶段 token）
+            retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
+            retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
+            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
+            out_tokens = self.db.count_tokens(ans) + retrieve_out
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
             
             self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")
