@@ -97,21 +97,30 @@ class PageIndexStoreWrapper:
         start_time = time.time()
         token_tracker.reset()
 
-        for sample in tqdm(samples, desc="Generating Local Trees"):
+        # 展开 doc_paths 并去重（保持顺序）
+        seen = set()
+        all_paths = []
+        for sample in samples:
+            for p in sample.doc_paths:
+                if p not in seen:
+                    seen.add(p)
+                    all_paths.append(p)
+
+        for doc_path in tqdm(all_paths, desc="Generating Local Trees"):
             if monitor:
                 monitor.worker_start()
             try:
-                ext = os.path.splitext(sample.doc_path)[1].lower()
-                doc_id = os.path.basename(sample.doc_path)
+                ext = os.path.splitext(doc_path)[1].lower()
+                doc_id = os.path.basename(doc_path)
                 tree_data = None
 
                 if ext == '.pdf':
                     opt = self._get_pageindex_opt()
-                    tree_data = page_index(sample.doc_path, **vars(opt))
+                    tree_data = page_index(doc_path, **vars(opt))
                 elif ext in ['.md', '.markdown']:
                     opt = self._get_pageindex_opt()
                     tree_data = asyncio.run(md_to_tree(
-                        md_path=sample.doc_path,
+                        md_path=doc_path,
                         if_thinning=False,
                         min_token_threshold=5000,
                         if_add_node_summary=opt.if_add_node_summary,
@@ -129,7 +138,7 @@ class PageIndexStoreWrapper:
 
                 if tree_data:
                     self.doc_trees[doc_id] = tree_data
-                    self.doc_paths[doc_id] = sample.doc_path
+                    self.doc_paths[doc_id] = doc_path
                     output_file = os.path.join(self.store_path, f"{doc_id}_structure.json")
                     with open(output_file, 'w', encoding='utf-8') as f:
                         json.dump(tree_data, f, indent=2, ensure_ascii=False)
@@ -137,7 +146,7 @@ class PageIndexStoreWrapper:
                 if monitor:
                     monitor.worker_end(success=True)
             except Exception as e:
-                print(f"[Error] Failed to process {sample.doc_path}: {e}")
+                print(f"[Error] Failed to process {doc_path}: {e}")
                 if monitor:
                     monitor.worker_end(success=False)
 
@@ -315,11 +324,12 @@ Directly return the final JSON structure. Do not output anything else."""
         """构建 sample_id -> [doc_id] 映射，doc_id 为文件名，在 doc_trees 中验证存在性"""
         uri_map = {}
         for doc in doc_info:
-            doc_id = os.path.basename(doc.doc_path)
-            if doc_id in self.doc_trees:
-                uri_map.setdefault(doc.sample_id, []).append(doc_id)
-            else:
-                self.logger.warning(f"Doc not found in PageIndex: {doc_id} (sample_id={doc.sample_id})")
+            for path in doc.doc_paths:
+                doc_id = os.path.basename(path)
+                if doc_id in self.doc_trees:
+                    uri_map.setdefault(doc.sample_id, []).append(doc_id)
+                else:
+                    self.logger.warning(f"Doc not found in PageIndex: {doc_id} (sample_id={doc.sample_id})")
         return uri_map
 
     def read_resource(self, uri: str) -> str:
@@ -339,23 +349,13 @@ Directly return the final JSON structure. Do not output anything else."""
         return "\n\n".join(parts)
 
     def clear(self) -> None:
-        import shutil
-        from src.core.backup_utils import backup_store
-        backup_path = backup_store(self.store_path, self.logger)
+        """清空库：清除内存缓存 + 删除所有 JSON 文件"""
         self.doc_trees.clear()
         self.doc_paths.clear()
         if os.path.exists(self.store_path):
             for filename in os.listdir(self.store_path):
                 if filename.endswith(".json"):
                     os.remove(os.path.join(self.store_path, filename))
-        if backup_path:
-            for filename in os.listdir(backup_path):
-                src_file = os.path.join(backup_path, filename)
-                dst_file = os.path.join(self.store_path, filename)
-                if os.path.isfile(src_file):
-                    shutil.copy2(src_file, dst_file)
-            self.logger.info(f"Files restored from backup: {backup_path}")
-            self._load_local_trees()
 
     # --- 辅助方法 ---
 

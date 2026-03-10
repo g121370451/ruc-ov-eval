@@ -20,11 +20,11 @@ class StandardSample:
     qa_pairs: List[StandardQA]
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-@dataclass 
+@dataclass
 class StandardDoc:
-    """标准化的sampleid 与 doc_path映射结构"""
-    sample_id:str
-    doc_path:str
+    """标准化的 sample_id 与文档路径映射，doc_paths 支持一对多（如 HotpotQA 多跳）"""
+    sample_id: str
+    doc_paths: List[str]
 
 class BaseAdapter(ABC):
     """所有数据集适配器的基类"""

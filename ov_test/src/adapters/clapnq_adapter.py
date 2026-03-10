@@ -133,7 +133,7 @@ class ClapNQAdapter(BaseAdapter):
                         self.logger.info(f"doc_path is {doc_path}")
                         with open(doc_path, "w", encoding="utf-8") as f_out:
                             f_out.write(final_content)
-                        res.append(StandardDoc(example_id, doc_path))
+                        res.append(StandardDoc(example_id, [doc_path]))
                     except Exception as e:
                         self.logger.error(f"[clapnq adapter] doc:{example_id} prepare error {e}")
                         raise e

@@ -50,14 +50,14 @@ run_experiment() {
 # run_experiment per_question config_per_question_pageindex/syllabusqa_config.yaml gen false
 
 # --- Viking Global Pipeline ---
-run_experiment global config/locomo_config.yaml del false
+# run_experiment global config/locomo_config.yaml del false
 # run_experiment global config/hotpot.yaml gen false
 # run_experiment global config/qasper_config.yaml gen false
 # run_experiment global config/config_clapnq.yaml gen false
 # run_experiment global config/config_finance.yaml gen false
 
 # --- Viking Per-Question Pipeline ---
-# run_experiment per_question config_per_question/locomo_config.yaml gen false
+run_experiment per_question config_per_question/locomo_config.yaml all false
 # run_experiment per_question config_per_question/hotpot.yaml gen false
 # run_experiment per_question config_per_question/qasper_config.yaml gen false
 # run_experiment per_question config_per_question/clapnq_config.yaml gen false

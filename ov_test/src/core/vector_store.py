@@ -33,31 +33,37 @@ class VikingStoreWrapper:
 
     def ingest(self, samples: List[StandardDoc], max_workers=10, monitor=None) -> dict:
         start_time = time.time()
-        
-        def _submit_sample(sample:StandardDoc):
+
+        # 展开 doc_paths 并去重（保持顺序）
+        seen = set()
+        all_paths = []
+        for sample in samples:
+            for p in sample.doc_paths:
+                if p not in seen:
+                    seen.add(p)
+                    all_paths.append(p)
+
+        def _submit_path(path: str):
             if monitor:
-                monitor.worker_start() # 线程开始
+                monitor.worker_start()
             try:
-                self.client.add_resource(sample.doc_path, wait=False)
+                self.client.add_resource(path, wait=False)
                 if monitor:
-                    monitor.worker_end(success=True) # 线程正常结束
+                    monitor.worker_end(success=True)
             except Exception as e:
                 if monitor:
-                    monitor.worker_end(success=False) # 线程异常结束
+                    monitor.worker_end(success=False)
                 raise e
 
         # 1. 使用线程池并发提交资源
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            pbar = tqdm(total=len(samples), desc="Ingesting Docs", unit="file")
-            
-            # 提交任务并获取 future 对象列表
-            futures = [executor.submit(_submit_sample, s) for s in samples]
-            
-            # 使用 as_completed 监听任务完成状态
+            pbar = tqdm(total=len(all_paths), desc="Ingesting Docs", unit="file")
+
+            futures = [executor.submit(_submit_path, p) for p in all_paths]
+
             for _ in as_completed(futures):
                 if monitor:
-                    # 动态更新进度条后缀，显示当前活跃线程数
-                    pbar.set_postfix(monitor.get_status_dict()) 
+                    pbar.set_postfix(monitor.get_status_dict())
                 pbar.update(1)
             pbar.close()
 
@@ -109,17 +115,18 @@ class VikingStoreWrapper:
         logger = logging.getLogger(__name__)
         uri_map = {}
         for doc in doc_info:
-            basename = os.path.splitext(os.path.basename(doc.doc_path))[0]
-            basename = basename.replace('.', '')
-            basename = basename.replace(' ', '_')
-            basename = basename.replace('(', '')
-            basename = basename.replace(')', '')
-            candidate_uri = f"viking://resources/{basename}"
-            try:
-                self.client.ls(candidate_uri)
-                uri_map.setdefault(doc.sample_id, []).append(candidate_uri)
-            except Exception:
-                logger.warning(f"URI not found for doc: {basename} (sample_id={doc.sample_id})")
+            for path in doc.doc_paths:
+                basename = os.path.splitext(os.path.basename(path))[0]
+                basename = basename.replace('.', '')
+                basename = basename.replace(' ', '_')
+                basename = basename.replace('(', '')
+                basename = basename.replace(')', '')
+                candidate_uri = f"viking://resources/{basename}"
+                try:
+                    self.client.ls(candidate_uri)
+                    uri_map.setdefault(doc.sample_id, []).append(candidate_uri)
+                except Exception:
+                    logger.warning(f"URI not found for doc: {basename} (sample_id={doc.sample_id})")
         return uri_map
 
     def read_resource(self, uri: str) -> str:
@@ -127,18 +134,9 @@ class VikingStoreWrapper:
         return str(self.client.read(uri))
 
     def clear(self):
-        """清空库（备份 → 释放客户端 → 删除整个 store → 从备份恢复）"""
+        """清空库：删除所有资源 + 删除 store 目录"""
         import shutil
-        from src.core.backup_utils import backup_store
-        logger = logging.getLogger(__name__)
-        backup_path = backup_store(self.store_path, logger)
         self.client.rm("viking://resources", recursive=True)
-        # 释放客户端，解除文件锁
         self.client.close()
-        # 删除整个 store 目录
         if os.path.exists(self.store_path):
             shutil.rmtree(self.store_path)
-        # 从备份还原
-        if backup_path:
-            shutil.copytree(backup_path, self.store_path)
-            logger.info(f"Store restored from backup: {backup_path}")

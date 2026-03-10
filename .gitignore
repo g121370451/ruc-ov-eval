@@ -4,5 +4,6 @@ viking_store_locomo/
 .run_state.json
 *.json
 ov.conf
+pageindex.conf
 .venv/
 .env

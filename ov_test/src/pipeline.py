@@ -57,8 +57,15 @@ class BenchmarkPipeline:
             self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
             
         else:  # 正常执行入库
+            import shutil
             from src.core.backup_utils import backup_store
-            backup_store(self.config['paths'].get('vector_store', ''), self.logger)
+            store_path = self.config['paths'].get('vector_store', '')
+            backup_store(store_path, self.logger)
+            # 备份后清空 store 目录，以便填入新的入库结果
+            if os.path.isdir(store_path):
+                shutil.rmtree(store_path)
+                os.makedirs(store_path, exist_ok=True)
+                self.logger.info(f"Store directory cleared: {store_path}")
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
             ingest_stats = self.db.ingest(
                 doc_info, 
@@ -174,10 +181,25 @@ class BenchmarkPipeline:
             })
 
     def run_deletion(self):
-        """Step 5: 数据清理（计时只包含实际删除，不含备份和恢复）"""
+        """Step 5: 备份 → 计时删除 → 恢复"""
+        import shutil
+        from src.core.backup_utils import backup_store
         self.logger.info(">>> Stage: Deletion")
+        store_path = self.config['paths'].get('vector_store', '')
+        # 备份
+        backup_path = backup_store(store_path, self.logger)
+        # 计时删除
+        t0 = time.time()
         self.db.clear()
-        self.logger.info("Deletion finished (backup & restore excluded from timing).")
+        elapsed = time.time() - t0
+        # 恢复
+        if backup_path and os.path.isdir(backup_path):
+            if os.path.isdir(store_path):
+                shutil.rmtree(store_path)
+            shutil.copytree(backup_path, store_path)
+            self.logger.info(f"Store restored from backup: {backup_path}")
+        self.metrics_summary["deletion"] = {"time": elapsed, "input_tokens": 0, "output_tokens": 0}
+        self.logger.info(f"Deletion finished. Time: {elapsed:.2f}s")
 
     def _prepare_tasks(self, samples):
         tasks = []

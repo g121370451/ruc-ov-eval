@@ -55,7 +55,7 @@ class FinanceBenchAdapter(BaseAdapter):
             if not os.path.exists(pdf_path):
                 self.logger.warning(f"PDF not found: {pdf_path}, skipping")
                 continue
-            docs.append(StandardDoc(sample_id=doc_name, doc_path=pdf_path))
+            docs.append(StandardDoc(sample_id=doc_name, doc_paths=[pdf_path]))
 
         self.logger.info(f"[FinanceBench] Prepared {len(docs)} documents for ingestion (referenced only)")
         return docs

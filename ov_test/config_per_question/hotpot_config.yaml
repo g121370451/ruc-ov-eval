@@ -16,8 +16,8 @@ execution:
 
 paths:
   raw_data: "Data/{dataset_name}/hotpot_qa_100.json"
-  doc_output_dir: "Data/{dataset_name}/openviking/processed_docs"
-  vector_store: "Data/{dataset_name}/openviking/store_index"
+  doc_output_dir: "Data/{dataset_name}/openviking_per_question/processed_docs"
+  vector_store: "Data/{dataset_name}/openviking_per_question/store_index"
   output_dir: "Output/{dataset_name}/openviking_per_question/experiment_0001"
   log_file: "Output/{dataset_name}/openviking_per_question/experiment_0001/benchmark.log"
 

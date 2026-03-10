@@ -40,7 +40,7 @@ class LocomoAdapter(BaseAdapter):
                 doc_path = os.path.join(doc_dir, f"{sample_id}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(sample_id, doc_path))
+                res.append(StandardDoc(sample_id, [doc_path]))
             except Exception as e:
                 self.logger.error(f"[locomo adapter] doc:{sample_id} prepare error {e}")
                 raise e

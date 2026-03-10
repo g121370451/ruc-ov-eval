@@ -93,7 +93,7 @@ def resolve_auto_output_dir(config):
 
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Per-Question Strategy)")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question_pageindex/locomo_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question_pageindex/hotpot_config.yaml")
 
     parser.add_argument("--config", default=default_config_path,
                         help=f"Path to config file. Default: {default_config_path}")
@@ -161,23 +161,12 @@ def main():
             logger.error(f"Class '{class_name}' not found in module '{module_path}'. Please check your config 'adapter.class_name'. Error: {e}")
             raise e
 
-        # 2. Vector Store（根据配置选择）
+        # 2. Vector Store — per_question 模式由 pipeline 内部管理 per-doc stores
+        #    这里只需解析 pageindex_config_path 的绝对路径
         store_cfg = config.get('store', {})
-        store_type = store_cfg.get('type', 'viking')
-
-        if store_type == 'pageindex':
-            from src.core.pageindex_store import PageIndexStoreWrapper
-            pageindex_conf = store_cfg.get('pageindex_config_path')
-            if pageindex_conf:
-                pageindex_conf = resolve_path(pageindex_conf, PROJECT_ROOT)
-            vector_store = PageIndexStoreWrapper(
-                store_path=config['paths']['vector_store'],
-                doc_output_dir=config['paths'].get('doc_output_dir', ''),
-                config_path=pageindex_conf
-            )
-        else:
-            from src.core.vector_store import VikingStoreWrapper
-            vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
+        pageindex_conf = store_cfg.get('pageindex_config_path')
+        if pageindex_conf:
+            store_cfg['pageindex_config_path'] = resolve_path(pageindex_conf, PROJECT_ROOT)
 
         # 3. LLM Client
         api_key = os.environ.get(
@@ -193,7 +182,7 @@ def main():
         pipeline = PerQuestionPipeline(
             config=config,
             adapter=adapter,
-            vector_db=vector_store,
+            vector_db=None,
             llm=llm_client
         )
 
