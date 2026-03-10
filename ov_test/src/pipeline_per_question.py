@@ -14,7 +14,9 @@ import json
 import hashlib
 import shutil
 import time
+import threading
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any
 from tqdm import tqdm
 
@@ -35,6 +37,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
         # 记录文件路径（按 store_key 索引）
         self.records_file = os.path.join(self.store_parent_path, "_ingest_records.json")
         self.records: Dict[str, dict] = self._load_records()
+        self._records_lock = threading.Lock()
 
     # ---- 记录持久化 ----
 
@@ -45,8 +48,9 @@ class PerQuestionPipeline(BenchmarkPipeline):
         return {}
 
     def _save_records(self):
-        with open(self.records_file, 'w', encoding='utf-8') as f:
-            json.dump(self.records, f, indent=2, ensure_ascii=False)
+        with self._records_lock:
+            with open(self.records_file, 'w', encoding='utf-8') as f:
+                json.dump(self.records, f, indent=2, ensure_ascii=False)
 
     # ---- store_key 计算 ----
 
@@ -100,8 +104,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
     # ---- 主流程 ----
 
     def run_generation(self):
-        """按 store_key 分组：入库 → 检索该组所有 QA → 删除。"""
-        self.logger.info(">>> Stage: Ingestion & Generation (Per-Question, Record Mode)")
+        """所有 group 并行：每组独立 入库 → 检索(多线程) → 删除。"""
+        self.logger.info(">>> Stage: Ingestion & Generation (Per-Question, Parallel Groups)")
         doc_dir = self.config['paths'].get('doc_output_dir')
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
@@ -137,7 +141,6 @@ class PerQuestionPipeline(BenchmarkPipeline):
         max_queries = self.config['execution'].get('max_queries')
 
         # 按 store_key 分组 sample，保持原始顺序
-        # store_key -> { 'doc_paths': [...], 'samples': [StandardSample, ...] }
         groups: OrderedDict[str, dict] = OrderedDict()
         for sample in samples:
             sid = sample.sample_id
@@ -149,94 +152,60 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 groups[store_key] = {'doc_paths': doc_paths, 'samples': []}
             groups[store_key]['samples'].append(sample)
 
+        # 分配 global_idx（预先分配，保证顺序确定）
         global_idx = 0
-        results_list = []
+        group_tasks = []  # [(store_key, group, start_idx, task_count)]
+        for store_key, group in groups.items():
+            start_idx = global_idx
+            count = 0
+            for sample in group['samples']:
+                for _ in sample.qa_pairs:
+                    if max_queries is not None and global_idx >= max_queries:
+                        break
+                    global_idx += 1
+                    count += 1
+                if max_queries is not None and global_idx >= max_queries:
+                    break
+            group_tasks.append((store_key, group, start_idx, count))
+            if max_queries is not None and global_idx >= max_queries:
+                break
+
+        # 并行处理所有 group
+        max_workers = self.config['execution'].get('max_workers', 4)
+        all_results = {}  # global_idx -> result
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_key = {
+                executor.submit(
+                    self._process_group, sk, grp, si, cnt
+                ): sk
+                for sk, grp, si, cnt in group_tasks
+            }
+            pbar = tqdm(total=len(future_to_key), desc="Processing Groups", unit="group")
+            for future in as_completed(future_to_key):
+                sk = future_to_key[future]
+                try:
+                    group_result = future.result()
+                    all_results.update(group_result['results'])
+                except Exception as e:
+                    self.logger.error(f"Group {sk} failed: {e}")
+                pbar.update(1)
+            pbar.close()
+
+        # 按 global_idx 排序汇总
+        results_list = [all_results[i] for i in sorted(all_results.keys())]
+
+        # 汇总各阶段时间（从 records 中读取）
         sum_ingest_time = 0.0
         sum_ingest_in_tokens = 0
         sum_ingest_out_tokens = 0
         sum_delete_time = 0.0
+        for rec in self.records.values():
+            sum_ingest_time += rec.get('ingest_time', 0)
+            sum_ingest_in_tokens += rec.get('ingest_input_tokens', 0)
+            sum_ingest_out_tokens += rec.get('ingest_output_tokens', 0)
+            sum_delete_time += rec.get('delete_time', 0)
 
-        pbar = tqdm(groups.items(), desc="Processing Store Groups", unit="group")
-        for store_key, group in pbar:
-            if max_queries is not None and global_idx >= max_queries:
-                break
-
-            doc_paths = group['doc_paths']
-            record = self.records.get(store_key)
-            store_path = os.path.join(self.store_parent_path, store_key)
-
-            # ---- 入库（有记录则跳过）----
-            if record and record.get('ingested'):
-                self.logger.info(f"[{store_key}] Already ingested, skipping.")
-                sum_ingest_time += record.get('ingest_time', 0)
-                sum_ingest_in_tokens += record.get('ingest_input_tokens', 0)
-                sum_ingest_out_tokens += record.get('ingest_output_tokens', 0)
-            else:
-                t_ingest = time.time()
-                store = self._create_store(store_path)
-                tmp_doc = StandardDoc(sample_id=store_key, doc_paths=doc_paths)
-                stats = store.ingest([tmp_doc], monitor=self.monitor)
-                self._close_store(store)
-                elapsed_ingest = time.time() - t_ingest
-                ingest_in = stats.get('input_tokens', 0)
-                ingest_out = stats.get('output_tokens', 0)
-                sum_ingest_time += elapsed_ingest
-                sum_ingest_in_tokens += ingest_in
-                sum_ingest_out_tokens += ingest_out
-                self.records[store_key] = {
-                    'ingested': True,
-                    'doc_paths': doc_paths,
-                    'ingest_time': elapsed_ingest,
-                    'ingest_input_tokens': ingest_in,
-                    'ingest_output_tokens': ingest_out,
-                    'deleted': False,
-                    'delete_time': 0,
-                }
-                self._save_records()
-
-            # ---- 打开 store 做检索 ----
-            store = self._create_store(store_path)
-
-            for sample in group['samples']:
-                for qa in sample.qa_pairs:
-                    if max_queries is not None and global_idx >= max_queries:
-                        break
-                    result = self._retrieve_and_generate(
-                        global_idx, sample.sample_id, qa, store
-                    )
-                    results_list.append(result)
-                    global_idx += 1
-                if max_queries is not None and global_idx >= max_queries:
-                    break
-
-            # ---- 删除（有记录则跳过）----
-            if record and record.get('deleted'):
-                self.logger.info(f"[{store_key}] Already deleted, skipping.")
-                sum_delete_time += record.get('delete_time', 0)
-                self._close_store(store)
-            else:
-                from src.core.backup_utils import backup_store as do_backup
-                backup_path = do_backup(store_path, self.logger)
-                # 计时：只包含 clear
-                t_del = time.time()
-                store.clear()
-                elapsed_del = time.time() - t_del
-                self._close_store(store)
-                # 从备份恢复
-                if backup_path and os.path.isdir(backup_path):
-                    if os.path.isdir(store_path):
-                        shutil.rmtree(store_path)
-                    shutil.copytree(backup_path, store_path)
-                    self.logger.info(f"[{store_key}] Restored from backup: {backup_path}")
-                sum_delete_time += elapsed_del
-                if store_key in self.records:
-                    self.records[store_key]['deleted'] = True
-                    self.records[store_key]['delete_time'] = elapsed_del
-                    self._save_records()
-
-        pbar.close()
-
-        # ---- 汇总报告 ----
         self.metrics_summary["insertion"] = {
             "time": sum_ingest_time,
             "input_tokens": sum_ingest_in_tokens,
@@ -269,6 +238,89 @@ class PerQuestionPipeline(BenchmarkPipeline):
             })
         with open(self.generated_file, "w", encoding="utf-8") as f:
             json.dump(save_data, f, indent=2, ensure_ascii=False)
+
+    # ---- 单组处理（入库 → 检索 → 删除）----
+
+    def _process_group(self, store_key, group, start_idx, task_count):
+        """处理单个 group：入库 → 多线程检索生成 → 删除。返回 {results: {idx: result}}"""
+        doc_paths = group['doc_paths']
+        record = self.records.get(store_key)
+        store_path = os.path.join(self.store_parent_path, store_key)
+
+        # ---- 入库 ----
+        if record and record.get('ingested'):
+            self.logger.info(f"[{store_key}] Already ingested, skipping.")
+        else:
+            t_ingest = time.time()
+            store = self._create_store(store_path)
+            tmp_doc = StandardDoc(sample_id=store_key, doc_paths=doc_paths)
+            stats = store.ingest([tmp_doc], monitor=self.monitor)
+            self._close_store(store)
+            elapsed_ingest = time.time() - t_ingest
+            with self._records_lock:
+                self.records[store_key] = {
+                    'ingested': True,
+                    'doc_paths': doc_paths,
+                    'ingest_time': elapsed_ingest,
+                    'ingest_input_tokens': stats.get('input_tokens', 0),
+                    'ingest_output_tokens': stats.get('output_tokens', 0),
+                    'deleted': False,
+                    'delete_time': 0,
+                }
+            self._save_records()
+
+        # ---- 检索 + 生成（多线程）----
+        store = self._create_store(store_path)
+        max_workers = self.config['execution'].get('max_workers', 4)
+
+        qa_tasks = []
+        idx = start_idx
+        for sample in group['samples']:
+            for qa in sample.qa_pairs:
+                if idx >= start_idx + task_count:
+                    break
+                qa_tasks.append({'id': idx, 'sample_id': sample.sample_id, 'qa': qa})
+                idx += 1
+            if idx >= start_idx + task_count:
+                break
+
+        results_map = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_task = {
+                executor.submit(self._retrieve_and_generate, t['id'], t['sample_id'], t['qa'], store): t
+                for t in qa_tasks
+            }
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    res = future.result()
+                    results_map[res['_global_index']] = res
+                except Exception as e:
+                    self.logger.error(f"Generation failed for task {task['id']}: {e}")
+
+        # ---- 删除 ----
+        if record and record.get('deleted'):
+            self.logger.info(f"[{store_key}] Already deleted, skipping.")
+            self._close_store(store)
+        else:
+            from src.core.backup_utils import backup_store as do_backup
+            backup_path = do_backup(store_path, self.logger)
+            t_del = time.time()
+            store.clear()
+            elapsed_del = time.time() - t_del
+            self._close_store(store)
+            if backup_path and os.path.isdir(backup_path):
+                if os.path.isdir(store_path):
+                    shutil.rmtree(store_path)
+                shutil.copytree(backup_path, store_path)
+                self.logger.info(f"[{store_key}] Restored from backup: {backup_path}")
+            with self._records_lock:
+                if store_key in self.records:
+                    self.records[store_key]['deleted'] = True
+                    self.records[store_key]['delete_time'] = elapsed_del
+            self._save_records()
+
+        return {'results': results_map}
 
     # ---- 检索 + 生成 ----
 
