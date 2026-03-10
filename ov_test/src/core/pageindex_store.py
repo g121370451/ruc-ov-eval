@@ -179,20 +179,19 @@ class PageIndexStoreWrapper:
         if not self.doc_trees:
             return PageIndexResult()
 
-        # 记录检索前的 token 快照
-        before = token_tracker.get()
+        local_in = 0
+        local_out = 0
 
         # --- 阶段 1：确定要搜索的文档 ---
         if target_uri is not None:
-            # 指定了 target_uri，直接搜索该文档，跳过筛选
             scored_docs = [(target_uri, 1.0)] if target_uri in self.doc_trees else []
         elif len(self.doc_trees) == 1:
-            # 只有一个文档，无需筛选
             doc_id = next(iter(self.doc_trees))
             scored_docs = [(doc_id, 1.0)]
         else:
-            # 多文档：用一次 LLM 调用做文档级相关性筛选 + 打分
-            scored_docs = self._rank_documents(query, topk)
+            scored_docs, rank_in, rank_out = self._rank_documents(query, topk)
+            local_in += rank_in
+            local_out += rank_out
 
         # --- 阶段 2：对筛出的文档做节点级搜索 ---
         resources = []
@@ -201,7 +200,9 @@ class PageIndexStoreWrapper:
             if tree is None:
                 continue
             try:
-                content = self._search_nodes_in_doc(query, doc_id, tree)
+                content, search_in, search_out = self._search_nodes_in_doc(query, doc_id, tree)
+                local_in += search_in
+                local_out += search_out
                 if content.strip():
                     resources.append(PageIndexResource(
                         uri=doc_id,
@@ -212,16 +213,14 @@ class PageIndexStoreWrapper:
                 print(f"[Warning] Retrieval failed for {doc_id}: {e}")
 
         result = PageIndexResult(resources=resources)
-
-        # 计算本次检索消耗的 token
-        after = token_tracker.get()
-        result.retrieve_input_tokens = after["input_tokens"] - before["input_tokens"]
-        result.retrieve_output_tokens = after["output_tokens"] - before["output_tokens"]
+        result.retrieve_input_tokens = local_in
+        result.retrieve_output_tokens = local_out
 
         return result
 
-    def _rank_documents(self, query: str, topk: int) -> List[tuple]:
-        """阶段 1：一次 LLM 调用，对所有文档做相关性打分，返回 [(doc_id, score), ...] 降序排列"""
+    def _rank_documents(self, query: str, topk: int) -> tuple:
+        """阶段 1：一次 LLM 调用，对所有文档做相关性打分。
+        返回 ([(doc_id, score), ...], input_tokens, output_tokens)"""
         doc_profiles = {}
         for doc_id, tree in self.doc_trees.items():
             desc = tree.get('doc_description', '')
@@ -256,18 +255,21 @@ Directly return the JSON. Do not output anything else."""
 
         try:
             response = self.llm_client.invoke([HumanMessage(content=rank_prompt)])
-            token_tracker.add(self.count_tokens(rank_prompt), self.count_tokens(response.content))
+            in_t = self.count_tokens(rank_prompt)
+            out_t = self.count_tokens(response.content)
+            token_tracker.add(in_t, out_t)
             result_json = self._extract_json(response.content)
             results = result_json.get("results", [])
             scored = [(r["doc_id"], float(r.get("score", 0))) for r in results if r.get("score", 0) > 0]
             scored.sort(key=lambda x: x[1], reverse=True)
-            return scored[:topk]
+            return scored[:topk], in_t, out_t
         except Exception as e:
             print(f"[Warning] Document ranking failed: {e}, falling back to all docs")
-            return [(did, 0.5) for did in list(self.doc_trees.keys())[:topk]]
+            return [(did, 0.5) for did in list(self.doc_trees.keys())[:topk]], 0, 0
 
-    def _search_nodes_in_doc(self, query: str, doc_id: str, tree: dict) -> str:
-        """阶段 2：在单个文档的树结构中搜索相关节点，返回拼接后的正文"""
+    def _search_nodes_in_doc(self, query: str, doc_id: str, tree: dict) -> tuple:
+        """阶段 2：在单个文档的树结构中搜索相关节点。
+        返回 (拼接正文, input_tokens, output_tokens)"""
         tree_without_text = self._remove_text_field(tree)
 
         search_prompt = f"""You are given a question and a tree structure of a document.
@@ -291,7 +293,9 @@ Please reply in the following JSON format:
 Directly return the final JSON structure. Do not output anything else."""
 
         response = self.llm_client.invoke([HumanMessage(content=search_prompt)])
-        token_tracker.add(self.count_tokens(search_prompt), self.count_tokens(response.content))
+        in_t = self.count_tokens(search_prompt)
+        out_t = self.count_tokens(response.content)
+        token_tracker.add(in_t, out_t)
         result_json = self._extract_json(response.content)
 
         raw_node_list = result_json.get("node_list", [])
@@ -304,7 +308,8 @@ Directly return the final JSON structure. Do not output anything else."""
 
         node_map = self._create_node_mapping(tree['structure'])
         doc_path = self.doc_paths.get(doc_id, "")
-        return self._resolve_nodes_content(target_node_ids, node_map, doc_path)
+        content = self._resolve_nodes_content(target_node_ids, node_map, doc_path)
+        return content, in_t, out_t
 
     def process_retrieval_results(self, search_res: PageIndexResult):
         """
@@ -319,18 +324,6 @@ Directly return the final JSON structure. Do not output anything else."""
             retrieved_texts.append(r.content)
             context_blocks.append(r.content[:2000])
         return retrieved_texts, context_blocks, retrieved_uris
-
-    def build_uri_map(self, doc_info: List[StandardDoc]) -> Dict[str, list]:
-        """构建 sample_id -> [doc_id] 映射，doc_id 为文件名，在 doc_trees 中验证存在性"""
-        uri_map = {}
-        for doc in doc_info:
-            for path in doc.doc_paths:
-                doc_id = os.path.basename(path)
-                if doc_id in self.doc_trees:
-                    uri_map.setdefault(doc.sample_id, []).append(doc_id)
-                else:
-                    self.logger.warning(f"Doc not found in PageIndex: {doc_id} (sample_id={doc.sample_id})")
-        return uri_map
 
     def read_resource(self, uri: str) -> str:
         """读取资源内容"""

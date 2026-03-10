@@ -181,23 +181,22 @@ class BenchmarkPipeline:
             })
 
     def run_deletion(self):
-        """Step 5: 备份 → 计时删除 → 恢复"""
+        """Step 5: 转移计时删除 → 恢复"""
         import shutil
-        from src.core.backup_utils import backup_store
         self.logger.info(">>> Stage: Deletion")
         store_path = self.config['paths'].get('vector_store', '')
-        # 备份
-        backup_path = backup_store(store_path, self.logger)
-        # 计时删除
+        # 转移到临时目录（计时）
+        tmp_path = store_path.rstrip('/\\') + '_del_tmp'
         t0 = time.time()
-        self.db.clear()
+        if os.path.isdir(store_path):
+            if os.path.exists(tmp_path):
+                shutil.rmtree(tmp_path)
+            shutil.move(store_path, tmp_path)
         elapsed = time.time() - t0
-        # 恢复
-        if backup_path and os.path.isdir(backup_path):
-            if os.path.isdir(store_path):
-                shutil.rmtree(store_path)
-            shutil.copytree(backup_path, store_path)
-            self.logger.info(f"Store restored from backup: {backup_path}")
+        # 还原
+        if os.path.isdir(tmp_path):
+            shutil.move(tmp_path, store_path)
+            self.logger.info(f"Store restored after deletion timing.")
         self.metrics_summary["deletion"] = {"time": elapsed, "input_tokens": 0, "output_tokens": 0}
         self.logger.info(f"Deletion finished. Time: {elapsed:.2f}s")
 

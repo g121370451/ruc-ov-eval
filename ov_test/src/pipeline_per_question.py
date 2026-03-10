@@ -298,22 +298,23 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 except Exception as e:
                     self.logger.error(f"Generation failed for task {task['id']}: {e}")
 
-        # ---- 删除 ----
+        # ---- 删除（转移到 backup 目录 → 还原）----
         if record and record.get('deleted'):
             self.logger.info(f"[{store_key}] Already deleted, skipping.")
             self._close_store(store)
         else:
-            from src.core.backup_utils import backup_store as do_backup
-            backup_path = do_backup(store_path, self.logger)
-            t_del = time.time()
-            store.clear()
-            elapsed_del = time.time() - t_del
             self._close_store(store)
-            if backup_path and os.path.isdir(backup_path):
-                if os.path.isdir(store_path):
-                    shutil.rmtree(store_path)
-                shutil.copytree(backup_path, store_path)
-                self.logger.info(f"[{store_key}] Restored from backup: {backup_path}")
+            backup_dir = self.store_parent_path.rstrip('/\\') + '_backup'
+            os.makedirs(backup_dir, exist_ok=True)
+            dest = os.path.join(backup_dir, store_key)
+            t_del = time.time()
+            if os.path.exists(dest):
+                shutil.rmtree(dest)
+            shutil.move(store_path, dest)
+            elapsed_del = time.time() - t_del
+            # 还原
+            shutil.move(dest, store_path)
+            self.logger.info(f"[{store_key}] Deletion timed: {elapsed_del:.2f}s, restored.")
             with self._records_lock:
                 if store_key in self.records:
                     self.records[store_key]['deleted'] = True
@@ -363,10 +364,11 @@ class PerQuestionPipeline(BenchmarkPipeline):
             raise e
 
     def run_deletion(self):
-        """备份 → 逐个 store 调用 clear 计时 → 关闭 → 恢复"""
-        from src.core.backup_utils import backup_store as do_backup
+        """逐个 store 转移到 backup 目录计时 → 还原"""
         self.logger.info(">>> Stage: Deletion (Per-Question)")
         total_del_time = 0.0
+        backup_dir = self.store_parent_path.rstrip('/\\') + '_backup'
+        os.makedirs(backup_dir, exist_ok=True)
 
         if os.path.isdir(self.store_parent_path):
             for name in os.listdir(self.store_parent_path):
@@ -375,18 +377,15 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 sp = os.path.join(self.store_parent_path, name)
                 if not os.path.isdir(sp):
                     continue
-                backup_path = do_backup(sp, self.logger)
-                store = self._create_store(sp)
+                dest = os.path.join(backup_dir, name)
                 t0 = time.time()
-                store.clear()
+                if os.path.exists(dest):
+                    shutil.rmtree(dest)
+                shutil.move(sp, dest)
                 total_del_time += time.time() - t0
-                self._close_store(store)
-                # 恢复
-                if backup_path and os.path.isdir(backup_path):
-                    if os.path.isdir(sp):
-                        shutil.rmtree(sp)
-                    shutil.copytree(backup_path, sp)
-                    self.logger.info(f"[{name}] Restored from backup: {backup_path}")
+                # 还原
+                shutil.move(dest, sp)
+                self.logger.info(f"[{name}] Deletion timed, restored.")
 
         self.metrics_summary["deletion"] = {"time": total_del_time, "input_tokens": 0, "output_tokens": 0}
         self.logger.info(f"Deletion finished. Time: {total_del_time:.2f}s")
