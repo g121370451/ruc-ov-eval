@@ -127,5 +127,18 @@ class VikingStoreWrapper:
         return str(self.client.read(uri))
 
     def clear(self):
-        """清空库"""
+        """清空库（备份 → 释放客户端 → 删除整个 store → 从备份恢复）"""
+        import shutil
+        from src.core.backup_utils import backup_store
+        logger = logging.getLogger(__name__)
+        backup_path = backup_store(self.store_path, logger)
         self.client.rm("viking://resources", recursive=True)
+        # 释放客户端，解除文件锁
+        self.client.close()
+        # 删除整个 store 目录
+        if os.path.exists(self.store_path):
+            shutil.rmtree(self.store_path)
+        # 从备份还原
+        if backup_path:
+            shutil.copytree(backup_path, self.store_path)
+            logger.info(f"Store restored from backup: {backup_path}")

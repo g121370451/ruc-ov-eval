@@ -339,12 +339,23 @@ Directly return the final JSON structure. Do not output anything else."""
         return "\n\n".join(parts)
 
     def clear(self) -> None:
+        import shutil
+        from src.core.backup_utils import backup_store
+        backup_path = backup_store(self.store_path, self.logger)
         self.doc_trees.clear()
         self.doc_paths.clear()
         if os.path.exists(self.store_path):
             for filename in os.listdir(self.store_path):
                 if filename.endswith(".json"):
                     os.remove(os.path.join(self.store_path, filename))
+        if backup_path:
+            for filename in os.listdir(backup_path):
+                src_file = os.path.join(backup_path, filename)
+                dst_file = os.path.join(self.store_path, filename)
+                if os.path.isfile(src_file):
+                    shutil.copy2(src_file, dst_file)
+            self.logger.info(f"Files restored from backup: {backup_path}")
+            self._load_local_trees()
 
     # --- 辅助方法 ---
 

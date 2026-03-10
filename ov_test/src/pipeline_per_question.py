@@ -36,6 +36,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
         if skip_ingestion:
             self.logger.info(f"Skipping Ingestion. Using existing docs")
         else:
+            from src.core.backup_utils import backup_store
+            backup_store(self.config['paths'].get('vector_store', ''), self.logger)
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
             ingest_stats = self.db.ingest(
                 doc_info,

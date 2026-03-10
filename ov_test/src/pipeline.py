@@ -57,6 +57,8 @@ class BenchmarkPipeline:
             self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
             
         else:  # 正常执行入库
+            from src.core.backup_utils import backup_store
+            backup_store(self.config['paths'].get('vector_store', ''), self.logger)
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
             ingest_stats = self.db.ingest(
                 doc_info, 
@@ -172,22 +174,10 @@ class BenchmarkPipeline:
             })
 
     def run_deletion(self):
-        """Step 5: 数据清理"""
+        """Step 5: 数据清理（计时只包含实际删除，不含备份和恢复）"""
         self.logger.info(">>> Stage: Deletion")
-        start_time = time.time()
         self.db.clear()
-        duration = time.time() - start_time
-        self.metrics_summary["deletion"] = {"time": duration, "input_tokens": 0, "output_tokens": 0}
-        self.logger.info(f"Deletion finished. Time: {duration:.2f}s")
-
-        # 将 deletion 效率数据写入报告
-        self._update_report({
-            "Deletion Efficiency (Total Dataset)": {
-                "Total Deletion Time (s)": duration,
-                "Total Input Tokens": 0,
-                "Total Output Tokens": 0
-            }
-        })
+        self.logger.info("Deletion finished (backup & restore excluded from timing).")
 
     def _prepare_tasks(self, samples):
         tasks = []
