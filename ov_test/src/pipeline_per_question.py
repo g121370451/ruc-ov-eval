@@ -407,6 +407,11 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 total_del_time += elapsed
                 self._close_store(store)
                 self.logger.info(f"[{name}] Cleared in {elapsed:.2f}s")
+                with self._records_lock:
+                    if name in self.records:
+                        self.records[name]['deleted'] = True
+                        self.records[name]['delete_time'] = elapsed
+        self._save_records()
 
         self.metrics_summary["deletion"] = {"time": total_del_time, "input_tokens": 0, "output_tokens": 0}
         self._update_report({
