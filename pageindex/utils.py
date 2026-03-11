@@ -19,34 +19,37 @@ from langchain_openai import ChatOpenAI
 
 from .config_utils import get_api_client, get_pageindex_config
 
-# 全局API客户端缓存
-_api_client_cache = {}
+import threading
+
+# API客户端缓存（线程隔离，每个线程独立持有自己的 client，避免并发冲突）
+_api_client_local = threading.local()
 
 # 全局token编码器（cl100k_base）
 _token_encoder = tiktoken.get_encoding("cl100k_base")
 
 
 class TokenTracker:
-    """追踪ChatAPI调用过程中的输入/输出token消耗（线程安全）"""
+    """追踪ChatAPI调用过程中的输入/输出token消耗（线程隔离，每个线程独立计数）"""
     def __init__(self):
-        import threading
-        self._lock = threading.Lock()
-        self.input_tokens = 0
-        self.output_tokens = 0
+        self._local = threading.local()
+
+    def _ensure(self):
+        if not hasattr(self._local, 'input_tokens'):
+            self._local.input_tokens = 0
+            self._local.output_tokens = 0
 
     def add(self, input_tokens: int, output_tokens: int):
-        with self._lock:
-            self.input_tokens += input_tokens
-            self.output_tokens += output_tokens
+        self._ensure()
+        self._local.input_tokens += input_tokens
+        self._local.output_tokens += output_tokens
 
     def reset(self):
-        with self._lock:
-            self.input_tokens = 0
-            self.output_tokens = 0
+        self._local.input_tokens = 0
+        self._local.output_tokens = 0
 
     def get(self):
-        with self._lock:
-            return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
+        self._ensure()
+        return {"input_tokens": self._local.input_tokens, "output_tokens": self._local.output_tokens}
 
 
 # 全局token追踪器实例
@@ -74,14 +77,19 @@ def count_tokens(text):
         return 0
     return len(_token_encoder.encode(text))
 
+def _get_thread_client(model):
+    """获取当前线程的 API client（线程隔离）"""
+    if not hasattr(_api_client_local, 'cache'):
+        _api_client_local.cache = {}
+    if model not in _api_client_local.cache:
+        _api_client_local.cache[model] = get_api_client()
+    return _api_client_local.cache[model]
+
 def ChatGPT_API_with_finish_reason(model, prompt, chat_history=None):
     max_retries = 10
     for i in range(max_retries):
         try:
-            # 使用配置文件中的API客户端
-            if model not in _api_client_cache:
-                _api_client_cache[model] = get_api_client()
-            client = _api_client_cache[model]
+            client = _get_thread_client(model)
 
             if chat_history:
                 messages = chat_history
@@ -98,13 +106,12 @@ def ChatGPT_API_with_finish_reason(model, prompt, chat_history=None):
             return response.content, "finished"
 
         except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+            logging.warning(f'[Retry {i+1}/{max_retries}] {e}')
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                time.sleep(1)
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
+                logging.error('Max retries reached for prompt: ' + prompt[:100])
+                return "Error", "error"
 
 
 
@@ -112,10 +119,7 @@ def ChatGPT_API(model, prompt, chat_history=None):
     max_retries = 10
     for i in range(max_retries):
         try:
-            # 使用配置文件中的API客户端
-            if model not in _api_client_cache:
-                _api_client_cache[model] = get_api_client()
-            client = _api_client_cache[model]
+            client = _get_thread_client(model)
 
             if chat_history:
                 messages = chat_history
@@ -131,12 +135,11 @@ def ChatGPT_API(model, prompt, chat_history=None):
 
             return response.content
         except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+            logging.warning(f'[Retry {i+1}/{max_retries}] {e}')
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                time.sleep(1)
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
+                logging.error('Max retries reached for prompt: ' + prompt[:100])
                 return "Error"
             
 
@@ -146,10 +149,7 @@ async def ChatGPT_API_async(model, prompt):
     messages = [HumanMessage(content=prompt)]
     for i in range(max_retries):
         try:
-            # 使用配置文件中的API客户端
-            if model not in _api_client_cache:
-                _api_client_cache[model] = get_api_client()
-            client = _api_client_cache[model]
+            client = _get_thread_client(model)
 
             response = await client.ainvoke(messages)
             # 统计token消耗
@@ -159,12 +159,11 @@ async def ChatGPT_API_async(model, prompt):
 
             return response.content
         except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+            logging.warning(f'[Retry {i+1}/{max_retries}] {e}')
             if i < max_retries - 1:
-                await asyncio.sleep(1)  # Wait for 1s before retrying
+                await asyncio.sleep(1)
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
+                logging.error('Max retries reached for prompt: ' + prompt[:100])
                 return "Error"  
             
             

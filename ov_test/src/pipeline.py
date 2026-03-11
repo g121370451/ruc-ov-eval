@@ -60,20 +60,21 @@ class BenchmarkPipeline:
             import shutil
             from src.core.backup_utils import backup_store
             store_path = self.config['paths'].get('vector_store', '')
-            backup_store(store_path, self.logger)
-            # 备份后清空 store 目录，以便填入新的入库结果
+            # 清空 store 目录
             if os.path.isdir(store_path):
                 shutil.rmtree(store_path)
                 os.makedirs(store_path, exist_ok=True)
                 self.logger.info(f"Store directory cleared: {store_path}")
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
             ingest_stats = self.db.ingest(
-                doc_info, 
-                max_workers=ingest_workers, 
+                doc_info,
+                max_workers=ingest_workers,
                 monitor=self.monitor
             )
             self.metrics_summary["insertion"] = ingest_stats
             self.logger.info(f"Insertion finished. Time: {ingest_stats['time']:.2f}s")
+            # 入库完成后备份
+            backup_store(store_path, self.logger)
 
             # 将 insertion 效率数据写入报告
             self._update_report({
@@ -181,22 +182,11 @@ class BenchmarkPipeline:
             })
 
     def run_deletion(self):
-        """Step 5: 转移计时删除 → 恢复"""
-        import shutil
+        """Step 5: 计时删除"""
         self.logger.info(">>> Stage: Deletion")
-        store_path = self.config['paths'].get('vector_store', '')
-        # 转移到临时目录（计时）
-        tmp_path = store_path.rstrip('/\\') + '_del_tmp'
         t0 = time.time()
-        if os.path.isdir(store_path):
-            if os.path.exists(tmp_path):
-                shutil.rmtree(tmp_path)
-            shutil.move(store_path, tmp_path)
+        self.db.clear()
         elapsed = time.time() - t0
-        # 还原
-        if os.path.isdir(tmp_path):
-            shutil.move(tmp_path, store_path)
-            self.logger.info(f"Store restored after deletion timing.")
         self.metrics_summary["deletion"] = {"time": elapsed, "input_tokens": 0, "output_tokens": 0}
         self.logger.info(f"Deletion finished. Time: {elapsed:.2f}s")
 

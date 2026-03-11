@@ -60,7 +60,8 @@ class PageIndexConfig:
             model=model_name,
             temperature=0,
             api_key=api_key,
-            base_url=api_base
+            base_url=api_base,
+            request_timeout=120
         )
 
 # 全局配置实例

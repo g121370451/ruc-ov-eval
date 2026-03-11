@@ -65,27 +65,31 @@ class PageIndexStoreWrapper:
             import tiktoken
             self.enc = tiktoken.get_encoding("cl100k_base")
         except Exception as e:
-            print(f"[Warning] tiktoken init failed: {e}")
+            self.logger.warning(f"tiktoken init failed: {e}")
             self.enc = None
 
     def _load_local_trees(self):
         """启动时加载硬盘上已有的树结构文件和原文路径映射"""
         if not os.path.exists(self.store_path):
+            self.logger.warning(f"Store path not found, skip loading: {self.store_path}")
             return
-        if not os.path.exists(self.doc_output_dir):
-            return
+        # 加载 doc_paths 映射
         paths_file = os.path.join(self.store_path, "_doc_paths.json")
         if os.path.exists(paths_file):
             with open(paths_file, 'r', encoding='utf-8') as f:
                 self.doc_paths = json.load(f)
+        # 加载树结构（不依赖 doc_output_dir）
         for filename in os.listdir(self.store_path):
             if filename.endswith("_structure.json"):
                 doc_id = filename.replace("_structure.json", "")
                 with open(os.path.join(self.store_path, filename), 'r', encoding='utf-8') as f:
                     self.doc_trees[doc_id] = json.load(f)
-                source_path = os.path.join(self.doc_output_dir, doc_id)
-                if os.path.exists(source_path):
-                    self.doc_paths[doc_id] = source_path
+                # doc_output_dir 存在时才补充源文件路径
+                if self.doc_output_dir:
+                    source_path = os.path.join(self.doc_output_dir, doc_id)
+                    if os.path.exists(source_path):
+                        self.doc_paths[doc_id] = source_path
+        self.logger.info(f"Loaded {len(self.doc_trees)} trees from {self.store_path}")
 
     def count_tokens(self, text: str) -> int:
         if not text or not self.enc:
@@ -131,7 +135,7 @@ class PageIndexStoreWrapper:
                         if_add_node_id=opt.if_add_node_id
                     ))
                 else:
-                    print(f"[Warning] Unsupported file type: {ext}")
+                    self.logger.warning(f"Unsupported file type: {ext}")
                     if monitor:
                         monitor.worker_end(success=False)
                     continue
@@ -146,7 +150,7 @@ class PageIndexStoreWrapper:
                 if monitor:
                     monitor.worker_end(success=True)
             except Exception as e:
-                print(f"[Error] Failed to process {doc_path}: {e}")
+                self.logger.error(f"Failed to process {doc_path}: {e}")
                 if monitor:
                     monitor.worker_end(success=False)
 
@@ -176,13 +180,15 @@ class PageIndexStoreWrapper:
             topk: 最多返回的文档数量
             target_uri: 限定搜索的 doc_id，为 None 时走文档级筛选
         """
+        self.logger.info(f"doc_trees: {self.doc_trees}")
         if not self.doc_trees:
             return PageIndexResult()
 
         local_in = 0
         local_out = 0
-
+        self.logger.info(f"Retrieve query: {query}")
         # --- 阶段 1：确定要搜索的文档 ---
+        self.logger.info(f"Retrieve target_uri: {target_uri}")
         if target_uri is not None:
             scored_docs = [(target_uri, 1.0)] if target_uri in self.doc_trees else []
         elif len(self.doc_trees) == 1:
@@ -192,7 +198,7 @@ class PageIndexStoreWrapper:
             scored_docs, rank_in, rank_out = self._rank_documents(query, topk)
             local_in += rank_in
             local_out += rank_out
-
+        self.logger.info(f"Scored docs: {scored_docs}")
         # --- 阶段 2：对筛出的文档做节点级搜索 ---
         resources = []
         for doc_id, doc_score in scored_docs[:topk]:
@@ -210,8 +216,8 @@ class PageIndexStoreWrapper:
                         score=doc_score,
                     ))
             except Exception as e:
-                print(f"[Warning] Retrieval failed for {doc_id}: {e}")
-
+                self.logger.error(f"Retrieval failed for {doc_id}: {e}")
+        self.logger.info(f"Search nodes in doc {doc_id}: {content}")
         result = PageIndexResult(resources=resources)
         result.retrieve_input_tokens = local_in
         result.retrieve_output_tokens = local_out
@@ -232,6 +238,8 @@ class PageIndexStoreWrapper:
                 profile = section_summaries if section_summaries else doc_id
             doc_profiles[doc_id] = profile
 
+        self.logger.info(f"Rank documents append: {doc_profiles}")
+        
         doc_list_str = "\n\n".join(
             f'Document "{doc_id}":\n{profile}' for doc_id, profile in doc_profiles.items()
         )
@@ -264,7 +272,7 @@ Directly return the JSON. Do not output anything else."""
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored[:topk], in_t, out_t
         except Exception as e:
-            print(f"[Warning] Document ranking failed: {e}, falling back to all docs")
+            self.logger.warning(f"Document ranking failed: {e}, falling back to all docs")
             return [(did, 0.5) for did in list(self.doc_trees.keys())[:topk]], 0, 0
 
     def _search_nodes_in_doc(self, query: str, doc_id: str, tree: dict) -> tuple:
@@ -460,5 +468,5 @@ Directly return the final JSON structure. Do not output anything else."""
             json_content = json_content.replace('None', 'null')
             return json.loads(json_content)
         except Exception as e:
-            print(f"[Warning] Failed to extract JSON: {e}")
+            self.logger.warning(f"Failed to extract JSON: {e}")
             return {"node_list": []}
