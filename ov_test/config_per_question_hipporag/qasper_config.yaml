@@ -23,8 +23,8 @@ store:
     temperature: 0
 
 execution:
-  max_workers: 1
-  ingest_workers: 1
+  max_workers: 5
+  ingest_workers: 3
   retrieval_topk: 5
   max_queries: null
 # ==================================

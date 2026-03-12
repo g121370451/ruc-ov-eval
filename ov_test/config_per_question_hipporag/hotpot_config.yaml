@@ -1,11 +1,11 @@
 project_name: "RAG_Benchmark"
 
 # ===========修改配置================
-dataset_name: "Locomo"
+dataset_name: "HotpotQA"
 
 adapter:
-  module: "src.adapters.locomo_adapter"
-  class_name: "LocomoAdapter"
+  module: "src.adapters.hotpotqa_adapter"
+  class_name: "HotpotQAAdapter"
 
 store:
   type: "hipporag"
@@ -30,7 +30,7 @@ execution:
 # ==================================
 
 paths:
-  raw_data: "Data/{dataset_name}/{dataset_name}.json"
+  raw_data: "Data/{dataset_name}/hotpot_qa_100.json"
   doc_output_dir: "Data/{dataset_name}/hipporag_per_question/processed_docs"
   vector_store: "Data/{dataset_name}/hipporag_per_question/store_index"
   output_dir: "Output/{dataset_name}/hipporag_per_question/experiment_0001"

@@ -85,6 +85,19 @@ class HippoRAGStoreWrapper:
             return 0
         return len(self.enc.encode(str(text)))
 
+    def _read_document(self, doc_path: str) -> str:
+        """读取文档内容，支持 txt/md/pdf 格式"""
+        ext = os.path.splitext(doc_path)[1].lower()
+        if ext == '.pdf':
+            from pdfminer.high_level import extract_text
+            from markdownify import markdownify
+            raw_text = extract_text(doc_path)
+            content = markdownify(raw_text).strip()
+        else:
+            with open(doc_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+        return content
+
     def ingest(self, samples: List[StandardDoc], max_workers: int = 4, monitor=None) -> dict:
         """入库：读取文档内容，调用 HippoRAG.index()"""
         start_time = time.time()
@@ -100,8 +113,7 @@ class HippoRAGStoreWrapper:
         for sample in samples:
             for doc_path in sample.doc_paths:
                 try:
-                    with open(doc_path, 'r', encoding='utf-8') as f:
-                        content = f.read().strip()
+                    content = self._read_document(doc_path)
                     if content:
                         raw_docs.append(content)
                 except Exception as e:
