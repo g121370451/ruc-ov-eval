@@ -217,7 +217,6 @@ class PageIndexStoreWrapper:
                     ))
             except Exception as e:
                 self.logger.error(f"Retrieval failed for {doc_id}: {e}")
-        self.logger.info(f"Search nodes in doc {doc_id}: {content}")
         result = PageIndexResult(resources=resources)
         result.retrieve_input_tokens = local_in
         result.retrieve_output_tokens = local_out

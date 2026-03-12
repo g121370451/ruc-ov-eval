@@ -73,6 +73,13 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 doc_output_dir=self.config['paths'].get('doc_output_dir', ''),
                 config_path=pageindex_conf
             )
+        elif self.store_type == 'hipporag':
+            from src.core.hipporag_store import HippoRAGStoreWrapper
+            hipporag_conf = self.store_config.get('hipporag_config', {})
+            return HippoRAGStoreWrapper(
+                store_path=store_path,
+                hipporag_config=hipporag_conf
+            )
         else:
             from src.core.vector_store import VikingStoreWrapper
             return VikingStoreWrapper(store_path=store_path)

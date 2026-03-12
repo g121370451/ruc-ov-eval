@@ -4,6 +4,7 @@ import json
 import time
 import random
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
@@ -22,7 +23,7 @@ class BenchmarkPipeline:
         self.llm = llm
         self.logger = get_logger()
         self.monitor = BenchmarkMonitor()
-        
+
         # 结果文件路径
         self.output_dir = self.config['paths']['output_dir']
         if not os.path.exists(self.output_dir):
@@ -30,12 +31,33 @@ class BenchmarkPipeline:
         self.generated_file = os.path.join(self.output_dir, "generated_answers.json")
         self.eval_file = os.path.join(self.output_dir, "qa_eval_detailed_results.json")
         self.report_file = os.path.join(self.output_dir, "benchmark_metrics_report.json")
-        
+
         # 用于存储各阶段汇总指标
         self.metrics_summary = {
             "insertion": {"time": 0, "input_tokens": 0, "output_tokens": 0},
             "deletion": {"time": 0, "input_tokens": 0, "output_tokens": 0}
         }
+
+        # ---- 断点恢复 records ----
+        self.records_file = os.path.join(self.output_dir, "_pipeline_records.json")
+        self.records = self._load_records()
+        self._records_lock = threading.Lock()
+
+    # ---- 记录持久化 ----
+
+    def _load_records(self) -> dict:
+        if os.path.exists(self.records_file):
+            try:
+                with open(self.records_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        return {"ingested": False, "tasks": {}}
+
+    def _save_records(self):
+        with self._records_lock:
+            with open(self.records_file, 'w', encoding='utf-8') as f:
+                json.dump(self.records, f, indent=2, ensure_ascii=False)
 
     def run_generation(self):
         """Step1 数据预处理"""
@@ -50,12 +72,20 @@ class BenchmarkPipeline:
             exit(1)
         skip_ingestion = self.config['execution'].get('skip_ingestion', False)
 
+        # 断点恢复：如果 records 标记已入库完成，跳过入库
+        if self.records.get("ingested"):
+            self.logger.info("Records indicate ingestion already completed, skipping.")
+            skip_ingestion = True
+            ingest_stats = self.records.get("ingest_stats", {"time": 0, "input_tokens": 0, "output_tokens": 0})
+            self.metrics_summary["insertion"] = ingest_stats
+
         if skip_ingestion:
             self.logger.info(f"Skipping Ingestion. Using existing docs at: {doc_dir}")
             if not os.path.exists(doc_dir):
                  self.logger.warning(f"Warning: Doc directory {doc_dir} not found, but ingestion is skipped.")
-            self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
-            
+            if not self.records.get("ingested"):
+                self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
+
         else:  # 正常执行入库
             import shutil
             from src.core.backup_utils import backup_store
@@ -73,6 +103,13 @@ class BenchmarkPipeline:
             )
             self.metrics_summary["insertion"] = ingest_stats
             self.logger.info(f"Insertion finished. Time: {ingest_stats['time']:.2f}s")
+
+            # 标记入库完成
+            with self._records_lock:
+                self.records["ingested"] = True
+                self.records["ingest_stats"] = ingest_stats
+            self._save_records()
+
             # 入库完成后备份
             backup_store(store_path, self.logger)
 
@@ -86,24 +123,42 @@ class BenchmarkPipeline:
             })
         """Step 2 & 3: 数据入库 + 检索生成"""
         # 1. 始终加载数据
-        samples = self.adapter.load_and_transform()    
+        samples = self.adapter.load_and_transform()
         # 2. 准备 QA 任务
         tasks = self._prepare_tasks(samples)
+
+        # 断点恢复：从 records 中加载已完成的 task 结果
+        completed_tasks = self.records.get("tasks", {})
         results_map = {}
+        pending_tasks = []
+        for task in tasks:
+            tid = str(task['id'])
+            if tid in completed_tasks:
+                results_map[task['id']] = completed_tasks[tid]
+            else:
+                pending_tasks.append(task)
+
+        if results_map:
+            self.logger.info(f"Resumed {len(results_map)} completed tasks, {len(pending_tasks)} remaining")
+
         max_workers = self.config['execution']['max_workers']
-        
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(self._process_generation_task, task): task 
-                for task in tasks
+                executor.submit(self._process_generation_task, task): task
+                for task in pending_tasks
             }
-            
-            pbar = tqdm(total=len(tasks), desc="Generating Answers", unit="task")
+
+            pbar = tqdm(total=len(pending_tasks), desc="Generating Answers", unit="task")
             for future in as_completed(future_to_task):
                 task = future_to_task[future]
                 try:
                     res = future.result()
                     results_map[res['_global_index']] = res
+                    # 持久化单个 task 结果
+                    with self._records_lock:
+                        self.records.setdefault("tasks", {})[str(res['_global_index'])] = res
+                    self._save_records()
                 except Exception as e:
                     self.logger.error(f"Generation failed for task {task['id']}: {e}")
                     self.monitor.worker_end(success=False)
@@ -189,6 +244,11 @@ class BenchmarkPipeline:
         elapsed = time.time() - t0
         self.metrics_summary["deletion"] = {"time": elapsed, "input_tokens": 0, "output_tokens": 0}
         self.logger.info(f"Deletion finished. Time: {elapsed:.2f}s")
+        # 更新 records
+        with self._records_lock:
+            self.records["deleted"] = True
+            self.records["delete_time"] = elapsed
+        self._save_records()
 
     def _prepare_tasks(self, samples):
         tasks = []

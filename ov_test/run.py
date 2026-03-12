@@ -94,7 +94,7 @@ def resolve_auto_output_dir(config):
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
     # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config/locomo_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_hipporag/locomo_config.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
@@ -175,6 +175,13 @@ def main():
                 store_path=config['paths']['vector_store'],
                 doc_output_dir=config['paths'].get('doc_output_dir', ''),
                 config_path=pageindex_conf
+            )
+        elif store_type == 'hipporag':
+            from src.core.hipporag_store import HippoRAGStoreWrapper
+            hipporag_conf = store_cfg.get('hipporag_config', {})
+            vector_store = HippoRAGStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                hipporag_config=hipporag_conf
             )
         else:
             from src.core.vector_store import VikingStoreWrapper
