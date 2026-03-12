@@ -183,11 +183,15 @@ class QasperAdapter(BaseAdapter):
                         yes_no = answer_obj.get("yes_no")
                         
                         if extractive_spans:
-                            # 提取式答案：可能有多个片段
-                            for span in extractive_spans:
-                                if span and span.strip():
-                                    gold_answers.append(span.strip())
-                            current_answer = extractive_spans[0] if extractive_spans else None
+                            # 修改：将多个提取片段合并为一个完整答案
+                            valid_spans = [span.strip() for span in extractive_spans if span and span.strip()]
+                            if valid_spans:
+                                # 使用分号连接，表示这是一个由多部分组成的完整答案
+                                combined_answer = "; ".join(valid_spans)
+                                gold_answers.append(combined_answer)
+                                current_answer = combined_answer
+                            else:
+                                current_answer = None
                         elif free_form_answer and free_form_answer.strip():
                             # 自由形式答案
                             current_answer = free_form_answer.strip()
