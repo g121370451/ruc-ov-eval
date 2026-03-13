@@ -5,6 +5,7 @@ import time
 import asyncio
 import copy
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from tqdm import tqdm
@@ -96,6 +97,36 @@ class PageIndexStoreWrapper:
             return 0
         return len(self.enc.encode(str(text)))
 
+    @staticmethod
+    def _convert_single_pdf(pdf_path: str) -> str:
+        """将单个 PDF 转为 Markdown 并持久化，返回 md 路径"""
+        from pdfminer.high_level import extract_text
+        from markdownify import markdownify
+        md_path = os.path.splitext(pdf_path)[0] + '.md'
+        if os.path.exists(md_path):
+            return md_path
+        raw_text = extract_text(pdf_path)
+        md_content = markdownify(raw_text).strip()
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(md_content)
+        return md_path
+
+    def _batch_convert_pdf(self, pdf_paths: List[str], max_workers: int = 4):
+        """多线程批量将 PDF 转为 Markdown"""
+        to_convert = [p for p in pdf_paths if not os.path.exists(os.path.splitext(p)[0] + '.md')]
+        if not to_convert:
+            self.logger.info(f"All {len(pdf_paths)} PDFs already converted, skipping")
+            return
+        self.logger.info(f"Converting {len(to_convert)} PDFs (skipping {len(pdf_paths) - len(to_convert)} already done)")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(self._convert_single_pdf, p): p for p in to_convert}
+            for future in tqdm(as_completed(futures), total=len(futures), desc="PDF -> Markdown"):
+                pdf_path = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    self.logger.error(f"Failed to convert {pdf_path}: {e}")
+
     def ingest(self, samples: List[StandardDoc], max_workers: int = 4, monitor: Optional[BenchmarkMonitor] = None) -> dict:
         """入库：根据文件类型调用不同的本地解析方法生成树，返回 dict 与 VikingStoreWrapper 对齐"""
         start_time = time.time()
@@ -110,7 +141,25 @@ class PageIndexStoreWrapper:
                     seen.add(p)
                     all_paths.append(p)
 
-        for doc_path in tqdm(all_paths, desc="Generating Local Trees"):
+        # 多线程批量将 PDF 转为 Markdown 并持久化
+        pdf_paths = [p for p in all_paths if os.path.splitext(p)[1].lower() == '.pdf']
+        if pdf_paths:
+            self.logger.info(f"Converting {len(pdf_paths)} PDFs to Markdown (workers={max_workers})...")
+            self._batch_convert_pdf(pdf_paths, max_workers)
+
+        # 将 all_paths 中的 .pdf 替换为对应的 .md
+        resolved_paths = []
+        for p in all_paths:
+            if os.path.splitext(p)[1].lower() == '.pdf':
+                md_path = os.path.splitext(p)[0] + '.md'
+                if os.path.exists(md_path):
+                    resolved_paths.append(md_path)
+                else:
+                    self.logger.warning(f"PDF conversion failed, skipping: {p}")
+            else:
+                resolved_paths.append(p)
+
+        for doc_path in tqdm(resolved_paths, desc="Generating Local Trees"):
             if monitor:
                 monitor.worker_start()
             try:
@@ -119,27 +168,10 @@ class PageIndexStoreWrapper:
                 tree_data = None
 
                 if ext == '.pdf':
-                    from pdfminer.high_level import extract_text
-                    from markdownify import markdownify
-                    raw_text = extract_text(doc_path)
-                    md_content = markdownify(raw_text).strip()
-                    # 写入临时 md 文件，供 md_to_tree 读取
-                    tmp_md_path = doc_path + '.tmp.md'
-                    with open(tmp_md_path, 'w', encoding='utf-8') as mf:
-                        mf.write(md_content)
-                    opt = self._get_pageindex_opt()
-                    tree_data = asyncio.run(md_to_tree(
-                        md_path=tmp_md_path,
-                        if_thinning=False,
-                        min_token_threshold=5000,
-                        if_add_node_summary=opt.if_add_node_summary,
-                        summary_token_threshold=200,
-                        model=opt.model,
-                        if_add_doc_description=opt.if_add_doc_description,
-                        if_add_node_text=opt.if_add_node_text,
-                        if_add_node_id=opt.if_add_node_id
-                    ))
-                    os.remove(tmp_md_path)
+                    self.logger.warning(f"Unexpected PDF in tree generation: {doc_path}")
+                    if monitor:
+                        monitor.worker_end(success=False)
+                    continue
                 elif ext in ['.md', '.markdown']:
                     opt = self._get_pageindex_opt()
                     tree_data = asyncio.run(md_to_tree(
