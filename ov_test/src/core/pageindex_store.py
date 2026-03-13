@@ -119,8 +119,27 @@ class PageIndexStoreWrapper:
                 tree_data = None
 
                 if ext == '.pdf':
+                    from pdfminer.high_level import extract_text
+                    from markdownify import markdownify
+                    raw_text = extract_text(doc_path)
+                    md_content = markdownify(raw_text).strip()
+                    # 写入临时 md 文件，供 md_to_tree 读取
+                    tmp_md_path = doc_path + '.tmp.md'
+                    with open(tmp_md_path, 'w', encoding='utf-8') as mf:
+                        mf.write(md_content)
                     opt = self._get_pageindex_opt()
-                    tree_data = page_index(doc_path, **vars(opt))
+                    tree_data = asyncio.run(md_to_tree(
+                        md_path=tmp_md_path,
+                        if_thinning=False,
+                        min_token_threshold=5000,
+                        if_add_node_summary=opt.if_add_node_summary,
+                        summary_token_threshold=200,
+                        model=opt.model,
+                        if_add_doc_description=opt.if_add_doc_description,
+                        if_add_node_text=opt.if_add_node_text,
+                        if_add_node_id=opt.if_add_node_id
+                    ))
+                    os.remove(tmp_md_path)
                 elif ext in ['.md', '.markdown']:
                     opt = self._get_pageindex_opt()
                     tree_data = asyncio.run(md_to_tree(
