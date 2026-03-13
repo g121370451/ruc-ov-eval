@@ -33,7 +33,7 @@ def _extract_ner_from_response(real_response):
     if match is None:
         # If pattern doesn't match, return an empty list
         return []
-    return eval(match.group())["named_entities"]
+    return [str(e) for e in eval(match.group())["named_entities"]]
 
 
 class OpenIE:
