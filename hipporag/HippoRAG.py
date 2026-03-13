@@ -206,9 +206,6 @@ class HippoRAG:
             new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows)
             self.merge_openie_results(all_openie_info, new_openie_rows, new_ner_results_dict, new_triple_results_dict)
 
-        if self.global_config.save_openie:
-            self.save_openie_results(all_openie_info)
-
         assert False, logger.info('Done with OpenIE, run online indexing for future retrieval.')
 
     def index(self, docs: List[str]):
@@ -237,9 +234,6 @@ class HippoRAG:
         if len(chunk_keys_to_process) > 0:
             new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows)
             self.merge_openie_results(all_openie_info, new_openie_rows, new_ner_results_dict, new_triple_results_dict)
-
-        if self.global_config.save_openie:
-            self.save_openie_results(all_openie_info)
 
         ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info)
 
@@ -343,8 +337,6 @@ class HippoRAG:
         logger.info(f"Deleting {len(chunk_ids_to_delete)} Chunks")
         logger.info(f"Deleting {len(triple_ids_to_delete)} Triples")
         logger.info(f"Deleting {len(filtered_ent_ids_to_delete)} Entities")
-
-        self.save_openie_results(all_openie_info_with_deletes)
 
         self.entity_embedding_store.delete(filtered_ent_ids_to_delete)
         self.fact_embedding_store.delete(triple_ids_to_delete)
