@@ -1,5 +1,4 @@
 import os
-import shutil
 import time
 import logging
 from dataclasses import dataclass, field
@@ -180,10 +179,15 @@ class HippoRAGStoreWrapper:
         return retrieved_texts, context_blocks, retrieved_uris
 
     def clear(self) -> None:
-        """清空库：删除 HippoRAG 工作目录下的所有数据"""
+        """清空库：通过 HippoRAG.delete 接口删除所有已入库的文档"""
+        hippo = self._ensure_hippo()
+        all_chunks = list(hippo.chunk_embedding_store.get_all_texts())
+        if all_chunks:
+            self.logger.info(f"Deleting {len(all_chunks)} chunks via HippoRAG.delete()")
+            hippo.delete(all_chunks)
+        else:
+            self.logger.info("No chunks to delete")
         self._hippo = None
-        if os.path.exists(self.store_path):
-            shutil.rmtree(self.store_path)
 
     def close(self):
         """释放资源"""
