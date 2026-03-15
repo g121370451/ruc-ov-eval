@@ -297,6 +297,8 @@ class SQLAgentStoreWrapper:
         with engine.connect() as conn:
             for entry in data:
                 sid = str(entry.get('sample_id', ''))
+                if sample_ids and sid not in sample_ids:
+                    continue
                 conv = entry.get('conversation', {})
                 for sess_idx in range(1, 100):
                     sess_key = f'session_{sess_idx}'
@@ -359,12 +361,20 @@ class SQLAgentStoreWrapper:
         );"""
         self._exec_schema(engine, schema)
 
+        # per_query 模式：从 samples metadata 中收集 supporting_titles 用于过滤
+        filter_titles = set()
+        for s in samples:
+            filter_titles.update(s.metadata.get('supporting_titles', []))
+
         data = self._load_json(self.raw_data_path)
         total_chunks = 0
         with engine.connect() as conn:
             for art in data:
                 wiki_id = art.get('id', art.get('wiki_id', ''))
                 title = art.get('title', '')
+                # 如果有 filter_titles，只加载匹配的 articles
+                if filter_titles and title not in filter_titles:
+                    continue
                 url = art.get('url', '')
                 # 处理 text 字段：可能是 2D/3D 数组（段落→句子段→句子）
                 raw_text = art.get('text', '')
@@ -399,7 +409,8 @@ class SQLAgentStoreWrapper:
                     ), {"a": wiki_id, "b": title, "c": ci, "d": chunk})
                     total_chunks += 1
             conn.commit()
-        self.logger.info(f"[SQLAgent-HotpotQA] {len(data)} articles, {total_chunks} chunks")
+        loaded = len(data) if not filter_titles else len(filter_titles)
+        self.logger.info(f"[SQLAgent-HotpotQA] {loaded} articles (filtered={bool(filter_titles)}), {total_chunks} chunks")
 
     # ---- Qasper ----
 
@@ -683,9 +694,9 @@ class SQLAgentStoreWrapper:
         qa_data = []
         base = self.raw_data_path
         patterns = []
-        for split in ['train', 'dev']:
-            for kind in ['answerable', 'unanswerable']:
-                patterns.append(os.path.join(base, split, f'clapnq_{split}_{kind}.jsonl'))
+        for split in ['dev']:
+            for kind in ['answerable']:
+                patterns.append(os.path.join(base, 'annotated_data', split, f'clapnq_{split}_{kind}.jsonl'))
         # 也支持直接 JSONL 文件
         if os.path.isfile(base) and base.endswith('.jsonl'):
             patterns = [base]

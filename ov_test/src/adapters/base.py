@@ -25,6 +25,7 @@ class StandardDoc:
     """标准化的 sample_id 与文档路径映射，doc_paths 支持一对多（如 HotpotQA 多跳）"""
     sample_id: str
     doc_paths: List[str]
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 class BaseAdapter(ABC):
     """所有数据集适配器的基类"""

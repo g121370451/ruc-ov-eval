@@ -12,6 +12,7 @@ doc_paths 内容完全相同的 sample 共享同一个 store（通过 store_key 
 import os
 import json
 import hashlib
+import re
 import shutil
 import time
 import threading
@@ -57,7 +58,12 @@ class PerQuestionPipeline(BenchmarkPipeline):
     @staticmethod
     def _make_store_key(doc_paths: List[str]) -> str:
         """从 doc_paths 列表生成确定性的 store 标识。
-        排序后对 basename 拼接取 sha1 前 16 位，避免路径过长。"""
+        单文件时直接用文件名（去扩展名），多文件时取 sha1 前 16 位。"""
+        if len(doc_paths) == 1:
+            name = os.path.splitext(os.path.basename(doc_paths[0]))[0]
+            # 清理非法目录字符，截断过长名称
+            name = re.sub(r'[\\/*?:"<>|]', '_', name)[:120]
+            return name if name else hashlib.sha1(doc_paths[0].encode('utf-8')).hexdigest()[:16]
         sorted_names = sorted(os.path.basename(p) for p in doc_paths)
         raw = "|".join(sorted_names)
         return hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]
@@ -314,9 +320,23 @@ class PerQuestionPipeline(BenchmarkPipeline):
         t_ingest = time.time()
         store = self._create_store(store_path)
         try:
-            tmp_doc = StandardDoc(sample_id=store_key, doc_paths=doc_paths)
+            if self.store_type == 'sql_agent':
+                # SQL Agent 需要真实 sample_id 来过滤原始数据
+                docs = []
+                for s in group['samples']:
+                    doc_meta = {}
+                    # 收集 QA 元数据中的辅助信息（如 HotpotQA 的 supporting_titles）
+                    all_titles = set()
+                    for qa in s.qa_pairs:
+                        all_titles.update(qa.metadata.get('supporting_fact_titles', []))
+                    if all_titles:
+                        doc_meta['supporting_titles'] = list(all_titles)
+                    docs.append(StandardDoc(sample_id=s.sample_id, doc_paths=doc_paths,
+                                            metadata=doc_meta))
+            else:
+                docs = [StandardDoc(sample_id=store_key, doc_paths=doc_paths)]
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
-            stats = store.ingest([tmp_doc], max_workers=ingest_workers, monitor=self.monitor)
+            stats = store.ingest(docs, max_workers=ingest_workers, monitor=self.monitor)
         except Exception as e:
             self.logger.error(f"[{store_key}] Ingest error: {e}")
             raise
