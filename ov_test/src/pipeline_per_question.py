@@ -372,7 +372,11 @@ class PerQuestionPipeline(BenchmarkPipeline):
         try:
             topk = self.config['execution']['retrieval_topk']
             t0 = time.time()
-            res = store.retrieve(query=qa.question, topk=topk)
+            if self.store_type == 'sql_agent':
+                res = store.retrieve(query=qa.question, topk=topk,
+                                     sample_id=sample_id, qa_metadata=qa.metadata)
+            else:
+                res = store.retrieve(query=qa.question, topk=topk)
             latency = time.time() - t0
 
             retrieve_in = getattr(res, 'retrieve_input_tokens', 0)

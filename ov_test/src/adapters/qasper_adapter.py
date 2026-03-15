@@ -233,7 +233,8 @@ class QasperAdapter(BaseAdapter):
                     metadata={
                         "question_id": question_id,
                         "answer_types": answer_types,
-                        "answer_evidence_pairs": answer_evidence_pairs
+                        "answer_evidence_pairs": answer_evidence_pairs,
+                        "paper_title": paper_title,
                     }
                 ))
 

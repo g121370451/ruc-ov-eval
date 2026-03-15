@@ -270,7 +270,12 @@ class BenchmarkPipeline:
 
             # 1. Retrieval
             t0 = time.time()
-            search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
+            if self.store_type == 'sql_agent':
+                search_res = self.db.retrieve(
+                    query=qa.question, topk=self.config['execution']['retrieval_topk'],
+                    sample_id=task['sample_id'], qa_metadata=qa.metadata)
+            else:
+                search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
             latency = time.time() - t0
 
             retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)

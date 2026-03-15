@@ -151,7 +151,11 @@ class SQLAgentStoreWrapper:
                 return f"Error: {exc}"
 
         tools.append(Tool(name="sql_db_write",
-                          description="Execute INSERT/UPDATE/DELETE SQL. For SELECT use sql_db_query.",
+                          description=(
+                              "Execute a SQL statement that MODIFIES the database "
+                              "(INSERT, UPDATE, DELETE). Returns confirmation or error. "
+                              "For read-only SELECT queries, prefer sql_db_query."
+                          ),
                           func=_run_write_sql))
 
         prompt = ChatPromptTemplate.from_messages([
@@ -159,7 +163,7 @@ class SQLAgentStoreWrapper:
              "You are a precise SQL database assistant. "
              "Use the provided tools to explore the database schema and run queries. "
              "ALWAYS use the tools to get real data — never fabricate results. "
-             "If the answer cannot be determined from the database, say 'Insufficient information'."),
+             "If the answer cannot be determined from the database, say 'No/insufficient information'."),
             ("human", "{input}"),
             MessagesPlaceholder("agent_scratchpad"),
         ])
@@ -179,11 +183,64 @@ class SQLAgentStoreWrapper:
     def _read_document(self, doc_path: str) -> str:
         ext = os.path.splitext(doc_path)[1].lower()
         if ext == '.pdf':
-            from pdfminer.high_level import extract_text
-            from markdownify import markdownify
-            return markdownify(extract_text(doc_path)).strip()
+            return self._extract_pdf_text(doc_path)
         with open(doc_path, 'r', encoding='utf-8', errors='replace') as f:
             return f.read().strip()
+
+    def _extract_pdf_text(self, pdf_path: str) -> str:
+        """Extract text from PDF: docling -> pypdf -> pdfplumber fallback chain."""
+        # Priority 1: docling
+        try:
+            from docling.document_converter import DocumentConverter
+            converter = DocumentConverter()
+            result = converter.convert(pdf_path)
+            content = result.document.export_to_markdown()
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("docling failed for %s: %s, falling back", pdf_path, exc)
+
+        # Priority 2: pypdf
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(pdf_path)
+            if reader.is_encrypted:
+                reader.decrypt("")
+            content = ""
+            for page in reader.pages:
+                content += (page.extract_text() or "") + "\n"
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("pypdf failed for %s: %s, falling back", pdf_path, exc)
+
+        # Priority 3: pdfplumber
+        try:
+            import pdfplumber
+            pages_text = []
+            with pdfplumber.open(pdf_path) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        pages_text.append(t)
+            content = "\n\n".join(pages_text)
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("pdfplumber failed for %s: %s", pdf_path, exc)
+
+        self.logger.error(
+            "Cannot extract text from %s. "
+            "Install one of: pip install 'docling>=2' / pip install pypdf / pip install pdfplumber",
+            pdf_path,
+        )
+        return ""
 
     # ================================================================
     #  ingest 入口：按 dataset_name 分发
@@ -242,47 +299,49 @@ class SQLAgentStoreWrapper:
                 sid = str(entry.get('sample_id', ''))
                 conv = entry.get('conversation', {})
                 for sess_idx in range(1, 100):
-                    key = f'session_{sess_idx}'
-                    if key not in conv:
-                        break
-                    session = conv[key]
-                    date = session[0].get('date', '') if session else ''
-                    for turn_i, turn in enumerate(session):
+                    sess_key = f'session_{sess_idx}'
+                    date_key = f'{sess_key}_date_time'
+                    if sess_key not in conv or not isinstance(conv[sess_key], list):
+                        continue
+                    sess_date = conv.get(date_key, '')
+                    for turn_idx, turn in enumerate(conv[sess_key]):
                         conn.execute(text(
                             "INSERT INTO conversations "
                             "(sample_id,session_id,session_date,turn_number,dia_id,speaker,text) "
                             "VALUES (:a,:b,:c,:d,:e,:f,:g)"
-                        ), {"a": sid, "b": sess_idx, "c": date, "d": turn_i,
+                        ), {"a": sid, "b": sess_idx, "c": sess_date, "d": turn_idx + 1,
                             "e": turn.get('dia_id', ''), "f": turn.get('speaker', ''),
                             "g": turn.get('text', '')})
 
                 # session summaries
-                for sk, summary in entry.get('session_summary', {}).items():
-                    m = re.match(r'session_(\d+)_summary', sk)
-                    if m:
+                for i in range(1, 100):
+                    skey = f'session_{i}_summary'
+                    if skey in entry.get('session_summary', {}):
                         conn.execute(text(
                             "INSERT INTO session_summaries (sample_id,session_id,summary) "
                             "VALUES (:a,:b,:c)"
-                        ), {"a": sid, "b": int(m.group(1)), "c": summary})
+                        ), {"a": sid, "b": i, "c": entry['session_summary'][skey]})
 
                 # observations
-                for ok, obs_dict in entry.get('observation', {}).items():
-                    m = re.match(r'session_(\d+)_observation', ok)
-                    if not m:
+                for i in range(1, 100):
+                    okey = f'session_{i}_observation'
+                    obs_dict = entry.get('observation', {}).get(okey)
+                    if not obs_dict or not isinstance(obs_dict, dict):
                         continue
-                    sess_id = int(m.group(1))
                     for speaker, obs_list in obs_dict.items():
+                        if not isinstance(obs_list, list):
+                            continue
                         for obs_item in obs_list:
-                            observation = obs_item[0] if isinstance(obs_item, list) else str(obs_item)
-                            dia_ref = obs_item[1] if isinstance(obs_item, list) and len(obs_item) > 1 else ''
-                            if isinstance(dia_ref, list):
-                                dia_ref = ', '.join(str(x) for x in dia_ref)
-                            conn.execute(text(
-                                "INSERT INTO observations "
-                                "(sample_id,session_id,speaker,observation,dia_id) "
-                                "VALUES (:a,:b,:c,:d,:e)"
-                            ), {"a": sid, "b": sess_id, "c": speaker,
-                                "d": observation, "e": str(dia_ref)})
+                            if isinstance(obs_item, list) and len(obs_item) >= 2:
+                                dia_ref = obs_item[1]
+                                if isinstance(dia_ref, list):
+                                    dia_ref = ', '.join(str(x) for x in dia_ref)
+                                conn.execute(text(
+                                    "INSERT INTO observations "
+                                    "(sample_id,session_id,speaker,observation,dia_id) "
+                                    "VALUES (:a,:b,:c,:d,:e)"
+                                ), {"a": sid, "b": i, "c": speaker,
+                                    "d": str(obs_item[0]), "e": str(dia_ref)})
             conn.commit()
         self.logger.info(f"[SQLAgent-LoCoMo] Ingested for {len(sample_ids)} samples")
 
@@ -307,15 +366,23 @@ class SQLAgentStoreWrapper:
                 wiki_id = art.get('id', art.get('wiki_id', ''))
                 title = art.get('title', '')
                 url = art.get('url', '')
-                # 处理 text 字段：可能是 2D 数组（段落→句子）
+                # 处理 text 字段：可能是 2D/3D 数组（段落→句子段→句子）
                 raw_text = art.get('text', '')
                 if isinstance(raw_text, list):
                     paragraphs = []
                     for para in raw_text:
+                        flat_sents = []
                         if isinstance(para, list):
-                            paragraphs.append(' '.join(str(s) for s in para))
+                            for seg in para:
+                                if isinstance(seg, list):
+                                    flat_sents.extend(seg)
+                                else:
+                                    flat_sents.append(str(seg))
                         else:
-                            paragraphs.append(str(para))
+                            flat_sents.append(str(para))
+                        paragraph_text = ' '.join(s.strip() for s in flat_sents if s.strip())
+                        if paragraph_text:
+                            paragraphs.append(paragraph_text)
                     content = '\n\n'.join(paragraphs)
                 else:
                     content = str(raw_text)
@@ -575,29 +642,41 @@ class SQLAgentStoreWrapper:
             return json.load(f)
 
     def _load_qasper_papers(self) -> List[Dict]:
-        """加载 Qasper 数据，支持单文件或目录下多 split"""
+        """加载 Qasper 数据，JSONL 格式（每行一个 JSON 对象），与原版一致"""
         papers = []
         if os.path.isfile(self.raw_data_path):
-            data = self._load_json(self.raw_data_path)
-            if isinstance(data, dict):
-                for pid, paper in data.items():
-                    paper['id'] = pid
-                    papers.append(paper)
-            else:
-                papers = data
+            # 单文件：尝试 JSONL
+            papers.extend(self._load_jsonl_or_json(self.raw_data_path))
         else:
             for name in ['test.json', 'train.json', 'validation.json',
                           'qasper-dev-v0.3.json', 'qasper-test-v0.3.json']:
                 fp = os.path.join(self.raw_data_path, name)
                 if os.path.exists(fp):
-                    data = self._load_json(fp)
-                    if isinstance(data, dict):
-                        for pid, paper in data.items():
-                            paper['id'] = pid
-                            papers.append(paper)
-                    else:
-                        papers.extend(data)
+                    papers.extend(self._load_jsonl_or_json(fp))
         return papers
+
+    def _load_jsonl_or_json(self, filepath: str) -> List[Dict]:
+        """加载 JSONL 或 JSON 文件，自动检测格式"""
+        items = []
+        with open(filepath, 'r', encoding='utf-8') as f:
+            first_line = f.readline().strip()
+            f.seek(0)
+            if first_line.startswith('{') and not first_line.endswith('}'):
+                # 可能是完整 JSON 文件
+                data = json.load(f)
+                if isinstance(data, dict):
+                    for pid, paper in data.items():
+                        paper['id'] = pid
+                        items.append(paper)
+                elif isinstance(data, list):
+                    items = data
+            else:
+                # JSONL 格式
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        items.append(json.loads(line))
+        return items
 
     def _load_clapnq_data(self) -> List[Dict]:
         """加载 ClapNQ JSONL 数据"""
@@ -625,12 +704,163 @@ class SQLAgentStoreWrapper:
 
     # ---- retrieve / process / clear / close ----
 
-    def retrieve(self, query: str, topk: int = 10, target_uri: str = None) -> SQLAgentResult:
+    def _build_retrieve_prompt(self, question: str, sample_id: str = '',
+                                qa_metadata: Optional[Dict] = None) -> str:
+        """根据 dataset_name 构建数据集专用的检索 prompt，与原版 LangChain-SQL-Agent 一致"""
+        meta = qa_metadata or {}
+        ds = self.dataset_name
+
+        if ds == 'locomo':
+            speakers = meta.get('speakers', ('', ''))
+            sp_a = speakers[0] if len(speakers) > 0 else ''
+            sp_b = speakers[1] if len(speakers) > 1 else ''
+            return (
+                f"Based on conversations with sample_id '{sample_id}' "
+                f"between {sp_a} and {sp_b}, "
+                f"answer the following question. If the answer cannot be found, "
+                f"reply 'unanswerable'.\n\nQuestion: {question}"
+            )
+
+        elif ds == 'qasper':
+            title = meta.get('paper_title', '')
+            return (
+                f"Using the research paper data stored in the database for "
+                f"paper_id '{sample_id}' (title: \"{title}\"), "
+                f"answer the following question. "
+                f"Search in the 'papers', 'sections', and 'section_chunks' tables. "
+                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
+                f"Question: {question}"
+            )
+
+        elif ds == 'hotpotqa':
+            titles = meta.get('supporting_fact_titles', [])[:3]
+            title_hints = ", ".join(f"'{t}'" for t in titles)
+            return (
+                f"Using the Wikipedia articles stored in the database, "
+                f"answer the following multi-hop question. "
+                f"Hint: relevant articles may include {title_hints}. "
+                f"Search in both 'articles' and 'article_chunks' tables. "
+                f"Give a concise answer. "
+                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
+                f"Question: {question}"
+            )
+
+        elif ds == 'syllabusqa':
+            return (
+                f"Using the syllabus data for '{sample_id}' stored in the database, "
+                f"answer the following question. "
+                f"Search in both 'syllabi' and 'syllabus_chunks' tables. "
+                f"If the answer cannot be found, reply 'No/insufficient information'.\n\n"
+                f"Question: {question}"
+            )
+
+        elif ds == 'clapnq':
+            title_hint = ""
+            first_title = meta.get('first_passage_title', '')
+            if first_title:
+                title_hint = f" The relevant passage is titled '{first_title}'."
+            return (
+                f"Using the passage data stored in the database for "
+                f"qa_id '{sample_id}',{title_hint} "
+                f"answer the following question with a concise, cohesive answer. "
+                f"Search in both 'passages' and 'passage_chunks' tables. "
+                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
+                f"Question: {question}"
+            )
+
+        elif ds == 'financebench':
+            company = meta.get('company', '')
+            return (
+                f"Using the financial document data for '{sample_id}' "
+                f"(company: {company}) stored in the database, "
+                f"answer the following question. "
+                f"Search in both 'documents' and 'document_chunks' tables. "
+                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
+                f"Question: {question}"
+            )
+
+        # fallback: 通用 prompt
+        return question
+
+    def _fetch_source_texts(self, sample_id: str) -> List[str]:
+        """从数据库直接查询 sample_id 对应的原文，用于 recall 计算"""
+        engine = self._get_engine()
+        ds = self.dataset_name
+        texts = []
+        try:
+            with engine.connect() as conn:
+                if ds == 'locomo':
+                    # 查对话原文，带 dia_id 标记以支持 evidence 匹配
+                    rows = conn.execute(text(
+                        "SELECT dia_id, speaker, text FROM conversations WHERE sample_id = :sid "
+                        "ORDER BY session_id, turn_number"
+                    ), {"sid": sample_id}).fetchall()
+                    for r in rows:
+                        dia_id, speaker, txt = r[0] or '', r[1] or '', r[2] or ''
+                        if txt:
+                            texts.append(f"[{dia_id}] {speaker}: {txt}")
+                    rows = conn.execute(text(
+                        "SELECT summary FROM session_summaries WHERE sample_id = :sid"
+                    ), {"sid": sample_id}).fetchall()
+                    texts.extend(r[0] for r in rows if r[0])
+                    rows = conn.execute(text(
+                        "SELECT observation, dia_id FROM observations WHERE sample_id = :sid"
+                    ), {"sid": sample_id}).fetchall()
+                    for r in rows:
+                        obs, dia_ref = r[0] or '', r[1] or ''
+                        if obs:
+                            texts.append(f"[{dia_ref}] {obs}")
+
+                elif ds == 'qasper':
+                    rows = conn.execute(text(
+                        "SELECT content FROM sections WHERE paper_id = :pid"
+                    ), {"pid": sample_id}).fetchall()
+                    texts.extend(r[0] for r in rows if r[0])
+
+                elif ds == 'hotpotqa':
+                    rows = conn.execute(text(
+                        "SELECT content FROM articles"
+                    )).fetchall()
+                    texts.extend(r[0] for r in rows if r[0])
+
+                elif ds == 'syllabusqa':
+                    rows = conn.execute(text(
+                        "SELECT content FROM syllabi WHERE syllabus_name = :name"
+                    ), {"name": sample_id}).fetchall()
+                    texts.extend(r[0] for r in rows if r[0])
+
+                elif ds == 'clapnq':
+                    rows = conn.execute(text(
+                        "SELECT content FROM passages WHERE qa_id = :qid"
+                    ), {"qid": sample_id}).fetchall()
+                    texts.extend(r[0] for r in rows if r[0])
+
+                elif ds == 'financebench':
+                    rows = conn.execute(text(
+                        "SELECT content FROM documents WHERE doc_name = :dn"
+                    ), {"dn": sample_id}).fetchall()
+                    texts.extend(r[0] for r in rows if r[0])
+
+                else:
+                    rows = conn.execute(text(
+                        "SELECT content FROM documents"
+                    )).fetchall()
+                    texts.extend(r[0] for r in rows if r[0])
+        except Exception as e:
+            self.logger.warning(f"[SQLAgent] Failed to fetch source texts: {e}")
+        return texts
+
+    def retrieve(self, query: str, topk: int = 10, target_uri: str = None,
+                 sample_id: str = '', qa_metadata: Optional[Dict] = None) -> SQLAgentResult:
         executor = self._ensure_agent()
         if self._token_tracker:
             self._token_tracker.reset()
+
+        # 构建数据集专用的检索 prompt
+        prompt = self._build_retrieve_prompt(query, sample_id, qa_metadata)
+
         try:
-            result = executor.invoke({"input": query})
+            result = executor.invoke({"input": prompt})
             answer = result.get("output", "")
         except Exception as e:
             self.logger.error(f"SQL Agent retrieve failed: {e}")
@@ -642,8 +872,15 @@ class SQLAgentStoreWrapper:
             input_tokens = usage.get("total_prompt_tokens", 0)
             output_tokens = usage.get("total_completion_tokens", 0)
 
+        # 从数据库查出原文，用于 recall 计算
+        source_texts = self._fetch_source_texts(sample_id) if sample_id else []
+        resources = [SQLAgentResource(uri=f"source_{i}", content=t, score=1.0)
+                     for i, t in enumerate(source_texts)]
+        if not resources:
+            resources = [SQLAgentResource(uri="sql_agent_answer", content=answer, score=1.0)]
+
         return SQLAgentResult(
-            resources=[SQLAgentResource(uri="sql_agent_answer", content=answer, score=1.0)],
+            resources=resources,
             retrieve_input_tokens=input_tokens,
             retrieve_output_tokens=output_tokens,
             agent_answer=answer,

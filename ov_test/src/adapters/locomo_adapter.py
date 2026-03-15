@@ -62,6 +62,8 @@ class LocomoAdapter(BaseAdapter):
 
         for item in dataset:
             sample_id = item.get("sample_id", "unknown")
+            conv = item.get("conversation", {})
+            speakers = (conv.get("speaker_a", ""), conv.get("speaker_b", ""))
 
             # 转换 QA 对
             qa_pairs = []
@@ -85,7 +87,7 @@ class LocomoAdapter(BaseAdapter):
                     gold_answers=[str(g) for g in golds],
                     evidence=q.get("evidence", []),
                     category=q.get("category"),
-                    metadata={"original_id": q.get("id")}
+                    metadata={"original_id": q.get("id"), "speakers": speakers}
                 ))
 
             standard_samples.append(StandardSample(

@@ -197,12 +197,15 @@ class ClapNQAdapter(BaseAdapter):
                         selected_sentences = output.get("selected_sentences", [])
                         evidence.extend(selected_sentences)
                     
+                    passages = item.get("passages", [])
+                    first_passage_title = passages[0].get("title", "") if passages else ""
+
                     qa_pairs.append(StandardQA(
                         question=question,
                         gold_answers=gold_answers if gold_answers else ["Not mentioned"],
                         evidence=evidence,
                         category=None,
-                        metadata={"original_id": sample_id}
+                        metadata={"original_id": sample_id, "first_passage_title": first_passage_title}
                     ))
 
                     standard_samples.append(StandardSample(
