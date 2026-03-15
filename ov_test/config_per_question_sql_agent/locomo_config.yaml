@@ -20,9 +20,9 @@ store:
 
 execution:
   max_workers: 5
-  ingest_workers: 1
+  ingest_workers: 4
   retrieval_topk: 5
-  max_queries: 1
+  max_queries: null
 # ==================================
 
 paths:
