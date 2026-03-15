@@ -23,6 +23,7 @@ class BenchmarkPipeline:
         self.llm = llm
         self.logger = get_logger()
         self.monitor = BenchmarkMonitor()
+        self.store_type = config.get('store', {}).get('type', 'viking')
 
         # 结果文件路径
         self.output_dir = self.config['paths']['output_dir']
@@ -109,10 +110,7 @@ class BenchmarkPipeline:
                 self.records["ingested"] = True
                 self.records["ingest_stats"] = ingest_stats
             self._save_records()
-
             # 入库完成后备份
-            backup_store(store_path, self.logger)
-
             # 将 insertion 效率数据写入报告
             self._update_report({
                 "Insertion Efficiency (Total Dataset)": {
@@ -121,6 +119,7 @@ class BenchmarkPipeline:
                     "Total Output Tokens": self.metrics_summary["insertion"]["output_tokens"]
                 }
             })
+            # backup_store(store_path, self.logger)
         """Step 2 & 3: 数据入库 + 检索生成"""
         # 1. 始终加载数据
         samples = self.adapter.load_and_transform()
@@ -268,31 +267,34 @@ class BenchmarkPipeline:
         self.monitor.worker_start()
         try:
             qa = task['qa']
-            
+
             # 1. Retrieval
             t0 = time.time()
             search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
             latency = time.time() - t0
-            
+
             retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
-            
-            # 2. Prompting logic (调用 Adapter 动态生成)
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            
-            # 3. Generation
-            ans_raw = self.llm.generate(full_prompt)
 
-            # 4. Post-processing (调用 Adapter 动态解析)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-
-            # 5. Token stats（含检索阶段 token）
+            # 2. 根据 store 类型决定是否跳过 LLM 生成
             retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
-            out_tokens = self.db.count_tokens(ans) + retrieve_out
+
+            if self.store_type == 'sql_agent':
+                # SQL Agent 的 retrieve 已经直接生成了答案
+                ans = getattr(search_res, 'agent_answer', '')
+                in_tokens = retrieve_in
+                out_tokens = retrieve_out
+            else:
+                # 常规向量检索：构建 prompt → LLM 生成
+                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                ans_raw = self.llm.generate(full_prompt)
+                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+                in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
+                out_tokens = self.db.count_tokens(ans) + retrieve_out
+
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
-            
+
             self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")
 
             return {

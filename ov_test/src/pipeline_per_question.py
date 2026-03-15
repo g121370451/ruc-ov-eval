@@ -80,6 +80,15 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 store_path=store_path,
                 hipporag_config=hipporag_conf
             )
+        elif self.store_type == 'sql_agent':
+            from src.core.sql_agent_store import SQLAgentStoreWrapper
+            sql_agent_conf = self.store_config.get('sql_agent_config', {})
+            sql_agent_conf['dataset_name'] = self.config.get('dataset_name', '')
+            sql_agent_conf['raw_data_path'] = self.config['paths'].get('raw_data', '')
+            return SQLAgentStoreWrapper(
+                store_path=store_path,
+                sql_agent_config=sql_agent_conf
+            )
         else:
             from src.core.vector_store import VikingStoreWrapper
             return VikingStoreWrapper(store_path=store_path)
@@ -373,12 +382,18 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 store.process_retrieval_results(res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            ans_raw = self.llm.generate(full_prompt)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+            if self.store_type == 'sql_agent':
+                # SQL Agent 的 retrieve 已经直接生成了答案
+                ans = getattr(res, 'agent_answer', '')
+                in_tok = retrieve_in
+                out_tok = retrieve_out
+            else:
+                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                ans_raw = self.llm.generate(full_prompt)
+                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+                in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
+                out_tok = store.count_tokens(ans) + retrieve_out
 
-            in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
-            out_tok = store.count_tokens(ans) + retrieve_out
             self.monitor.worker_end(tokens=in_tok + out_tok)
 
             self.logger.info(f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")

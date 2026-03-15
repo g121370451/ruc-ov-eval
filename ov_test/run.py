@@ -183,6 +183,15 @@ def main():
                 store_path=config['paths']['vector_store'],
                 hipporag_config=hipporag_conf
             )
+        elif store_type == 'sql_agent':
+            from src.core.sql_agent_store import SQLAgentStoreWrapper
+            sql_agent_conf = store_cfg.get('sql_agent_config', {})
+            sql_agent_conf['dataset_name'] = config.get('dataset_name', '')
+            sql_agent_conf['raw_data_path'] = config['paths'].get('raw_data', '')
+            vector_store = SQLAgentStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                sql_agent_config=sql_agent_conf
+            )
         else:
             from src.core.vector_store import VikingStoreWrapper
             vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
