@@ -729,7 +729,12 @@ class SQLAgentStoreWrapper:
                 f"Based on conversations with sample_id '{sample_id}' "
                 f"between {sp_a} and {sp_b}, "
                 f"answer the following question. If the answer cannot be found, "
-                f"reply 'unanswerable'.\n\nQuestion: {question}"
+                f"reply 'unanswerable'.\n\n"
+                f"Question: {question}\n\n"
+                f"Please respond in the following format:\n"
+                f"Answer: <your answer>\n"
+                f"Source: <the original conversation text that supports your answer, "
+                f"copy the relevant dialogue lines exactly as stored in the database>"
             )
 
         elif ds == 'qasper':
@@ -861,6 +866,32 @@ class SQLAgentStoreWrapper:
             self.logger.warning(f"[SQLAgent] Failed to fetch source texts: {e}")
         return texts
 
+    def _parse_agent_output(self, raw_output: str) -> tuple:
+        """解析 agent 输出，分离 answer 和 source texts。
+        期望格式:
+            Answer: <answer>
+            Source: <source text>
+        如果无法解析，整体作为 answer 返回。
+        """
+        answer = raw_output.strip()
+        source_texts = []
+
+        # 尝试按 Answer:/Source: 分割
+        ans_match = re.search(r'(?i)^Answer:\s*(.+?)(?=\nSource:|\Z)', raw_output, re.DOTALL)
+        src_match = re.search(r'(?i)^Source:\s*(.+)', raw_output, re.DOTALL | re.MULTILINE)
+
+        if ans_match:
+            answer = ans_match.group(1).strip()
+        if src_match:
+            src_block = src_match.group(1).strip()
+            # 每行作为一条 source text（agent 可能返回多行对话）
+            for line in src_block.split('\n'):
+                line = line.strip().lstrip('- ')
+                if line:
+                    source_texts.append(line)
+
+        return answer, source_texts
+
     def retrieve(self, query: str, topk: int = 10, target_uri: str = None,
                  sample_id: str = '', qa_metadata: Optional[Dict] = None) -> SQLAgentResult:
         executor = self._ensure_agent()
@@ -883,18 +914,21 @@ class SQLAgentStoreWrapper:
             input_tokens = usage.get("total_prompt_tokens", 0)
             output_tokens = usage.get("total_completion_tokens", 0)
 
-        # 从数据库查出原文，用于 recall 计算
-        source_texts = self._fetch_source_texts(sample_id) if sample_id else []
-        resources = [SQLAgentResource(uri=f"source_{i}", content=t, score=1.0)
-                     for i, t in enumerate(source_texts)]
+        # 解析 agent 输出：分离 answer 和 source texts
+        parsed_answer, source_texts = self._parse_agent_output(answer)
+
+        resources = []
+        if source_texts:
+            for i, st in enumerate(source_texts):
+                resources.append(SQLAgentResource(uri=f"source_{i}", content=st, score=1.0))
         if not resources:
-            resources = [SQLAgentResource(uri="sql_agent_answer", content=answer, score=1.0)]
+            resources = [SQLAgentResource(uri="sql_agent_answer", content=parsed_answer, score=1.0)]
 
         return SQLAgentResult(
             resources=resources,
             retrieve_input_tokens=input_tokens,
             retrieve_output_tokens=output_tokens,
-            agent_answer=answer,
+            agent_answer=parsed_answer,
         )
 
     def process_retrieval_results(self, search_res: SQLAgentResult):
