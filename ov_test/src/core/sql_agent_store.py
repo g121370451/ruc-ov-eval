@@ -444,21 +444,40 @@ class SQLAgentStoreWrapper:
                     "INSERT OR IGNORE INTO papers (paper_id,title,abstract) VALUES (:a,:b,:c)"
                 ), {"a": pid, "b": paper.get('title', ''), "c": paper.get('abstract', '')})
 
-                ft = paper.get('full_text', {})
-                sec_names = ft.get('section_name', [])
-                paragraphs = ft.get('paragraphs', [])
-                for i, (sname, paras) in enumerate(zip(sec_names, paragraphs)):
-                    content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
-                    conn.execute(text(
-                        "INSERT INTO sections (paper_id,section_index,section_name,content) "
-                        "VALUES (:a,:b,:c,:d)"
-                    ), {"a": pid, "b": i, "c": sname, "d": content})
-                    for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                ft = paper.get('full_text', [])
+                # full_text 可能是 list[{section_name, paragraphs}] 或 dict{section_name[], paragraphs[]}
+                if isinstance(ft, list):
+                    # list of section objects
+                    for i, sec in enumerate(ft):
+                        sname = sec.get('section_name', '')
+                        paras = sec.get('paragraphs', [])
+                        content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
                         conn.execute(text(
-                            "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
+                            "INSERT INTO sections (paper_id,section_index,section_name,content) "
                             "VALUES (:a,:b,:c,:d)"
-                        ), {"a": pid, "b": i, "c": ci, "d": chunk})
-                        total_chunks += 1
+                        ), {"a": pid, "b": i, "c": sname, "d": content})
+                        for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                            conn.execute(text(
+                                "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
+                                "VALUES (:a,:b,:c,:d)"
+                            ), {"a": pid, "b": i, "c": ci, "d": chunk})
+                            total_chunks += 1
+                else:
+                    # dict with parallel arrays
+                    sec_names = ft.get('section_name', [])
+                    paragraphs = ft.get('paragraphs', [])
+                    for i, (sname, paras) in enumerate(zip(sec_names, paragraphs)):
+                        content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
+                        conn.execute(text(
+                            "INSERT INTO sections (paper_id,section_index,section_name,content) "
+                            "VALUES (:a,:b,:c,:d)"
+                        ), {"a": pid, "b": i, "c": sname, "d": content})
+                        for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                            conn.execute(text(
+                                "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
+                                "VALUES (:a,:b,:c,:d)"
+                            ), {"a": pid, "b": i, "c": ci, "d": chunk})
+                            total_chunks += 1
             conn.commit()
         self.logger.info(f"[SQLAgent-Qasper] {len(papers)} papers, {total_chunks} chunks")
 
