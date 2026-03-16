@@ -263,8 +263,8 @@ class SQLAgentStoreWrapper:
             self.logger.warning(f"[SQLAgent] Unknown dataset '{self.dataset_name}', using generic ingest")
             handler = self._ingest_generic
 
-        handler(engine, samples)
-        return {"time": time.time() - start_time, "input_tokens": 0, "output_tokens": 0}
+        input_tokens = handler(engine, samples) or 0
+        return {"time": time.time() - start_time, "input_tokens": input_tokens, "output_tokens": 0}
 
     # ---- LoCoMo ----
 
@@ -293,6 +293,7 @@ class SQLAgentStoreWrapper:
         # 读取原始 JSON
         data = self._load_json(self.raw_data_path)
         sample_ids = {s.sample_id for s in samples}
+        total_tokens = 0
 
         with engine.connect() as conn:
             for entry in data:
@@ -307,22 +308,26 @@ class SQLAgentStoreWrapper:
                         continue
                     sess_date = conv.get(date_key, '')
                     for turn_idx, turn in enumerate(conv[sess_key]):
+                        turn_text = turn.get('text', '')
+                        total_tokens += self.count_tokens(turn_text)
                         conn.execute(text(
                             "INSERT INTO conversations "
                             "(sample_id,session_id,session_date,turn_number,dia_id,speaker,text) "
                             "VALUES (:a,:b,:c,:d,:e,:f,:g)"
                         ), {"a": sid, "b": sess_idx, "c": sess_date, "d": turn_idx + 1,
                             "e": turn.get('dia_id', ''), "f": turn.get('speaker', ''),
-                            "g": turn.get('text', '')})
+                            "g": turn_text})
 
                 # session summaries
                 for i in range(1, 100):
                     skey = f'session_{i}_summary'
                     if skey in entry.get('session_summary', {}):
+                        summary = entry['session_summary'][skey]
+                        total_tokens += self.count_tokens(summary)
                         conn.execute(text(
                             "INSERT INTO session_summaries (sample_id,session_id,summary) "
                             "VALUES (:a,:b,:c)"
-                        ), {"a": sid, "b": i, "c": entry['session_summary'][skey]})
+                        ), {"a": sid, "b": i, "c": summary})
 
                 # observations
                 for i in range(1, 100):
@@ -338,6 +343,7 @@ class SQLAgentStoreWrapper:
                                 dia_ref = obs_item[1]
                                 if isinstance(dia_ref, list):
                                     dia_ref = ', '.join(str(x) for x in dia_ref)
+                                total_tokens += self.count_tokens(str(obs_item[0]))
                                 conn.execute(text(
                                     "INSERT INTO observations "
                                     "(sample_id,session_id,speaker,observation,dia_id) "
@@ -345,7 +351,8 @@ class SQLAgentStoreWrapper:
                                 ), {"a": sid, "b": i, "c": speaker,
                                     "d": str(obs_item[0]), "e": str(dia_ref)})
             conn.commit()
-        self.logger.info(f"[SQLAgent-LoCoMo] Ingested for {len(sample_ids)} samples")
+        self.logger.info(f"[SQLAgent-LoCoMo] Ingested for {len(sample_ids)} samples, {total_tokens} tokens")
+        return total_tokens
 
     # ---- HotpotQA ----
 
@@ -368,6 +375,7 @@ class SQLAgentStoreWrapper:
 
         data = self._load_json(self.raw_data_path)
         total_chunks = 0
+        total_tokens = 0
         with engine.connect() as conn:
             for art in data:
                 wiki_id = art.get('id', art.get('wiki_id', ''))
@@ -397,6 +405,7 @@ class SQLAgentStoreWrapper:
                 else:
                     content = str(raw_text)
                 content = re.sub(r'<[^>]+>', '', content)
+                total_tokens += self.count_tokens(content)
 
                 conn.execute(text(
                     "INSERT INTO articles (wiki_id,title,url,content) VALUES (:a,:b,:c,:d)"
@@ -410,7 +419,8 @@ class SQLAgentStoreWrapper:
                     total_chunks += 1
             conn.commit()
         loaded = len(data) if not filter_titles else len(filter_titles)
-        self.logger.info(f"[SQLAgent-HotpotQA] {loaded} articles (filtered={bool(filter_titles)}), {total_chunks} chunks")
+        self.logger.info(f"[SQLAgent-HotpotQA] {loaded} articles (filtered={bool(filter_titles)}), {total_chunks} chunks, {total_tokens} tokens")
+        return total_tokens
 
     # ---- Qasper ----
 
@@ -434,15 +444,18 @@ class SQLAgentStoreWrapper:
         papers = self._load_qasper_papers()
         sample_ids = {s.sample_id for s in samples}
         total_chunks = 0
+        total_tokens = 0
 
         with engine.connect() as conn:
             for paper in papers:
                 pid = paper['id']
                 if sample_ids and pid not in sample_ids:
                     continue
+                abstract = paper.get('abstract', '')
+                total_tokens += self.count_tokens(abstract)
                 conn.execute(text(
                     "INSERT OR IGNORE INTO papers (paper_id,title,abstract) VALUES (:a,:b,:c)"
-                ), {"a": pid, "b": paper.get('title', ''), "c": paper.get('abstract', '')})
+                ), {"a": pid, "b": paper.get('title', ''), "c": abstract})
 
                 ft = paper.get('full_text', [])
                 # full_text 可能是 list[{section_name, paragraphs}] 或 dict{section_name[], paragraphs[]}
@@ -452,6 +465,7 @@ class SQLAgentStoreWrapper:
                         sname = sec.get('section_name', '')
                         paras = sec.get('paragraphs', [])
                         content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
+                        total_tokens += self.count_tokens(content)
                         conn.execute(text(
                             "INSERT INTO sections (paper_id,section_index,section_name,content) "
                             "VALUES (:a,:b,:c,:d)"
@@ -468,6 +482,7 @@ class SQLAgentStoreWrapper:
                     paragraphs = ft.get('paragraphs', [])
                     for i, (sname, paras) in enumerate(zip(sec_names, paragraphs)):
                         content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
+                        total_tokens += self.count_tokens(content)
                         conn.execute(text(
                             "INSERT INTO sections (paper_id,section_index,section_name,content) "
                             "VALUES (:a,:b,:c,:d)"
@@ -479,7 +494,8 @@ class SQLAgentStoreWrapper:
                             ), {"a": pid, "b": i, "c": ci, "d": chunk})
                             total_chunks += 1
             conn.commit()
-        self.logger.info(f"[SQLAgent-Qasper] {len(papers)} papers, {total_chunks} chunks")
+        self.logger.info(f"[SQLAgent-Qasper] {len(papers)} papers, {total_chunks} chunks, {total_tokens} tokens")
+        return total_tokens
 
     # ---- SyllabusQA ----
 
@@ -505,6 +521,7 @@ class SQLAgentStoreWrapper:
                     meta[row.get('name', '')] = row
 
         total_chunks = 0
+        total_tokens = 0
         with engine.connect() as conn:
             for sample in samples:
                 name = sample.sample_id
@@ -512,6 +529,7 @@ class SQLAgentStoreWrapper:
                 content = ''
                 for dp in sample.doc_paths:
                     content += self._read_document(dp)
+                total_tokens += self.count_tokens(content)
                 m = meta.get(name, {})
                 conn.execute(text(
                     "INSERT INTO syllabi "
@@ -528,7 +546,8 @@ class SQLAgentStoreWrapper:
                     ), {"a": name, "b": ci, "c": chunk})
                     total_chunks += 1
             conn.commit()
-        self.logger.info(f"[SQLAgent-SyllabusQA] {len(samples)} syllabi, {total_chunks} chunks")
+        self.logger.info(f"[SQLAgent-SyllabusQA] {len(samples)} syllabi, {total_chunks} chunks, {total_tokens} tokens")
+        return total_tokens
 
     # ---- ClapNQ ----
 
@@ -549,6 +568,7 @@ class SQLAgentStoreWrapper:
         qa_data = self._load_clapnq_data()
         sample_ids = {s.sample_id for s in samples}
         total_chunks = 0
+        total_tokens = 0
 
         with engine.connect() as conn:
             for qa in qa_data:
@@ -558,6 +578,7 @@ class SQLAgentStoreWrapper:
                 for pg in qa.get('passages', []):
                     title = pg.get('title', '')
                     content = pg.get('text', '')
+                    total_tokens += self.count_tokens(content)
                     conn.execute(text(
                         "INSERT INTO passages (qa_id,title,content) VALUES (:a,:b,:c)"
                     ), {"a": qa_id, "b": title, "c": content})
@@ -568,7 +589,8 @@ class SQLAgentStoreWrapper:
                         ), {"a": qa_id, "b": title, "c": ci, "d": chunk})
                         total_chunks += 1
             conn.commit()
-        self.logger.info(f"[SQLAgent-ClapNQ] {len(qa_data)} QAs, {total_chunks} chunks")
+        self.logger.info(f"[SQLAgent-ClapNQ] {len(qa_data)} QAs, {total_chunks} chunks, {total_tokens} tokens")
+        return total_tokens
 
     # ---- FinanceBench ----
 
@@ -601,12 +623,14 @@ class SQLAgentStoreWrapper:
                         doc_info[item.get('doc_name', '')] = item
 
         total_chunks = 0
+        total_tokens = 0
         with engine.connect() as conn:
             for sample in samples:
                 doc_name = sample.sample_id
                 content = ''
                 for dp in sample.doc_paths:
                     content += self._read_document(dp)
+                total_tokens += self.count_tokens(content)
                 m = doc_info.get(doc_name, {})
                 conn.execute(text(
                     "INSERT OR IGNORE INTO documents "
@@ -623,7 +647,8 @@ class SQLAgentStoreWrapper:
                     ), {"a": doc_name, "b": ci, "c": 0, "d": chunk})
                     total_chunks += 1
             conn.commit()
-        self.logger.info(f"[SQLAgent-FinanceBench] {len(samples)} docs, {total_chunks} chunks")
+        self.logger.info(f"[SQLAgent-FinanceBench] {len(samples)} docs, {total_chunks} chunks, {total_tokens} tokens")
+        return total_tokens
 
     # ---- Generic fallback ----
 
@@ -639,12 +664,14 @@ class SQLAgentStoreWrapper:
         self._exec_schema(engine, schema)
 
         total_chunks = 0
+        total_tokens = 0
         with engine.connect() as conn:
             for sample in samples:
                 for dp in sample.doc_paths:
                     content = self._read_document(dp)
                     if not content:
                         continue
+                    total_tokens += self.count_tokens(content)
                     doc_id = os.path.splitext(os.path.basename(dp))[0]
                     conn.execute(text(
                         "INSERT OR REPLACE INTO documents (doc_id,content) VALUES (:a,:b)"
@@ -656,7 +683,8 @@ class SQLAgentStoreWrapper:
                         ), {"a": doc_id, "b": ci, "c": chunk})
                         total_chunks += 1
             conn.commit()
-        self.logger.info(f"[SQLAgent-Generic] {len(samples)} samples, {total_chunks} chunks")
+        self.logger.info(f"[SQLAgent-Generic] {len(samples)} samples, {total_chunks} chunks, {total_tokens} tokens")
+        return total_tokens
 
     # ---- 辅助方法 ----
 
@@ -765,6 +793,9 @@ class SQLAgentStoreWrapper:
                 f"Search in the 'papers', 'sections', and 'section_chunks' tables. "
                 f"If the answer cannot be found, reply 'unanswerable'.\n\n"
                 f"Question: {question}"
+                f"Answer: <your answer>\n"
+                f"Source: <the original conversation text that supports your answer, "
+                f"copy the relevant dialogue lines exactly as stored in the database>"
             )
 
         elif ds == 'hotpotqa':
@@ -778,6 +809,9 @@ class SQLAgentStoreWrapper:
                 f"Give a concise answer. "
                 f"If the answer cannot be found, reply 'unanswerable'.\n\n"
                 f"Question: {question}"
+                f"Answer: <your answer>\n"
+                f"Source: <the original conversation text that supports your answer, "
+                f"copy the relevant dialogue lines exactly as stored in the database>"
             )
 
         elif ds == 'syllabusqa':
@@ -787,6 +821,9 @@ class SQLAgentStoreWrapper:
                 f"Search in both 'syllabi' and 'syllabus_chunks' tables. "
                 f"If the answer cannot be found, reply 'No/insufficient information'.\n\n"
                 f"Question: {question}"
+                f"Answer: <your answer>\n"
+                f"Source: <the original conversation text that supports your answer, "
+                f"copy the relevant dialogue lines exactly as stored in the database>"
             )
 
         elif ds == 'clapnq':
@@ -801,6 +838,9 @@ class SQLAgentStoreWrapper:
                 f"Search in both 'passages' and 'passage_chunks' tables. "
                 f"If the answer cannot be found, reply 'unanswerable'.\n\n"
                 f"Question: {question}"
+                f"Answer: <your answer>\n"
+                f"Source: <the original conversation text that supports your answer, "
+                f"copy the relevant dialogue lines exactly as stored in the database>"
             )
 
         elif ds == 'financebench':
@@ -812,6 +852,9 @@ class SQLAgentStoreWrapper:
                 f"Search in both 'documents' and 'document_chunks' tables. "
                 f"If the answer cannot be found, reply 'unanswerable'.\n\n"
                 f"Question: {question}"
+                f"Answer: <your answer>\n"
+                f"Source: <the original conversation text that supports your answer, "
+                f"copy the relevant dialogue lines exactly as stored in the database>"
             )
 
         # fallback: 通用 prompt
