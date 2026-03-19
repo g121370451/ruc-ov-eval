@@ -425,7 +425,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 "_global_index": task_id, "sample_id": sample_id,
                 "question": qa.question, "gold_answers": qa.gold_answers,
                 "category": str(qa.category), "evidence": qa.evidence,
-                "retrieval": {"latency_sec": latency, "uris": retrieved_uris},
+                "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
+                              "recall_texts": retrieved_texts, "prompt_texts": context_blocks},
                 "llm": {"final_answer": ans},
                 "metrics": {"Recall": recall},
                 "token_usage": {"total_input_tokens": in_tok, "llm_output_tokens": out_tok}
