@@ -15,6 +15,9 @@ store:
     llm_api_key_env: "LLM_API_KEY"
     chunk_size: 1000
     chunk_overlap: 150
+    sentence_aware_chunk: true
+    chunk_min_size: 200
+    chunk_max_size: 1500
     max_iterations: 15
     verbose: false
 

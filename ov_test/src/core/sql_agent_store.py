@@ -24,6 +24,10 @@ logger = get_logger()
 
 CHUNK_SIZE_DEFAULT = 800
 CHUNK_OVERLAP_DEFAULT = 100
+CHUNK_MIN_SIZE_DEFAULT = 200
+CHUNK_MAX_SIZE_DEFAULT = 1200
+
+_SENT_DELIM_RE = re.compile(r'([.。!！?？;；\n]\s*)')
 
 
 @dataclass
@@ -55,6 +59,85 @@ def _chunk_text(text_content: str, chunk_size: int = 800, chunk_overlap: int = 1
     return chunks
 
 
+def _build_overlap(chunk_text: str, overlap_size: int) -> str:
+    """从分片尾部提取 overlap 区域，尽量对齐到句子边界"""
+    if overlap_size <= 0 or not chunk_text:
+        return ""
+    tail = chunk_text[-overlap_size:]
+    m = re.search(r'[.。!！?？;；\n]\s*', tail)
+    if m:
+        return tail[m.end():]
+    return tail
+
+
+def _chunk_text_sentence_aware(
+    text_content: str,
+    chunk_size: int = 800,
+    chunk_overlap: int = 100,
+    chunk_min_size: int = 200,
+    chunk_max_size: int = 1200,
+) -> List[str]:
+    """句子感知分片：不切断完整句子，合并过小分片"""
+    if not text_content:
+        return []
+    chunk_max_size = max(chunk_max_size, chunk_size)
+
+    # 用捕获组分割，保留分隔符（标点+空白），再拼回句子
+    parts = _SENT_DELIM_RE.split(text_content)
+    sentences = []
+    for i in range(0, len(parts) - 1, 2):
+        s = parts[i] + parts[i + 1]
+        if s:
+            sentences.append(s)
+    if len(parts) % 2 == 1 and parts[-1]:
+        sentences.append(parts[-1])
+    if not sentences:
+        return [text_content]
+
+    chunks = []
+    current_chunk = ""
+    sent_idx = 0
+
+    while sent_idx < len(sentences):
+        sent = sentences[sent_idx]
+        tentative_len = len(current_chunk) + len(sent)
+
+        if not current_chunk:
+            current_chunk = sent
+            sent_idx += 1
+            continue
+
+        if tentative_len <= chunk_size:
+            current_chunk += sent
+            sent_idx += 1
+            continue
+
+        if tentative_len <= chunk_max_size:
+            current_chunk += sent
+            sent_idx += 1
+
+        # 封闭当前分片
+        chunks.append(current_chunk)
+        overlap_prefix = _build_overlap(current_chunk, chunk_overlap)
+        current_chunk = overlap_prefix
+
+    # 处理最后一个分片
+    if current_chunk:
+        if len(current_chunk) < chunk_min_size and chunks:
+            chunks[-1] += current_chunk
+        else:
+            chunks.append(current_chunk)
+
+    # 后处理：合并过小分片
+    final = []
+    for chunk in chunks:
+        if final and len(chunk) < chunk_min_size:
+            final[-1] += chunk
+        else:
+            final.append(chunk)
+    return final
+
+
 class SQLAgentStoreWrapper:
     """SQL Agent 存储包装器。按 dataset_name 分发到不同的 schema/ingest 逻辑。"""
 
@@ -69,6 +152,9 @@ class SQLAgentStoreWrapper:
         self.raw_data_path = cfg.get('raw_data_path', '')
         self.chunk_size = int(cfg.get('chunk_size', CHUNK_SIZE_DEFAULT))
         self.chunk_overlap = int(cfg.get('chunk_overlap', CHUNK_OVERLAP_DEFAULT))
+        self.sentence_aware_chunk = cfg.get('sentence_aware_chunk', False)
+        self.chunk_min_size = int(cfg.get('chunk_min_size', CHUNK_MIN_SIZE_DEFAULT))
+        self.chunk_max_size = int(cfg.get('chunk_max_size', CHUNK_MAX_SIZE_DEFAULT))
         self.max_iterations = int(cfg.get('max_iterations', 15))
         self.verbose = cfg.get('verbose', False)
 
@@ -90,6 +176,15 @@ class SQLAgentStoreWrapper:
         self._agent_executor = None
 
     # ---- engine / agent 基础设施 ----
+
+    def _do_chunk(self, content: str, chunk_size: int = None, chunk_overlap: int = None) -> List[str]:
+        """统一分片入口，根据 sentence_aware_chunk 配置选择策略"""
+        cs = chunk_size or self.chunk_size
+        co = chunk_overlap or self.chunk_overlap
+        if self.sentence_aware_chunk:
+            return _chunk_text_sentence_aware(content, cs, co,
+                                              self.chunk_min_size, self.chunk_max_size)
+        return _chunk_text(content, cs, co)
 
     def _get_engine(self):
         if self._engine is None:
@@ -414,7 +509,7 @@ class SQLAgentStoreWrapper:
                     "INSERT INTO articles (wiki_id,title,url,content) VALUES (:a,:b,:c,:d)"
                 ), {"a": wiki_id, "b": title, "c": url, "d": content})
 
-                for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                for ci, chunk in enumerate(self._do_chunk(content)):
                     conn.execute(text(
                         "INSERT INTO article_chunks (wiki_id,title,chunk_index,content) "
                         "VALUES (:a,:b,:c,:d)"
@@ -473,7 +568,7 @@ class SQLAgentStoreWrapper:
                             "INSERT INTO sections (paper_id,section_index,section_name,content) "
                             "VALUES (:a,:b,:c,:d)"
                         ), {"a": pid, "b": i, "c": sname, "d": content})
-                        for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                        for ci, chunk in enumerate(self._do_chunk(content)):
                             conn.execute(text(
                                 "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
                                 "VALUES (:a,:b,:c,:d)"
@@ -490,7 +585,7 @@ class SQLAgentStoreWrapper:
                             "INSERT INTO sections (paper_id,section_index,section_name,content) "
                             "VALUES (:a,:b,:c,:d)"
                         ), {"a": pid, "b": i, "c": sname, "d": content})
-                        for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                        for ci, chunk in enumerate(self._do_chunk(content)):
                             conn.execute(text(
                                 "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
                                 "VALUES (:a,:b,:c,:d)"
@@ -542,7 +637,7 @@ class SQLAgentStoreWrapper:
                     "d": m.get('area', ''), "e": m.get('university', ''),
                     "f": int(m.get('num_pages', 0) or 0), "g": content})
 
-                for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                for ci, chunk in enumerate(self._do_chunk(content)):
                     conn.execute(text(
                         "INSERT INTO syllabus_chunks (syllabus_name,chunk_index,content) "
                         "VALUES (:a,:b,:c)"
@@ -585,7 +680,7 @@ class SQLAgentStoreWrapper:
                     conn.execute(text(
                         "INSERT INTO passages (qa_id,title,content) VALUES (:a,:b,:c)"
                     ), {"a": qa_id, "b": title, "c": content})
-                    for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                    for ci, chunk in enumerate(self._do_chunk(content)):
                         conn.execute(text(
                             "INSERT INTO passage_chunks (qa_id,title,chunk_index,content) "
                             "VALUES (:a,:b,:c,:d)"
@@ -643,7 +738,7 @@ class SQLAgentStoreWrapper:
                     "d": m.get('doc_type', ''), "e": int(m.get('doc_period', 0) or 0),
                     "f": 0, "g": content})
 
-                for ci, chunk in enumerate(_chunk_text(content, cs, co)):
+                for ci, chunk in enumerate(self._do_chunk(content, chunk_size=cs, chunk_overlap=co)):
                     conn.execute(text(
                         "INSERT INTO document_chunks (doc_name,chunk_index,page_num,content) "
                         "VALUES (:a,:b,:c,:d)"
@@ -679,7 +774,7 @@ class SQLAgentStoreWrapper:
                     conn.execute(text(
                         "INSERT OR REPLACE INTO documents (doc_id,content) VALUES (:a,:b)"
                     ), {"a": doc_id, "b": content})
-                    for ci, chunk in enumerate(_chunk_text(content, self.chunk_size, self.chunk_overlap)):
+                    for ci, chunk in enumerate(self._do_chunk(content)):
                         conn.execute(text(
                             "INSERT OR REPLACE INTO document_chunks (doc_id,chunk_index,content) "
                             "VALUES (:a,:b,:c)"
