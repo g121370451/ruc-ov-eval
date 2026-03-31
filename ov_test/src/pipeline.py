@@ -279,24 +279,33 @@ class BenchmarkPipeline:
             latency = time.time() - t0
 
             retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
+            
+            # search_res = {
+            #     'retrieve_input_tokens': 0,
+            #     'retrieve_output_tokens': 0,
+            # }
+            # latency = 0.0
+            # retrieved_texts = qa.evidence
+            # retrieved_uris = []
+            # context_blocks = qa.evidence
+            
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
-            # 2. 根据 store 类型决定是否跳过 LLM 生成
+            # 2. 构建 prompt → LLM 生成
             retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
 
-            if self.store_type == 'sql_agent':
-                # SQL Agent 的 retrieve 已经直接生成了答案
-                ans = getattr(search_res, 'agent_answer', '')
-                in_tokens = retrieve_in
-                out_tokens = retrieve_out
-            else:
-                # 常规向量检索：构建 prompt → LLM 生成
-                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-                ans_raw = self.llm.generate(full_prompt)
-                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-                in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
-                out_tokens = self.db.count_tokens(ans) + retrieve_out
+            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+            ans_raw = self.llm.generate(full_prompt)
+            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
+            out_tokens = self.db.count_tokens(ans) + retrieve_out
+
+            # 检查是否需要解释 Not mentioned
+            not_mentioned_reason = ""
+            if self.config.get('execution', {}).get('explain_not_mentioned', False):
+                if MetricsCalculator.check_refusal(ans):
+                    not_mentioned_reason = self.llm.explain_not_mentioned(qa.question, context_blocks)
 
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
 
@@ -306,8 +315,9 @@ class BenchmarkPipeline:
                 "_global_index": task['id'], "sample_id": task['sample_id'], "question": qa.question,
                 "gold_answers": qa.gold_answers, "category": str(qa.category), "evidence": qa.evidence,
                 "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
-                              "recall_texts": retrieved_texts, "prompt_texts": context_blocks},
-                "llm": {"final_answer": ans},
+                              "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
+                              "sql_queries": getattr(search_res, 'sql_queries', [])},
+                "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
                 "metrics": {"Recall": recall}, "token_usage": {"total_input_tokens": in_tokens, "llm_output_tokens": out_tokens}
             }
         except Exception as e:
@@ -332,30 +342,26 @@ class BenchmarkPipeline:
         
         dataset_name = self.config.get('dataset_name', 'Unknown_Dataset')
         
-        # 初始化最优评测结果存储字典
+        # 初始化评测结果
         best_eval_record = {
             "score": 0.0,
             "reasoning": "",
             "prompt_type": ""
         }
-        
-        for gt in golds:
-            try:
-                eval_res = llm_grader(
-                    self.llm.llm, 
-                    self.config['llm']['model'], 
-                    item['question'], 
-                    gt,  # 单个 gold answer
-                    ans,
-                    dataset_name=dataset_name
-                )
-                
-                # 如果有多个答案，保留得分最高的那次评测的理由和分数
-                if eval_res["score"] >= best_eval_record["score"]:
-                    best_eval_record = eval_res
-                    
-            except Exception as e:
-                self.logger.error(f"Grader error for gold answer '{gt[:50]}...': {e}")
+
+        try:
+            gold_answer_str = json.dumps(golds, ensure_ascii=False)
+            eval_res = llm_grader(
+                self.llm.llm,
+                self.config['llm']['model'],
+                item['question'],
+                gold_answer_str,
+                ans,
+                dataset_name=dataset_name
+            )
+            best_eval_record = eval_res
+        except Exception as e:
+            self.logger.error(f"Grader error: {e}")
                 
         # 兜底：处理拒绝回答的情况
         if MetricsCalculator.check_refusal(ans) and any(MetricsCalculator.check_refusal(gt) for gt in golds):

@@ -1,6 +1,6 @@
 import json
 
-def analyze_qa_metrics(file_path, output_file='/home/fengxiaoyao/Viking/Output/Qasper/experiment_v21/Qasper_filtered_anomalies.log', high=0.8, low=0.2):
+def analyze_qa_metrics(file_path, output_file, high=0.8, low=0.2):
     """
     1. 筛选并打印 JSON 数据集中 Recall 与 Accuracy 存在显著不一致的异常样本。
     
@@ -61,4 +61,4 @@ def analyze_qa_metrics(file_path, output_file='/home/fengxiaoyao/Viking/Output/Q
             out.write("-" * 50 + "\n")
 
 # 调用执行
-analyze_qa_metrics('/home/fengxiaoyao/Viking/Output/Qasper/experiment_v21/prompt-v1/qa_eval_detailed_results.json')
+analyze_qa_metrics('E:\\project\\postgraduate\\ruc-ov-eval\\ov_test\\src\\others\\qa_eval_detailed_results.json','E:\\project\\postgraduate\\ruc-ov-eval\\ov_test\\src\\others\\filter_eval_detailed_results.json')

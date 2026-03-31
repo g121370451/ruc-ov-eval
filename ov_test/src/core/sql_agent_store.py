@@ -39,6 +39,7 @@ class SQLAgentResult:
     retrieve_input_tokens: int = 0
     retrieve_output_tokens: int = 0
     agent_answer: str = ""
+    sql_queries: List[str] = field(default_factory=list)
 
 
 def _chunk_text(text_content: str, chunk_size: int = 800, chunk_overlap: int = 100) -> List[str]:
@@ -129,7 +130,7 @@ class SQLAgentStoreWrapper:
         from src.core.sql_agent_token_tracker import TokenTracker
 
         engine = self._get_engine()
-        db = SQLDatabase(engine=engine)
+        db = SQLDatabase(engine=engine, max_string_length=10000)
         self._token_tracker = TokenTracker()
         llm = ChatOpenAI(
             model=self.llm_model, api_key=self._get_api_key(),
@@ -160,10 +161,12 @@ class SQLAgentStoreWrapper:
 
         prompt = ChatPromptTemplate.from_messages([
             ("system",
-             "You are a precise SQL database assistant. "
+             "You are a precise SQL database retrieval assistant. "
+             "Your ONLY job is to find and return relevant source texts from the database. "
              "Use the provided tools to explore the database schema and run queries. "
              "ALWAYS use the tools to get real data — never fabricate results. "
-             "If the answer cannot be determined from the database, say 'No/insufficient information'."),
+             "Do NOT answer the question yourself. Only return the relevant raw texts from the database. "
+             "Return each relevant text on a separate line, prefixed with '- '. "),
             ("human", "{input}"),
             MessagesPlaceholder("agent_scratchpad"),
         ])
@@ -171,7 +174,7 @@ class SQLAgentStoreWrapper:
         self._agent_executor = AgentExecutor(
             agent=agent, tools=tools, verbose=self.verbose,
             max_iterations=self.max_iterations,
-            handle_parsing_errors=True, return_intermediate_steps=False,
+            handle_parsing_errors=True, return_intermediate_steps=True,
         )
         return self._agent_executor
 
@@ -768,62 +771,56 @@ class SQLAgentStoreWrapper:
         meta = qa_metadata or {}
         ds = self.dataset_name
 
+        retrieve_suffix = (
+            "Do NOT answer the question. Only return the relevant raw texts "
+            "from the database that could help answer it. "
+            "Return each relevant text on a separate line, prefixed with '- '."
+        )
+
         if ds == 'locomo':
             speakers = meta.get('speakers', ('', ''))
             sp_a = speakers[0] if len(speakers) > 0 else ''
             sp_b = speakers[1] if len(speakers) > 1 else ''
+            locomo_suffix = (
+                "Do NOT answer the question. Only return the relevant raw texts "
+                "from the database that could help answer it. "
+                "For each result, include the speaker, session_date, and text. "
+                "Format: '- [speaker, session_date] text'"
+            )
             return (
-                f"Based on conversations with sample_id '{sample_id}' "
-                f"between {sp_a} and {sp_b}, "
-                f"answer the following question. If the answer cannot be found, "
-                f"reply 'unanswerable'.\n\n"
+                f"Find conversations with sample_id '{sample_id}' "
+                f"between {sp_a} and {sp_b} that are relevant to the following question.\n\n"
                 f"Question: {question}\n\n"
-                f"Please respond in the following format:\n"
-                f"Answer: <your answer>\n"
-                f"Source: <the original conversation text that supports your answer, "
-                f"copy the relevant dialogue lines exactly as stored in the database>"
+                f"Note: If the question contains relative time expressions "
+                f"(e.g. 'yesterday', 'last week'), query session_date first "
+                f"to resolve them to absolute dates before searching.\n\n"
+                f"{locomo_suffix}"
             )
 
         elif ds == 'qasper':
             title = meta.get('paper_title', '')
             return (
-                f"Using the research paper data stored in the database for "
-                f"paper_id '{sample_id}' (title: \"{title}\"), "
-                f"answer the following question. "
-                f"Search in the 'papers', 'sections', and 'section_chunks' tables. "
-                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
-                f"Question: {question}"
-                f"Answer: <your answer>\n"
-                f"Source: <the original conversation text that supports your answer, "
-                f"copy the relevant dialogue lines exactly as stored in the database>"
+                f"Find relevant text from the research paper data for "
+                f"paper_id '{sample_id}' (title: \"{title}\"). "
+                f"Search in the 'papers', 'sections', and 'section_chunks' tables.\n\n"
+                f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'hotpotqa':
             titles = meta.get('supporting_fact_titles', [])[:3]
             title_hints = ", ".join(f"'{t}'" for t in titles)
             return (
-                f"Using the Wikipedia articles stored in the database, "
-                f"answer the following multi-hop question. "
+                f"Find relevant text from the Wikipedia articles stored in the database. "
                 f"Hint: relevant articles may include {title_hints}. "
-                f"Search in both 'articles' and 'article_chunks' tables. "
-                f"Give a concise answer. "
-                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
-                f"Question: {question}"
-                f"Answer: <your answer>\n"
-                f"Source: <the original conversation text that supports your answer, "
-                f"copy the relevant dialogue lines exactly as stored in the database>"
+                f"Search in both 'articles' and 'article_chunks' tables.\n\n"
+                f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'syllabusqa':
             return (
-                f"Using the syllabus data for '{sample_id}' stored in the database, "
-                f"answer the following question. "
-                f"Search in both 'syllabi' and 'syllabus_chunks' tables. "
-                f"If the answer cannot be found, reply 'No/insufficient information'.\n\n"
-                f"Question: {question}"
-                f"Answer: <your answer>\n"
-                f"Source: <the original conversation text that supports your answer, "
-                f"copy the relevant dialogue lines exactly as stored in the database>"
+                f"Find relevant text from the syllabus data for '{sample_id}'. "
+                f"Search in both 'syllabi' and 'syllabus_chunks' tables.\n\n"
+                f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'clapnq':
@@ -832,127 +829,23 @@ class SQLAgentStoreWrapper:
             if first_title:
                 title_hint = f" The relevant passage is titled '{first_title}'."
             return (
-                f"Using the passage data stored in the database for "
-                f"qa_id '{sample_id}',{title_hint} "
-                f"answer the following question with a concise, cohesive answer. "
-                f"Search in both 'passages' and 'passage_chunks' tables. "
-                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
-                f"Question: {question}"
-                f"Answer: <your answer>\n"
-                f"Source: <the original conversation text that supports your answer, "
-                f"copy the relevant dialogue lines exactly as stored in the database>"
+                f"Find relevant text from the passage data for "
+                f"qa_id '{sample_id}'.{title_hint} "
+                f"Search in both 'passages' and 'passage_chunks' tables.\n\n"
+                f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'financebench':
             company = meta.get('company', '')
             return (
-                f"Using the financial document data for '{sample_id}' "
-                f"(company: {company}) stored in the database, "
-                f"answer the following question. "
-                f"Search in both 'documents' and 'document_chunks' tables. "
-                f"If the answer cannot be found, reply 'unanswerable'.\n\n"
-                f"Question: {question}"
-                f"Answer: <your answer>\n"
-                f"Source: <the original conversation text that supports your answer, "
-                f"copy the relevant dialogue lines exactly as stored in the database>"
+                f"Find relevant text from the financial document data for '{sample_id}' "
+                f"(company: {company}). "
+                f"Search in both 'documents' and 'document_chunks' tables.\n\n"
+                f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         # fallback: 通用 prompt
-        return question
-
-    def _fetch_source_texts(self, sample_id: str) -> List[str]:
-        """从数据库直接查询 sample_id 对应的原文，用于 recall 计算"""
-        engine = self._get_engine()
-        ds = self.dataset_name
-        texts = []
-        try:
-            with engine.connect() as conn:
-                if ds == 'locomo':
-                    # 查对话原文，带 dia_id 标记以支持 evidence 匹配
-                    rows = conn.execute(text(
-                        "SELECT dia_id, speaker, text FROM conversations WHERE sample_id = :sid "
-                        "ORDER BY session_id, turn_number"
-                    ), {"sid": sample_id}).fetchall()
-                    for r in rows:
-                        dia_id, speaker, txt = r[0] or '', r[1] or '', r[2] or ''
-                        if txt:
-                            texts.append(f"[{dia_id}] {speaker}: {txt}")
-                    rows = conn.execute(text(
-                        "SELECT summary FROM session_summaries WHERE sample_id = :sid"
-                    ), {"sid": sample_id}).fetchall()
-                    texts.extend(r[0] for r in rows if r[0])
-                    rows = conn.execute(text(
-                        "SELECT observation, dia_id FROM observations WHERE sample_id = :sid"
-                    ), {"sid": sample_id}).fetchall()
-                    for r in rows:
-                        obs, dia_ref = r[0] or '', r[1] or ''
-                        if obs:
-                            texts.append(f"[{dia_ref}] {obs}")
-
-                elif ds == 'qasper':
-                    rows = conn.execute(text(
-                        "SELECT content FROM sections WHERE paper_id = :pid"
-                    ), {"pid": sample_id}).fetchall()
-                    texts.extend(r[0] for r in rows if r[0])
-
-                elif ds == 'hotpotqa':
-                    rows = conn.execute(text(
-                        "SELECT content FROM articles"
-                    )).fetchall()
-                    texts.extend(r[0] for r in rows if r[0])
-
-                elif ds == 'syllabusqa':
-                    rows = conn.execute(text(
-                        "SELECT content FROM syllabi WHERE syllabus_name = :name"
-                    ), {"name": sample_id}).fetchall()
-                    texts.extend(r[0] for r in rows if r[0])
-
-                elif ds == 'clapnq':
-                    rows = conn.execute(text(
-                        "SELECT content FROM passages WHERE qa_id = :qid"
-                    ), {"qid": sample_id}).fetchall()
-                    texts.extend(r[0] for r in rows if r[0])
-
-                elif ds == 'financebench':
-                    rows = conn.execute(text(
-                        "SELECT content FROM documents WHERE doc_name = :dn"
-                    ), {"dn": sample_id}).fetchall()
-                    texts.extend(r[0] for r in rows if r[0])
-
-                else:
-                    rows = conn.execute(text(
-                        "SELECT content FROM documents"
-                    )).fetchall()
-                    texts.extend(r[0] for r in rows if r[0])
-        except Exception as e:
-            self.logger.warning(f"[SQLAgent] Failed to fetch source texts: {e}")
-        return texts
-
-    def _parse_agent_output(self, raw_output: str) -> tuple:
-        """解析 agent 输出，分离 answer 和 source texts。
-        期望格式:
-            Answer: <answer>
-            Source: <source text>
-        如果无法解析，整体作为 answer 返回。
-        """
-        answer = raw_output.strip()
-        source_texts = []
-
-        # 尝试按 Answer:/Source: 分割
-        ans_match = re.search(r'(?i)^Answer:\s*(.+?)(?=\nSource:|\Z)', raw_output, re.DOTALL)
-        src_match = re.search(r'(?i)^Source:\s*(.+)', raw_output, re.DOTALL | re.MULTILINE)
-
-        if ans_match:
-            answer = ans_match.group(1).strip()
-        if src_match:
-            src_block = src_match.group(1).strip()
-            # 每行作为一条 source text（agent 可能返回多行对话）
-            for line in src_block.split('\n'):
-                line = line.strip().lstrip('- ')
-                if line:
-                    source_texts.append(line)
-
-        return answer, source_texts
+        return f"Find relevant texts from the database for the following question.\n\nQuestion: {question}\n\n{retrieve_suffix}"
 
     def retrieve(self, query: str, topk: int = 10, target_uri: str = None,
                  sample_id: str = '', qa_metadata: Optional[Dict] = None) -> SQLAgentResult:
@@ -963,9 +856,18 @@ class SQLAgentStoreWrapper:
         # 构建数据集专用的检索 prompt
         prompt = self._build_retrieve_prompt(query, sample_id, qa_metadata)
 
+        sql_queries = []
         try:
             result = executor.invoke({"input": prompt})
             answer = result.get("output", "")
+            # 从中间步骤中提取并记录 SQL 语句
+            for step in result.get("intermediate_steps", []):
+                action, observation = step
+                tool_name = getattr(action, 'tool', '')
+                tool_input = getattr(action, 'tool_input', '')
+                if tool_name in ('sql_db_query', 'sql_db_write'):
+                    sql_queries.append(tool_input)
+                    self.logger.info(f"[SQLAgent] Tool: {tool_name} | SQL: {tool_input}")
         except Exception as e:
             self.logger.error(f"SQL Agent retrieve failed: {e}")
             answer = f"[ERROR] {e}"
@@ -976,21 +878,21 @@ class SQLAgentStoreWrapper:
             input_tokens = usage.get("total_prompt_tokens", 0)
             output_tokens = usage.get("total_completion_tokens", 0)
 
-        # 解析 agent 输出：分离 answer 和 source texts
-        parsed_answer, source_texts = self._parse_agent_output(answer)
-
+        # 解析 agent 输出：按行拆分为检索到的文本片段
         resources = []
-        if source_texts:
-            for i, st in enumerate(source_texts):
-                resources.append(SQLAgentResource(uri=f"source_{i}", content=st, score=1.0))
+        for line in answer.strip().split('\n'):
+            line = line.strip().lstrip('- ')
+            if line:
+                resources.append(SQLAgentResource(uri=f"source_{len(resources)}", content=line, score=1.0))
         if not resources:
-            resources = [SQLAgentResource(uri="sql_agent_answer", content=parsed_answer, score=1.0)]
+            resources = [SQLAgentResource(uri="sql_agent_empty", content="", score=0.0)]
 
         return SQLAgentResult(
             resources=resources,
             retrieve_input_tokens=input_tokens,
             retrieve_output_tokens=output_tokens,
-            agent_answer=parsed_answer,
+            agent_answer='',
+            sql_queries=sql_queries,
         )
 
     def process_retrieval_results(self, search_res: SQLAgentResult):

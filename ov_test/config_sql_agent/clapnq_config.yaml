@@ -20,7 +20,8 @@ execution:
   max_workers: 5
   ingest_workers: 4
   retrieval_topk: 5
-  max_queries: null
+  max_queries: 20
+  explain_not_mentioned: true
 
 paths:
   raw_data: "Data/clapnq-main"

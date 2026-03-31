@@ -406,17 +406,17 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 store.process_retrieval_results(res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
-            if self.store_type == 'sql_agent':
-                # SQL Agent 的 retrieve 已经直接生成了答案
-                ans = getattr(res, 'agent_answer', '')
-                in_tok = retrieve_in
-                out_tok = retrieve_out
-            else:
-                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-                ans_raw = self.llm.generate(full_prompt)
-                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-                in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
-                out_tok = store.count_tokens(ans) + retrieve_out
+            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+            ans_raw = self.llm.generate(full_prompt)
+            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+            in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
+            out_tok = store.count_tokens(ans) + retrieve_out
+
+            # 检查是否需要解释 Not mentioned
+            not_mentioned_reason = ""
+            if self.config.get('execution', {}).get('explain_not_mentioned', False):
+                if MetricsCalculator.check_refusal(ans):
+                    not_mentioned_reason = self.llm.explain_not_mentioned(qa.question, context_blocks)
 
             self.monitor.worker_end(tokens=in_tok + out_tok)
 
@@ -426,8 +426,9 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 "question": qa.question, "gold_answers": qa.gold_answers,
                 "category": str(qa.category), "evidence": qa.evidence,
                 "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
-                              "recall_texts": retrieved_texts, "prompt_texts": context_blocks},
-                "llm": {"final_answer": ans},
+                              "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
+                              "sql_queries": getattr(res, 'sql_queries', [])},
+                "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
                 "metrics": {"Recall": recall},
                 "token_usage": {"total_input_tokens": in_tok, "llm_output_tokens": out_tok}
             }
