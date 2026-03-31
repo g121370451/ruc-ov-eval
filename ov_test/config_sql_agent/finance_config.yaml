@@ -21,6 +21,7 @@ execution:
   ingest_workers: 4
   retrieval_topk: 5
   max_queries: null
+  explain_not_mentioned: true
 
 paths:
   raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
