@@ -458,66 +458,50 @@ class SQLAgentStoreWrapper:
         schema = """
         CREATE TABLE IF NOT EXISTS articles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            wiki_id TEXT, title TEXT, url TEXT, content TEXT
+            sample_id TEXT, title TEXT, content TEXT
         );
         CREATE TABLE IF NOT EXISTS article_chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            wiki_id TEXT, title TEXT, chunk_index INTEGER, content TEXT
+            sample_id TEXT, title TEXT, chunk_index INTEGER, content TEXT
         );"""
         self._exec_schema(engine, schema)
 
-        # per_query 模式：从 samples metadata 中收集 supporting_titles 用于过滤
-        filter_titles = set()
-        for s in samples:
-            filter_titles.update(s.metadata.get('supporting_titles', []))
-
         data = self._load_json(self.raw_data_path)
+        sample_ids = {s.sample_id for s in samples}
         total_chunks = 0
         total_tokens = 0
+        ingested_samples = 0
+
         with engine.connect() as conn:
-            for art in data:
-                wiki_id = art.get('id', art.get('wiki_id', ''))
-                title = art.get('title', '')
-                # 如果有 filter_titles，只加载匹配的 articles
-                if filter_titles and title not in filter_titles:
-                    continue
-                url = art.get('url', '')
-                # 处理 text 字段：可能是 2D/3D 数组（段落→句子段→句子）
-                raw_text = art.get('text', '')
-                if isinstance(raw_text, list):
-                    paragraphs = []
-                    for para in raw_text:
-                        flat_sents = []
-                        if isinstance(para, list):
-                            for seg in para:
-                                if isinstance(seg, list):
-                                    flat_sents.extend(seg)
-                                else:
-                                    flat_sents.append(str(seg))
-                        else:
-                            flat_sents.append(str(para))
-                        paragraph_text = ' '.join(s.strip() for s in flat_sents if s.strip())
-                        if paragraph_text:
-                            paragraphs.append(paragraph_text)
-                    content = '\n\n'.join(paragraphs)
-                else:
-                    content = str(raw_text)
-                content = re.sub(r'<[^>]+>', '', content)
-                total_tokens += self.count_tokens(content)
+            for entry in data:
+                sid = str(entry.get('id', ''))
+                # if sample_ids and sid not in sample_ids:
+                #     continue
+                ingested_samples += 1
 
-                conn.execute(text(
-                    "INSERT INTO articles (wiki_id,title,url,content) VALUES (:a,:b,:c,:d)"
-                ), {"a": wiki_id, "b": title, "c": url, "d": content})
+                context = entry.get('context', {})
+                titles = context.get('title', [])
+                sentences = context.get('sentences', [])
 
-                for ci, chunk in enumerate(self._do_chunk(content)):
+                for i, title in enumerate(titles):
+                    sents = sentences[i] if i < len(sentences) else []
+                    content = ' '.join(s.strip() for s in sents if s.strip())
+                    if not content:
+                        continue
+                    total_tokens += self.count_tokens(content)
+
                     conn.execute(text(
-                        "INSERT INTO article_chunks (wiki_id,title,chunk_index,content) "
-                        "VALUES (:a,:b,:c,:d)"
-                    ), {"a": wiki_id, "b": title, "c": ci, "d": chunk})
-                    total_chunks += 1
+                        "INSERT INTO articles (sample_id,title,content) VALUES (:a,:b,:c)"
+                    ), {"a": sid, "b": title, "c": content})
+
+                    for ci, chunk in enumerate(self._do_chunk(content)):
+                        conn.execute(text(
+                            "INSERT INTO article_chunks (sample_id,title,chunk_index,content) "
+                            "VALUES (:a,:b,:c,:d)"
+                        ), {"a": sid, "b": title, "c": ci, "d": chunk})
+                        total_chunks += 1
             conn.commit()
-        loaded = len(data) if not filter_titles else len(filter_titles)
-        self.logger.info(f"[SQLAgent-HotpotQA] {loaded} articles (filtered={bool(filter_titles)}), {total_chunks} chunks, {total_tokens} tokens")
+        self.logger.info(f"[SQLAgent-HotpotQA] {ingested_samples} samples, {total_chunks} chunks, {total_tokens} tokens")
         return total_tokens
 
     # ---- Qasper ----
@@ -905,7 +889,7 @@ class SQLAgentStoreWrapper:
             titles = meta.get('supporting_fact_titles', [])[:3]
             title_hints = ", ".join(f"'{t}'" for t in titles)
             return (
-                f"Find relevant text from the Wikipedia articles stored in the database. "
+                f"Find relevant text from the Wikipedia articles with sample_id '{sample_id}'. "
                 f"Hint: relevant articles may include {title_hints}. "
                 f"Search in both 'articles' and 'article_chunks' tables.\n\n"
                 f"Question: {question}\n\n{retrieve_suffix}"
@@ -945,8 +929,11 @@ class SQLAgentStoreWrapper:
     def retrieve(self, query: str, topk: int = 10, target_uri: str = None,
                  sample_id: str = '', qa_metadata: Optional[Dict] = None) -> SQLAgentResult:
         executor = self._ensure_agent()
-        if self._token_tracker:
-            self._token_tracker.reset()
+
+        # 设置当前 sample_id，让 tracker 按 sample 分桶记录
+        ctx_token = None
+        if self._token_tracker and sample_id:
+            ctx_token = self._token_tracker.set_sample_id(sample_id)
 
         # 构建数据集专用的检索 prompt
         prompt = self._build_retrieve_prompt(query, sample_id, qa_metadata)
@@ -966,10 +953,13 @@ class SQLAgentStoreWrapper:
         except Exception as e:
             self.logger.error(f"SQL Agent retrieve failed: {e}")
             answer = f"[ERROR] {e}"
+        finally:
+            if ctx_token is not None:
+                self._token_tracker.restore_sample_id(ctx_token)
 
         input_tokens, output_tokens = 0, 0
-        if self._token_tracker:
-            usage = self._token_tracker.total()
+        if self._token_tracker and sample_id:
+            usage = self._token_tracker.get_usage(sample_id)
             input_tokens = usage.get("total_prompt_tokens", 0)
             output_tokens = usage.get("total_completion_tokens", 0)
 
