@@ -107,7 +107,7 @@ class QasperAdapter(BaseAdapter):
                 doc_path = os.path.join(doc_dir, f"{paper_id}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(paper_id, doc_path))
+                res.append(StandardDoc(paper_id, [doc_path]))
             except Exception as e:
                 self.logger.error(f"[qasper adapter] doc:{paper_id} prepare error {e}")
                 raise e

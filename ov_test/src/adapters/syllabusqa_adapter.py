@@ -151,7 +151,7 @@ class SyllabusQAAdapter(BaseAdapter):
                 doc_path = os.path.join(doc_dir, f"{syllabus_id}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(syllabus_id, doc_path))
+                res.append(StandardDoc(syllabus_id, [doc_path]))
             except Exception as e:
                 self.logger.error(f"[syllabusqa adapter] doc:{syllabus_id} prepare error {e}")
                 # If python-docx not installed, try using plain text
