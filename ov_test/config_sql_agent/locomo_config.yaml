@@ -23,7 +23,7 @@ execution:
   max_workers: 30
   ingest_workers: 4
   retrieval_topk: 30
-  max_queries: 100
+  max_queries: null
   explain_not_mentioned: true
   
 paths:
