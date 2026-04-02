@@ -1,24 +1,24 @@
 # src/adapters/qasper_adapter.py
 """
-Qasper 数据集适配器
+Qasper Dataset Adapter
 
-Qasper 是一个学术论文问答数据集，包含 1585 篇 NLP 论文和 5049 个问题。
-每个问题由多个标注者回答，答案类型包括：
-- extractive_spans: 从论文中提取的文本片段
-- free_form_answer: 自由形式的答案
-- yes_no: 是/否答案
-- unanswerable: 无法从论文中找到答案
+Qasper is an academic paper QA dataset containing 1585 NLP papers and 5049 questions.
+Each question is answered by multiple annotators, with answer types including:
+- extractive_spans: text spans extracted from the paper
+- free_form_answer: free-form answers
+- yes_no: yes/no answers
+- unanswerable: no answer can be found in the paper
 
-数据集特点：
-1. 每篇论文包含标题、摘要、章节内容和图表信息
-2. 每个问题可能有多个标注者的答案
-3. 每个答案有对应的 evidence（证据文本）
+Dataset characteristics:
+1. Each paper includes title, abstract, section content, and figure/table information
+2. Each question may have answers from multiple annotators
+3. Each answer has corresponding evidence (evidence text)
 
-适配器功能：
-- data_prepare: 将论文转换为 Markdown 格式，保留章节结构
-- load_and_transform: 解析 QA 数据，保留答案与证据的对应关系
-- build_prompt: 构建问答提示词
-- post_process_answer: 后处理 LLM 输出
+Adapter functions:
+- data_prepare: Convert papers to Markdown format, preserving section structure
+- load_and_transform: Parse QA data, preserving answer-evidence correspondence
+- build_prompt: Build QA prompt
+- post_process_answer: Post-process LLM output
 """
 
 import json
@@ -27,73 +27,76 @@ from typing import List, Dict, Any
 
 from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
 
-# 问答提示词模板
-QA_PROMPT = """You are a professional academic research assistant. Your task is to answer questions based on the provided research paper snippets.
+# Specific instructions for different answer types
+CATEGORY_INSTRUCTIONS = {
+    "extractive": """Extract the exact answer from the paper.
+- Use EXACT wording from the context
+- Do NOT rephrase or add explanation
+- Provide concise, direct answer""",
+    
+    "free_form": """Answer using information from the paper.
+- Use ONLY facts from the context
+- You may rephrase or summarize in your own words
+- Provide clear, complete answer
+- Do NOT invent information""",
+    
+    "yes_no": """Answer Yes/No question based on the paper.
+- First respond "Yes" or "No"
+- Do NOT add explanation
+- Use ONLY info from context
+- Do NOT invent information"""
+}
 
-### INSTRUCTIONS:
-1. **Source Grounding**: Answer the question using ONLY the provided context. 
-2. **Conciseness**: Provide the answer as a short phrase, entity, or specific value. Avoid full sentences unless absolutely necessary.
-3. **Yes/No Questions**: If the question is a Yes/No question, respond with ONLY "Yes" or "No".
-4. **Lists**: If the answer involves multiple items, separate them with a comma.
-5. **Exact Extraction**: Use exact terminology from the text whenever possible.
-
-### ABSENCE RULE:
-{missing_rule}
-
----
-### CONTEXT (Excerpts from the paper):
-{context_text}
-
----
-### QUESTION:
-{question}
-
----
-### ANSWER:
-"""
-
-# 无法回答时的规则说明
+# Rule for when answer cannot be found
 MISSING_RULE = "If no information is available to answer the question, write 'Not mentioned'."
 
 
 class QasperAdapter(BaseAdapter):
     """
-    专门用于处理 Qasper 数据集的适配器。
+    Adapter specifically for processing Qasper dataset.
     
-    将学术论文转换为带有章节结构的 Markdown 文档，
-    并将 QA 数据转换为标准化的 StandardSample 格式。
+    Converts academic papers to Markdown documents with section structure,
+    and converts QA data to standardized StandardSample format.
     
     Attributes:
-        raw_file_path: 原始 JSON 数据文件路径
-        logger: 日志记录器
+        raw_file_path: Raw JSON data file path
+        logger: Logger
     """
     
     def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
         """
-        加载原始数据并转换为 OpenViking 友好格式。
+        Load raw data and convert to OpenViking-friendly format.
         
-        将每篇论文转换为 Markdown 文档，保留以下结构：
-        - 标题（# Title）
-        - 摘要（## Abstract）
-        - 章节（## Section Name）
-        - 图表（## Figures and Tables）
+        Converts each paper to Markdown document, preserving:
+        - Title (# Title)
+        - Abstract (## Abstract)
+        - Sections (## Section Name)
+        - Figures and Tables (## Figures and Tables)
         
         Args:
-            doc_dir: 文档输出目录路径
+            doc_dir: Document output directory path
             
         Returns:
-            List[StandardDoc]: 标准化文档对象列表，每个包含 paper_id 和文档路径
+            List[StandardDoc]: List of standardized document objects, each containing paper_id and document path
             
         Raises:
-            FileNotFoundError: 原始数据文件不存在
+            FileNotFoundError: Raw data file not found
         """
-        if not os.path.exists(self.raw_file_path):
-            raise FileNotFoundError(f"Raw data file not found: {self.raw_file_path}")
-
         res: List[StandardDoc] = []
+        data = {}
 
-        with open(self.raw_file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        if os.path.isdir(self.raw_file_path):
+            json_files = [f for f in os.listdir(self.raw_file_path) if f.endswith('.json') and f != 'sampling_metadata.json']
+            for json_file in json_files:
+                file_path = os.path.join(self.raw_file_path, json_file)
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    file_data = json.load(f)
+                    data.update(file_data)
+        else:
+            if not os.path.exists(self.raw_file_path):
+                raise FileNotFoundError(f"Raw data file not found: {self.raw_file_path}")
+            with open(self.raw_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
 
         os.makedirs(doc_dir, exist_ok=True)
         
@@ -104,7 +107,7 @@ class QasperAdapter(BaseAdapter):
                 doc_path = os.path.join(doc_dir, f"{paper_id}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(paper_id, [doc_path]))
+                res.append(StandardDoc(paper_id, doc_path))
             except Exception as e:
                 self.logger.error(f"[qasper adapter] doc:{paper_id} prepare error {e}")
                 raise e
@@ -112,31 +115,40 @@ class QasperAdapter(BaseAdapter):
 
     def load_and_transform(self) -> List[StandardSample]:
         """
-        加载原始 JSON 数据并转换为标准化的 StandardSample 对象列表。
+        Load raw JSON data and convert to standardized StandardSample object list.
         
-        处理逻辑：
-        1. 遍历每篇论文的 QA 列表
-        2. 对每个问题，收集所有标注者的答案
-        3. 保留答案与证据的对应关系（存储在 metadata 中）
-        4. 问题格式化为 "Based on the paper "{title}", {question}"
+        Processing logic:
+        1. Iterate through QA list of each paper
+        2. For each question, collect answers from all annotators
+        3. Preserve answer-evidence correspondence (stored in metadata)
+        4. Format question as "Based on the paper \"{title}\", {question}"
         
-        答案类型处理：
-        - extractive_spans: 直接使用提取的文本片段
-        - free_form_answer: 使用自由形式答案
-        - yes_no: 转换为 "Yes" 或 "No"
-        - unanswerable: 转换为 "Not mentioned"
+        Answer type handling:
+        - extractive_spans: directly use extracted text spans
+        - free_form_answer: use free-form answer
+        - yes_no: convert to "Yes" or "No"
+        - unanswerable: convert to "Not mentioned"
         
         Returns:
-            List[StandardSample]: 标准化样本对象列表
+            List[StandardSample]: List of standardized sample objects
             
         Raises:
-            FileNotFoundError: 原始数据文件不存在
+            FileNotFoundError: Raw data file not found
         """
-        if not os.path.exists(self.raw_file_path):
-            raise FileNotFoundError(f"Raw data file not found: {self.raw_file_path}")
+        data = {}
 
-        with open(self.raw_file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        if os.path.isdir(self.raw_file_path):
+            json_files = [f for f in os.listdir(self.raw_file_path) if f.endswith('.json') and f != 'sampling_metadata.json']
+            for json_file in json_files:
+                file_path = os.path.join(self.raw_file_path, json_file)
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    file_data = json.load(f)
+                    data.update(file_data)
+        else:
+            if not os.path.exists(self.raw_file_path):
+                raise FileNotFoundError(f"Raw data file not found: {self.raw_file_path}")
+            with open(self.raw_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
 
         standard_samples = []
 
@@ -145,20 +157,20 @@ class QasperAdapter(BaseAdapter):
             paper_title = paper_data.get("title", "Unknown Title")
             
             for qa_item in paper_data.get("qas", []):
-    
-                # --- unanswerable过滤逻辑 ---
-                # 检查是否所有答案都被标记为无法回答
+
+                # --- Unanswerable filtering logic ---
+                # Check if all answers are marked as unanswerable
                 is_unanswerable = all(
                     ans.get("answer", {}).get("unanswerable", False) 
                     for ans in qa_item.get("answers", [])
                 )
                 if is_unanswerable:
-                    continue  # 直接跳过该问题，不进入后续处理
+                    continue
                 # ------------------
                 
                 raw_question = qa_item.get("question", "")
                 question_id = qa_item.get("question_id", "")
-                # 将论文标题附加到问题上，便于检索时定位到正确的论文
+                # Append paper title to question for easier retrieval
                 question = f'Based on the paper "{paper_title}", {raw_question}'
                 
                 gold_answers = []
@@ -166,14 +178,14 @@ class QasperAdapter(BaseAdapter):
                 answer_types = []
                 answer_evidence_pairs = []
                 
-                # 遍历所有标注者的答案
+                # Iterate through all annotator answers
                 for answer_wrapper in qa_item.get("answers", []):
                     answer_obj = answer_wrapper.get("answer", {})
                     
                     current_answer = None
                     answer_type = self._get_answer_type(answer_obj)
                     
-                    # 处理不同类型的答案
+                    # Process different answer types
                     if answer_obj.get("unanswerable", False):
                         current_answer = "Not mentioned"
                         gold_answers.append(current_answer)
@@ -183,21 +195,21 @@ class QasperAdapter(BaseAdapter):
                         yes_no = answer_obj.get("yes_no")
                         
                         if extractive_spans:
-                            # 提取式答案：可能有多个片段
-                            for span in extractive_spans:
-                                if span and span.strip():
-                                    gold_answers.append(span.strip())
-                            current_answer = extractive_spans[0] if extractive_spans else None
+                            valid_spans = [span.strip() for span in extractive_spans if span and span.strip()]
+                            if valid_spans:
+                                combined_answer = "; ".join(valid_spans)
+                                gold_answers.append(combined_answer)
+                                current_answer = combined_answer
+                            else:
+                                current_answer = None
                         elif free_form_answer and free_form_answer.strip():
-                            # 自由形式答案
                             current_answer = free_form_answer.strip()
                             gold_answers.append(current_answer)
                         elif yes_no is not None:
-                            # 是/否答案
                             current_answer = "Yes" if yes_no else "No"
                             gold_answers.append(current_answer)
                     
-                    # 收集证据文本
+                    # Collect evidence text
                     current_evidence = []
                     evidence = answer_obj.get("evidence", [])
                     for ev in evidence:
@@ -206,11 +218,11 @@ class QasperAdapter(BaseAdapter):
                             if ev not in evidence_list:
                                 evidence_list.append(ev)
                     
-                    # 记录答案类型（去重）
+                    # Record answer type (deduplicated)
                     if answer_type not in answer_types:
                         answer_types.append(answer_type)
                     
-                    # 保存答案-证据对应关系
+                    # Save answer-evidence correspondence
                     if current_answer:
                         answer_evidence_pairs.append({
                             "answer": current_answer,
@@ -218,11 +230,11 @@ class QasperAdapter(BaseAdapter):
                             "answer_type": answer_type
                         })
                 
-                # 如果没有答案，默认为 "Not mentioned"
+                # If no answers, default to "Not mentioned"
                 if not gold_answers:
                     gold_answers = ["Not mentioned"]
                 
-                # 去重（保持顺序）
+                # Deduplicate (preserve order)
                 gold_answers = list(dict.fromkeys(gold_answers))
                 
                 qa_pairs.append(StandardQA(
@@ -233,8 +245,7 @@ class QasperAdapter(BaseAdapter):
                     metadata={
                         "question_id": question_id,
                         "answer_types": answer_types,
-                        "answer_evidence_pairs": answer_evidence_pairs,
-                        "paper_title": paper_title,
+                        "answer_evidence_pairs": answer_evidence_pairs
                     }
                 ))
 
@@ -247,18 +258,18 @@ class QasperAdapter(BaseAdapter):
     
     def _get_answer_type(self, answer_obj: Dict[str, Any]) -> str:
         """
-        根据答案对象判断答案类型。
+        Determine answer type from answer object.
         
         Args:
-            answer_obj: 答案对象，包含 extractive_spans、free_form_answer、yes_no 等字段
+            answer_obj: Answer object, containing extractive_spans, free_form_answer, yes_no, etc.
             
         Returns:
-            str: 答案类型，可能的值：
-                - "unanswerable": 无法回答
-                - "extractive": 提取式答案
-                - "free_form": 自由形式答案
-                - "yes_no": 是/否答案
-                - "unknown": 未知类型
+            str: Answer type, possible values:
+                - "unanswerable": cannot answer
+                - "extractive": extractive answer
+                - "free_form": free-form answer
+                - "yes_no": yes/no answer
+                - "unknown": unknown type
         """
         if answer_obj.get("unanswerable", False):
             return "unanswerable"
@@ -272,9 +283,9 @@ class QasperAdapter(BaseAdapter):
 
     def _convert_paper_to_markdown(self, paper_id: str, paper_data: Dict[str, Any]) -> str:
         """
-        将 Qasper 论文结构转换为 Markdown 字符串。
+        Convert Qasper paper structure to Markdown string.
         
-        转换格式：
+        Conversion format:
         ```markdown
         # {title}
         Paper ID: {paper_id}
@@ -300,27 +311,27 @@ class QasperAdapter(BaseAdapter):
         ```
         
         Args:
-            paper_id: 论文 ID
-            paper_data: 论文数据，包含 title、abstract、full_text、figures_and_tables
+            paper_id: Paper ID
+            paper_data: Paper data, containing title, abstract, full_text, figures_and_tables
             
         Returns:
-            str: Markdown 格式的论文内容
+            str: Markdown formatted paper content
         """
         md_lines = []
         
-        # 标题
+        # Title
         title = paper_data.get("title", "Unknown Title")
         md_lines.append(f"# {title}")
         md_lines.append(f"Paper ID: {paper_id}\n")
         
-        # 摘要
+        # Abstract
         abstract = paper_data.get("abstract", "")
         if abstract:
             md_lines.append("## Abstract")
             md_lines.append(abstract)
             md_lines.append("")
         
-        # 正文章节
+        # Main text sections
         full_text = paper_data.get("full_text", [])
         for section in full_text:
             section_name = section.get("section_name", "")
@@ -334,7 +345,7 @@ class QasperAdapter(BaseAdapter):
                     md_lines.append(para.strip())
                     md_lines.append("")
         
-        # 图表信息
+        # Figure and table information
         figures_and_tables = paper_data.get("figures_and_tables", [])
         if figures_and_tables:
             md_lines.append("## Figures and Tables")
@@ -342,7 +353,7 @@ class QasperAdapter(BaseAdapter):
                 caption = fig.get("caption", "")
                 file_name = fig.get("file", "")
                 
-                # 根据文件名或标题判断是图还是表
+                # Determine if figure or table based on filename or caption
                 if "Figure" in file_name or "figure" in caption.lower():
                     md_lines.append(f"### Figure {idx}")
                 else:
@@ -359,30 +370,48 @@ class QasperAdapter(BaseAdapter):
     def build_prompt(self, qa: StandardQA, context_blocks: List[str]) -> tuple[str, Dict[str, Any]]:
         context_text = "\n\n".join(context_blocks) if context_blocks else "No relevant context found."
         
-        full_prompt = QA_PROMPT.format(
-            missing_rule=MISSING_RULE,
-            context_text=context_text,
-            question=qa.question
-        )
+        answer_types = qa.metadata.get("answer_types", [])
+        primary_type = answer_types[0] if answer_types else None
+        
+        category_instruction = CATEGORY_INSTRUCTIONS.get(primary_type, "")
+        
+        if category_instruction:
+            full_prompt = f"""{context_text}
+
+{category_instruction}
+
+{MISSING_RULE}
+
+Question: {qa.question}
+
+Answer:"""
+        else:
+            full_prompt = f"""{context_text}
+
+{MISSING_RULE}
+
+Question: {qa.question}
+
+Answer:"""
 
         meta = {
             "question_id": qa.metadata.get("question_id", ""),
-            "answer_types": qa.metadata.get("answer_types", [])
+            "answer_types": answer_types
         }
         return full_prompt, meta
 
     def post_process_answer(self, qa: StandardQA, raw_answer: str, meta: Dict[str, Any]) -> str:
         """
-        后处理 LLM 生成的原始答案。
+        Post-process raw answer generated by LLM.
         
-        当前实现仅去除首尾空白字符。
+        Current implementation only strips leading/trailing whitespace.
         
         Args:
-            qa: 标准化问答对象
-            raw_answer: LLM 生成的原始答案
-            meta: 元数据字典
+            qa: Standardized QA object
+            raw_answer: Raw answer generated by LLM
+            meta: Metadata dictionary
             
         Returns:
-            str: 处理后的答案
+            str: Processed answer
         """
         return raw_answer.strip()
