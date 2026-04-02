@@ -286,8 +286,25 @@ class SQLAgentStoreWrapper:
             return f.read().strip()
 
     def _extract_pdf_text(self, pdf_path: str) -> str:
-        """Extract text from PDF: docling -> pypdf -> pdfplumber fallback chain."""
-        # Priority 1: docling
+        """Extract text from PDF: pdfplumber -> pypdf -> docling fallback chain."""
+        # Priority 1: pdfplumber
+        try:
+            import pdfplumber
+            self.logger.info("Attempting to extract text using pdfplumber")
+            pages_text = []
+            with pdfplumber.open(pdf_path) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        pages_text.append(t)
+            content = "\n\n".join(pages_text)
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("pdfplumber failed for %s: %s", pdf_path, exc)
+        # Priority 2: docling
         try:
             from docling.document_converter import DocumentConverter
             converter = DocumentConverter()
@@ -300,7 +317,7 @@ class SQLAgentStoreWrapper:
         except Exception as exc:
             self.logger.warning("docling failed for %s: %s, falling back", pdf_path, exc)
 
-        # Priority 2: pypdf
+        # Priority 3: pypdf
         try:
             from pypdf import PdfReader
             reader = PdfReader(pdf_path)
@@ -316,22 +333,6 @@ class SQLAgentStoreWrapper:
         except Exception as exc:
             self.logger.warning("pypdf failed for %s: %s, falling back", pdf_path, exc)
 
-        # Priority 3: pdfplumber
-        try:
-            import pdfplumber
-            pages_text = []
-            with pdfplumber.open(pdf_path) as pdf:
-                for page in pdf.pages:
-                    t = page.extract_text()
-                    if t:
-                        pages_text.append(t)
-            content = "\n\n".join(pages_text)
-            if content.strip():
-                return content
-        except ImportError:
-            pass
-        except Exception as exc:
-            self.logger.warning("pdfplumber failed for %s: %s", pdf_path, exc)
 
         self.logger.error(
             "Cannot extract text from %s. "
@@ -361,8 +362,12 @@ class SQLAgentStoreWrapper:
             self.logger.warning(f"[SQLAgent] Unknown dataset '{self.dataset_name}', using generic ingest")
             handler = self._ingest_generic
 
-        input_tokens = handler(engine, samples) or 0
-        return {"time": time.time() - start_time, "input_tokens": input_tokens, "output_tokens": 0}
+        result = handler(engine, samples)
+        if isinstance(result, tuple):
+            input_tokens, insert_time = result
+        else:
+            input_tokens, insert_time = result or 0, time.time() - start_time
+        return {"time": time.time() - start_time, "insert_time": insert_time, "input_tokens": input_tokens, "output_tokens": 0}
 
     # ---- LoCoMo ----
 
@@ -388,69 +393,86 @@ class SQLAgentStoreWrapper:
                     conn.execute(text(stmt))
             conn.commit()
 
-        # 读取原始 JSON
+        # 读取原始 JSON，预过滤
         data = self._load_json(self.raw_data_path)
         sample_ids = {s.sample_id for s in samples}
+        filtered = [e for e in data if str(e.get('sample_id', '')) in sample_ids] if sample_ids else data
         total_tokens = 0
 
-        with engine.connect() as conn:
-            for entry in data:
-                sid = str(entry.get('sample_id', ''))
-                if sample_ids and sid not in sample_ids:
+        # 预处理：提取所有待插入记录并统计 tokens
+        conv_rows, summary_rows, obs_rows = [], [], []
+        # 每个 sample 的有效 session 数量
+        LOCOMO_SESSION_NUM = {
+            'conv-26': 19, 'conv-30': 19, 'conv-41': 32, 'conv-42': 29,
+            'conv-43': 29, 'conv-44': 28, 'conv-47': 31, 'conv-48': 30,
+            'conv-49': 25, 'conv-50': 30,
+        }
+        for entry in filtered:
+            sid = str(entry.get('sample_id', ''))
+            conv = entry.get('conversation', {})
+            max_sess = LOCOMO_SESSION_NUM.get(sid, 50)
+            for sess_idx in range(1, max_sess + 1):
+                sess_key = f'session_{sess_idx}'
+                if sess_key not in conv or not isinstance(conv[sess_key], list):
                     continue
-                conv = entry.get('conversation', {})
-                for sess_idx in range(1, 100):
-                    sess_key = f'session_{sess_idx}'
-                    date_key = f'{sess_key}_date_time'
-                    if sess_key not in conv or not isinstance(conv[sess_key], list):
-                        continue
-                    sess_date = conv.get(date_key, '')
-                    for turn_idx, turn in enumerate(conv[sess_key]):
-                        turn_text = turn.get('text', '')
-                        total_tokens += self.count_tokens(turn_text)
-                        conn.execute(text(
-                            "INSERT INTO conversations "
-                            "(sample_id,session_id,session_date,turn_number,dia_id,speaker,text) "
-                            "VALUES (:a,:b,:c,:d,:e,:f,:g)"
-                        ), {"a": sid, "b": sess_idx, "c": sess_date, "d": turn_idx + 1,
-                            "e": turn.get('dia_id', ''), "f": turn.get('speaker', ''),
-                            "g": turn_text})
+                date_key = f'{sess_key}_date_time'
+                sess_date = conv.get(date_key, '')
+                for turn_idx, turn in enumerate(conv[sess_key]):
+                    turn_text = turn.get('text', '')
+                    total_tokens += self.count_tokens(turn_text)
+                    conv_rows.append({"a": sid, "b": sess_idx, "c": sess_date, "d": turn_idx + 1,
+                                      "e": turn.get('dia_id', ''), "f": turn.get('speaker', ''),
+                                      "g": turn_text})
 
-                # session summaries
-                for i in range(1, 100):
-                    skey = f'session_{i}_summary'
-                    if skey in entry.get('session_summary', {}):
-                        summary = entry['session_summary'][skey]
-                        total_tokens += self.count_tokens(summary)
-                        conn.execute(text(
-                            "INSERT INTO session_summaries (sample_id,session_id,summary) "
-                            "VALUES (:a,:b,:c)"
-                        ), {"a": sid, "b": i, "c": summary})
+            summaries = entry.get('session_summary', {})
+            for i in range(1, max_sess + 1):
+                skey = f'session_{i}_summary'
+                if skey in summaries and summaries[skey]:
+                    total_tokens += self.count_tokens(summaries[skey])
+                    summary_rows.append({"a": sid, "b": i, "c": summaries[skey]})
 
-                # observations
-                for i in range(1, 100):
-                    okey = f'session_{i}_observation'
-                    obs_dict = entry.get('observation', {}).get(okey)
-                    if not obs_dict or not isinstance(obs_dict, dict):
+            observations = entry.get('observation', {})
+            for i in range(1, max_sess + 1):
+                okey = f'session_{i}_observation'
+                obs_dict = observations.get(okey)
+                if not obs_dict or not isinstance(obs_dict, dict):
+                    continue
+                for speaker, obs_list in obs_dict.items():
+                    if not isinstance(obs_list, list):
                         continue
-                    for speaker, obs_list in obs_dict.items():
-                        if not isinstance(obs_list, list):
-                            continue
-                        for obs_item in obs_list:
-                            if isinstance(obs_item, list) and len(obs_item) >= 2:
-                                dia_ref = obs_item[1]
-                                if isinstance(dia_ref, list):
-                                    dia_ref = ', '.join(str(x) for x in dia_ref)
-                                total_tokens += self.count_tokens(str(obs_item[0]))
-                                conn.execute(text(
-                                    "INSERT INTO observations "
-                                    "(sample_id,session_id,speaker,observation,dia_id) "
-                                    "VALUES (:a,:b,:c,:d,:e)"
-                                ), {"a": sid, "b": i, "c": speaker,
-                                    "d": str(obs_item[0]), "e": str(dia_ref)})
+                    for obs_item in obs_list:
+                        if isinstance(obs_item, list) and len(obs_item) >= 2:
+                            dia_ref = obs_item[1]
+                            if isinstance(dia_ref, list):
+                                dia_ref = ', '.join(str(x) for x in dia_ref)
+                            total_tokens += self.count_tokens(str(obs_item[0]))
+                            obs_rows.append({"a": sid, "b": i, "c": speaker,
+                                             "d": str(obs_item[0]), "e": str(dia_ref)})
+
+        # 纯 INSERT 计时
+        t_insert = time.time()
+        with engine.connect() as conn:
+            for r in conv_rows:
+                conn.execute(text(
+                    "INSERT INTO conversations "
+                    "(sample_id,session_id,session_date,turn_number,dia_id,speaker,text) "
+                    "VALUES (:a,:b,:c,:d,:e,:f,:g)"
+                ), r)
+            for r in summary_rows:
+                conn.execute(text(
+                    "INSERT INTO session_summaries (sample_id,session_id,summary) "
+                    "VALUES (:a,:b,:c)"
+                ), r)
+            for r in obs_rows:
+                conn.execute(text(
+                    "INSERT INTO observations "
+                    "(sample_id,session_id,speaker,observation,dia_id) "
+                    "VALUES (:a,:b,:c,:d,:e)"
+                ), r)
             conn.commit()
-        self.logger.info(f"[SQLAgent-LoCoMo] Ingested for {len(sample_ids)} samples, {total_tokens} tokens")
-        return total_tokens
+        insert_time = time.time() - t_insert
+        self.logger.info(f"[SQLAgent-LoCoMo] Ingested for {len(filtered)} samples, {total_tokens} tokens, insert_time={insert_time:.2f}s")
+        return total_tokens, insert_time
 
     # ---- HotpotQA ----
 
@@ -470,39 +492,43 @@ class SQLAgentStoreWrapper:
         sample_ids = {s.sample_id for s in samples}
         total_chunks = 0
         total_tokens = 0
-        ingested_samples = 0
 
+        # 预处理：提取待插入记录并统计 tokens
+        article_rows = []
+        chunk_rows = []
+        for entry in data:
+            sid = str(entry.get('id', ''))
+            context = entry.get('context', {})
+            titles = context.get('title', [])
+            sentences = context.get('sentences', [])
+
+            for i, title in enumerate(titles):
+                sents = sentences[i] if i < len(sentences) else []
+                content = ' '.join(s.strip() for s in sents if s.strip())
+                if not content:
+                    continue
+                total_tokens += self.count_tokens(content)
+                article_rows.append({"a": sid, "b": title, "c": content})
+                for ci, chunk in enumerate(self._do_chunk(content)):
+                    chunk_rows.append({"a": sid, "b": title, "c": ci, "d": chunk})
+                    total_chunks += 1
+
+        # 纯 INSERT 计时
+        t_insert = time.time()
         with engine.connect() as conn:
-            for entry in data:
-                sid = str(entry.get('id', ''))
-                # if sample_ids and sid not in sample_ids:
-                #     continue
-                ingested_samples += 1
-
-                context = entry.get('context', {})
-                titles = context.get('title', [])
-                sentences = context.get('sentences', [])
-
-                for i, title in enumerate(titles):
-                    sents = sentences[i] if i < len(sentences) else []
-                    content = ' '.join(s.strip() for s in sents if s.strip())
-                    if not content:
-                        continue
-                    total_tokens += self.count_tokens(content)
-
-                    conn.execute(text(
-                        "INSERT INTO articles (sample_id,title,content) VALUES (:a,:b,:c)"
-                    ), {"a": sid, "b": title, "c": content})
-
-                    for ci, chunk in enumerate(self._do_chunk(content)):
-                        conn.execute(text(
-                            "INSERT INTO article_chunks (sample_id,title,chunk_index,content) "
-                            "VALUES (:a,:b,:c,:d)"
-                        ), {"a": sid, "b": title, "c": ci, "d": chunk})
-                        total_chunks += 1
+            for r in article_rows:
+                conn.execute(text(
+                    "INSERT INTO articles (sample_id,title,content) VALUES (:a,:b,:c)"
+                ), r)
+            for r in chunk_rows:
+                conn.execute(text(
+                    "INSERT INTO article_chunks (sample_id,title,chunk_index,content) "
+                    "VALUES (:a,:b,:c,:d)"
+                ), r)
             conn.commit()
-        self.logger.info(f"[SQLAgent-HotpotQA] {ingested_samples} samples, {total_chunks} chunks, {total_tokens} tokens")
-        return total_tokens
+        insert_time = time.time() - t_insert
+        self.logger.info(f"[SQLAgent-HotpotQA] {len(article_rows)} articles, {total_chunks} chunks, {total_tokens} tokens, insert_time={insert_time:.2f}s")
+        return total_tokens, insert_time
 
     # ---- Qasper ----
 
@@ -525,59 +551,63 @@ class SQLAgentStoreWrapper:
         # Qasper 可能有多个 split 文件
         papers = self._load_qasper_papers()
         sample_ids = {s.sample_id for s in samples}
+        filtered_papers = [p for p in papers if p['id'] in sample_ids] if sample_ids else papers
         total_chunks = 0
         total_tokens = 0
 
+        # 预处理：提取待插入记录并统计 tokens
+        paper_rows = []
+        section_rows = []
+        chunk_rows = []
+        for paper in filtered_papers:
+            pid = paper['id']
+            abstract = paper.get('abstract', '')
+            total_tokens += self.count_tokens(abstract)
+            paper_rows.append({"a": pid, "b": paper.get('title', ''), "c": abstract})
+
+            ft = paper.get('full_text', [])
+            sections = []
+            if isinstance(ft, list):
+                for i, sec in enumerate(ft):
+                    sname = sec.get('section_name', '')
+                    paras = sec.get('paragraphs', [])
+                    content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
+                    sections.append((i, sname, content))
+            else:
+                sec_names = ft.get('section_name', [])
+                paragraphs = ft.get('paragraphs', [])
+                for i, (sname, paras) in enumerate(zip(sec_names, paragraphs)):
+                    content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
+                    sections.append((i, sname, content))
+
+            for i, sname, content in sections:
+                total_tokens += self.count_tokens(content)
+                section_rows.append({"a": pid, "b": i, "c": sname, "d": content})
+                for ci, chunk in enumerate(self._do_chunk(content)):
+                    chunk_rows.append({"a": pid, "b": i, "c": ci, "d": chunk})
+                    total_chunks += 1
+
+        # 纯 INSERT 计时
+        t_insert = time.time()
         with engine.connect() as conn:
-            for paper in papers:
-                pid = paper['id']
-                if sample_ids and pid not in sample_ids:
-                    continue
-                abstract = paper.get('abstract', '')
-                total_tokens += self.count_tokens(abstract)
+            for r in paper_rows:
                 conn.execute(text(
                     "INSERT OR IGNORE INTO papers (paper_id,title,abstract) VALUES (:a,:b,:c)"
-                ), {"a": pid, "b": paper.get('title', ''), "c": abstract})
-
-                ft = paper.get('full_text', [])
-                # full_text 可能是 list[{section_name, paragraphs}] 或 dict{section_name[], paragraphs[]}
-                if isinstance(ft, list):
-                    # list of section objects
-                    for i, sec in enumerate(ft):
-                        sname = sec.get('section_name', '')
-                        paras = sec.get('paragraphs', [])
-                        content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
-                        total_tokens += self.count_tokens(content)
-                        conn.execute(text(
-                            "INSERT INTO sections (paper_id,section_index,section_name,content) "
-                            "VALUES (:a,:b,:c,:d)"
-                        ), {"a": pid, "b": i, "c": sname, "d": content})
-                        for ci, chunk in enumerate(self._do_chunk(content)):
-                            conn.execute(text(
-                                "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
-                                "VALUES (:a,:b,:c,:d)"
-                            ), {"a": pid, "b": i, "c": ci, "d": chunk})
-                            total_chunks += 1
-                else:
-                    # dict with parallel arrays
-                    sec_names = ft.get('section_name', [])
-                    paragraphs = ft.get('paragraphs', [])
-                    for i, (sname, paras) in enumerate(zip(sec_names, paragraphs)):
-                        content = '\n'.join(paras) if isinstance(paras, list) else str(paras)
-                        total_tokens += self.count_tokens(content)
-                        conn.execute(text(
-                            "INSERT INTO sections (paper_id,section_index,section_name,content) "
-                            "VALUES (:a,:b,:c,:d)"
-                        ), {"a": pid, "b": i, "c": sname, "d": content})
-                        for ci, chunk in enumerate(self._do_chunk(content)):
-                            conn.execute(text(
-                                "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
-                                "VALUES (:a,:b,:c,:d)"
-                            ), {"a": pid, "b": i, "c": ci, "d": chunk})
-                            total_chunks += 1
+                ), r)
+            for r in section_rows:
+                conn.execute(text(
+                    "INSERT INTO sections (paper_id,section_index,section_name,content) "
+                    "VALUES (:a,:b,:c,:d)"
+                ), r)
+            for r in chunk_rows:
+                conn.execute(text(
+                    "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
+                    "VALUES (:a,:b,:c,:d)"
+                ), r)
             conn.commit()
-        self.logger.info(f"[SQLAgent-Qasper] {len(papers)} papers, {total_chunks} chunks, {total_tokens} tokens")
-        return total_tokens
+        insert_time = time.time() - t_insert
+        self.logger.info(f"[SQLAgent-Qasper] {len(papers)} papers, {total_chunks} chunks, {total_tokens} tokens, insert_time={insert_time:.2f}s")
+        return total_tokens, insert_time
 
     # ---- SyllabusQA ----
 
@@ -604,32 +634,42 @@ class SQLAgentStoreWrapper:
 
         total_chunks = 0
         total_tokens = 0
+
+        # 预处理：读取文档内容并统计 tokens
+        syllabus_rows = []
+        chunk_rows = []
+        for sample in samples:
+            name = sample.sample_id
+            content = ''
+            for dp in sample.doc_paths:
+                content += self._read_document(dp)
+            total_tokens += self.count_tokens(content)
+            m = meta.get(name, {})
+            syllabus_rows.append({"a": name, "b": m.get('course', ''), "c": m.get('major', ''),
+                                  "d": m.get('area', ''), "e": m.get('university', ''),
+                                  "f": int(m.get('num_pages', 0) or 0), "g": content})
+            for ci, chunk in enumerate(self._do_chunk(content)):
+                chunk_rows.append({"a": name, "b": ci, "c": chunk})
+                total_chunks += 1
+
+        # 纯 INSERT 计时
+        t_insert = time.time()
         with engine.connect() as conn:
-            for sample in samples:
-                name = sample.sample_id
-                # 读取文档内容
-                content = ''
-                for dp in sample.doc_paths:
-                    content += self._read_document(dp)
-                total_tokens += self.count_tokens(content)
-                m = meta.get(name, {})
+            for r in syllabus_rows:
                 conn.execute(text(
                     "INSERT INTO syllabi "
                     "(syllabus_name,course,major,area,university,num_pages,content) "
                     "VALUES (:a,:b,:c,:d,:e,:f,:g)"
-                ), {"a": name, "b": m.get('course', ''), "c": m.get('major', ''),
-                    "d": m.get('area', ''), "e": m.get('university', ''),
-                    "f": int(m.get('num_pages', 0) or 0), "g": content})
-
-                for ci, chunk in enumerate(self._do_chunk(content)):
-                    conn.execute(text(
-                        "INSERT INTO syllabus_chunks (syllabus_name,chunk_index,content) "
-                        "VALUES (:a,:b,:c)"
-                    ), {"a": name, "b": ci, "c": chunk})
-                    total_chunks += 1
+                ), r)
+            for r in chunk_rows:
+                conn.execute(text(
+                    "INSERT INTO syllabus_chunks (syllabus_name,chunk_index,content) "
+                    "VALUES (:a,:b,:c)"
+                ), r)
             conn.commit()
-        self.logger.info(f"[SQLAgent-SyllabusQA] {len(samples)} syllabi, {total_chunks} chunks, {total_tokens} tokens")
-        return total_tokens
+        insert_time = time.time() - t_insert
+        self.logger.info(f"[SQLAgent-SyllabusQA] {len(samples)} syllabi, {total_chunks} chunks, {total_tokens} tokens, insert_time={insert_time:.2f}s")
+        return total_tokens, insert_time
 
     # ---- ClapNQ ----
 
@@ -645,34 +685,44 @@ class SQLAgentStoreWrapper:
         );"""
         self._exec_schema(engine, schema)
 
-        # ClapNQ 的 doc_paths 指向文档文件，但原始数据在 JSONL 中
-        # 从 raw_data_path 读取所有 JSONL
+        # 加载 JSONL 数据，预过滤
         qa_data = self._load_clapnq_data()
         sample_ids = {s.sample_id for s in samples}
         total_chunks = 0
         total_tokens = 0
 
+        # 预处理：提取待插入记录并统计 tokens
+        passage_rows = []
+        chunk_rows = []
+        for item in qa_data:
+            qa_id = str(item.get('qa_id', item.get('id', '')))
+            if sample_ids and qa_id not in sample_ids:
+                continue
+            for pg in item.get('passages', []):
+                title = pg.get('title', '')
+                content = pg.get('text', '')
+                total_tokens += self.count_tokens(content)
+                passage_rows.append({"a": qa_id, "b": title, "c": content})
+                for ci, chunk in enumerate(self._do_chunk(content)):
+                    chunk_rows.append({"a": qa_id, "b": title, "c": ci, "d": chunk})
+                    total_chunks += 1
+
+        # 纯 INSERT 计时
+        t_insert = time.time()
         with engine.connect() as conn:
-            for qa in qa_data:
-                qa_id = qa.get('qa_id', qa.get('id', ''))
-                if sample_ids and qa_id not in sample_ids:
-                    continue
-                for pg in qa.get('passages', []):
-                    title = pg.get('title', '')
-                    content = pg.get('text', '')
-                    total_tokens += self.count_tokens(content)
-                    conn.execute(text(
-                        "INSERT INTO passages (qa_id,title,content) VALUES (:a,:b,:c)"
-                    ), {"a": qa_id, "b": title, "c": content})
-                    for ci, chunk in enumerate(self._do_chunk(content)):
-                        conn.execute(text(
-                            "INSERT INTO passage_chunks (qa_id,title,chunk_index,content) "
-                            "VALUES (:a,:b,:c,:d)"
-                        ), {"a": qa_id, "b": title, "c": ci, "d": chunk})
-                        total_chunks += 1
+            for r in passage_rows:
+                conn.execute(text(
+                    "INSERT INTO passages (qa_id,title,content) VALUES (:a,:b,:c)"
+                ), r)
+            for r in chunk_rows:
+                conn.execute(text(
+                    "INSERT INTO passage_chunks (qa_id,title,chunk_index,content) "
+                    "VALUES (:a,:b,:c,:d)"
+                ), r)
             conn.commit()
-        self.logger.info(f"[SQLAgent-ClapNQ] {len(qa_data)} QAs, {total_chunks} chunks, {total_tokens} tokens")
-        return total_tokens
+        insert_time = time.time() - t_insert
+        self.logger.info(f"[SQLAgent-ClapNQ] {len(passage_rows)} passages, {total_chunks} chunks, {total_tokens} tokens, insert_time={insert_time:.2f}s")
+        return total_tokens, insert_time
 
     # ---- FinanceBench ----
 
@@ -706,31 +756,43 @@ class SQLAgentStoreWrapper:
 
         total_chunks = 0
         total_tokens = 0
+
+        # 预处理：读取文档内容并统计 tokens
+        doc_rows = []
+        chunk_rows = []
+        for sample in samples:
+            doc_name = sample.sample_id
+            content = ''
+            for dp in sample.doc_paths:
+                content += self._read_document(dp)
+            total_tokens += self.count_tokens(content)
+            m = doc_info.get(doc_name, {})
+            doc_rows.append({"a": doc_name, "b": m.get('company', ''), "c": m.get('gics_sector', ''),
+                             "d": m.get('doc_type', ''), "e": int(m.get('doc_period', 0) or 0),
+                             "f": 0, "g": content})
+            for ci, chunk in enumerate(self._do_chunk(content, chunk_size=cs, chunk_overlap=co)):
+                chunk_rows.append({"a": doc_name, "b": ci, "c": 0, "d": chunk})
+                total_chunks += 1
+            self.logger.info(f"[SQLAgent-FinanceBench] Prepared doc '{doc_name}' with {total_tokens} tokens and {total_chunks} chunks")
+
+        # 纯 INSERT 计时
+        t_insert = time.time()
         with engine.connect() as conn:
-            for sample in samples:
-                doc_name = sample.sample_id
-                content = ''
-                for dp in sample.doc_paths:
-                    content += self._read_document(dp)
-                total_tokens += self.count_tokens(content)
-                m = doc_info.get(doc_name, {})
+            for r in doc_rows:
                 conn.execute(text(
                     "INSERT OR IGNORE INTO documents "
                     "(doc_name,company,gics_sector,doc_type,doc_period,num_pages,content) "
                     "VALUES (:a,:b,:c,:d,:e,:f,:g)"
-                ), {"a": doc_name, "b": m.get('company', ''), "c": m.get('gics_sector', ''),
-                    "d": m.get('doc_type', ''), "e": int(m.get('doc_period', 0) or 0),
-                    "f": 0, "g": content})
-
-                for ci, chunk in enumerate(self._do_chunk(content, chunk_size=cs, chunk_overlap=co)):
-                    conn.execute(text(
-                        "INSERT INTO document_chunks (doc_name,chunk_index,page_num,content) "
-                        "VALUES (:a,:b,:c,:d)"
-                    ), {"a": doc_name, "b": ci, "c": 0, "d": chunk})
-                    total_chunks += 1
+                ), r)
+            for r in chunk_rows:
+                conn.execute(text(
+                    "INSERT INTO document_chunks (doc_name,chunk_index,page_num,content) "
+                    "VALUES (:a,:b,:c,:d)"
+                ), r)
             conn.commit()
-        self.logger.info(f"[SQLAgent-FinanceBench] {len(samples)} docs, {total_chunks} chunks, {total_tokens} tokens")
-        return total_tokens
+        insert_time = time.time() - t_insert
+        self.logger.info(f"[SQLAgent-FinanceBench] {len(samples)} docs, {total_chunks} chunks, {total_tokens} tokens, insert_time={insert_time:.2f}s")
+        return total_tokens, insert_time
 
     # ---- Generic fallback ----
 
@@ -747,26 +809,38 @@ class SQLAgentStoreWrapper:
 
         total_chunks = 0
         total_tokens = 0
+
+        # 预处理：读取文档内容并统计 tokens
+        doc_rows = []
+        chunk_rows = []
+        for sample in samples:
+            for dp in sample.doc_paths:
+                content = self._read_document(dp)
+                if not content:
+                    continue
+                total_tokens += self.count_tokens(content)
+                doc_id = os.path.splitext(os.path.basename(dp))[0]
+                doc_rows.append({"a": doc_id, "b": content})
+                for ci, chunk in enumerate(self._do_chunk(content)):
+                    chunk_rows.append({"a": doc_id, "b": ci, "c": chunk})
+                    total_chunks += 1
+
+        # 纯 INSERT 计时
+        t_insert = time.time()
         with engine.connect() as conn:
-            for sample in samples:
-                for dp in sample.doc_paths:
-                    content = self._read_document(dp)
-                    if not content:
-                        continue
-                    total_tokens += self.count_tokens(content)
-                    doc_id = os.path.splitext(os.path.basename(dp))[0]
-                    conn.execute(text(
-                        "INSERT OR REPLACE INTO documents (doc_id,content) VALUES (:a,:b)"
-                    ), {"a": doc_id, "b": content})
-                    for ci, chunk in enumerate(self._do_chunk(content)):
-                        conn.execute(text(
-                            "INSERT OR REPLACE INTO document_chunks (doc_id,chunk_index,content) "
-                            "VALUES (:a,:b,:c)"
-                        ), {"a": doc_id, "b": ci, "c": chunk})
-                        total_chunks += 1
+            for r in doc_rows:
+                conn.execute(text(
+                    "INSERT OR REPLACE INTO documents (doc_id,content) VALUES (:a,:b)"
+                ), r)
+            for r in chunk_rows:
+                conn.execute(text(
+                    "INSERT OR REPLACE INTO document_chunks (doc_id,chunk_index,content) "
+                    "VALUES (:a,:b,:c)"
+                ), r)
             conn.commit()
-        self.logger.info(f"[SQLAgent-Generic] {len(samples)} samples, {total_chunks} chunks, {total_tokens} tokens")
-        return total_tokens
+        insert_time = time.time() - t_insert
+        self.logger.info(f"[SQLAgent-Generic] {len(samples)} samples, {total_chunks} chunks, {total_tokens} tokens, insert_time={insert_time:.2f}s")
+        return total_tokens, insert_time
 
     # ---- 辅助方法 ----
 
@@ -857,9 +931,6 @@ class SQLAgentStoreWrapper:
         )
 
         if ds == 'locomo':
-            speakers = meta.get('speakers', ('', ''))
-            sp_a = speakers[0] if len(speakers) > 0 else ''
-            sp_b = speakers[1] if len(speakers) > 1 else ''
             locomo_suffix = (
                 "Do NOT answer the question. Only return the relevant raw texts "
                 "from the database that could help answer it. "
@@ -867,8 +938,7 @@ class SQLAgentStoreWrapper:
                 "Format: '- [speaker, session_date] text'"
             )
             return (
-                f"Find conversations with sample_id '{sample_id}' "
-                f"between {sp_a} and {sp_b} that are relevant to the following question.\n\n"
+                f"Find conversations that are relevant to the following question.\n\n"
                 f"Question: {question}\n\n"
                 f"Note: If the question contains relative time expressions "
                 f"(e.g. 'yesterday', 'last week'), query session_date first "
@@ -877,48 +947,36 @@ class SQLAgentStoreWrapper:
             )
 
         elif ds == 'qasper':
-            title = meta.get('paper_title', '')
             return (
-                f"Find relevant text from the research paper data for "
-                f"paper_id '{sample_id}' (title: \"{title}\"). "
+                f"Find relevant text from the research paper. "
                 f"Search in the 'papers', 'sections', and 'section_chunks' tables.\n\n"
                 f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'hotpotqa':
-            titles = meta.get('supporting_fact_titles', [])[:3]
-            title_hints = ", ".join(f"'{t}'" for t in titles)
             return (
-                f"Find relevant text from the Wikipedia articles with sample_id '{sample_id}'. "
-                f"Hint: relevant articles may include {title_hints}. "
+                f"Find relevant text from the Wikipedia articles in the database. "
                 f"Search in both 'articles' and 'article_chunks' tables.\n\n"
                 f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'syllabusqa':
             return (
-                f"Find relevant text from the syllabus data for '{sample_id}'. "
+                f"Find relevant text from the syllabus data. "
                 f"Search in both 'syllabi' and 'syllabus_chunks' tables.\n\n"
                 f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'clapnq':
-            title_hint = ""
-            first_title = meta.get('first_passage_title', '')
-            if first_title:
-                title_hint = f" The relevant passage is titled '{first_title}'."
             return (
-                f"Find relevant text from the passage data for "
-                f"qa_id '{sample_id}'.{title_hint} "
+                f"Find relevant text from the passage data. "
                 f"Search in both 'passages' and 'passage_chunks' tables.\n\n"
                 f"Question: {question}\n\n{retrieve_suffix}"
             )
 
         elif ds == 'financebench':
-            company = meta.get('company', '')
             return (
-                f"Find relevant text from the financial document data for '{sample_id}' "
-                f"(company: {company}). "
+                f"Find relevant text from the financial document data. "
                 f"Search in both 'documents' and 'document_chunks' tables.\n\n"
                 f"Question: {question}\n\n{retrieve_suffix}"
             )
@@ -934,6 +992,11 @@ class SQLAgentStoreWrapper:
         ctx_token = None
         if self._token_tracker and sample_id:
             ctx_token = self._token_tracker.set_sample_id(sample_id)
+
+        # 记录调用前的 token 用量，用于计算本次增量
+        usage_before = {"total_prompt_tokens": 0, "total_completion_tokens": 0}
+        if self._token_tracker and sample_id:
+            usage_before = self._token_tracker.get_usage(sample_id)
 
         # 构建数据集专用的检索 prompt
         prompt = self._build_retrieve_prompt(query, sample_id, qa_metadata)
@@ -959,9 +1022,9 @@ class SQLAgentStoreWrapper:
 
         input_tokens, output_tokens = 0, 0
         if self._token_tracker and sample_id:
-            usage = self._token_tracker.get_usage(sample_id)
-            input_tokens = usage.get("total_prompt_tokens", 0)
-            output_tokens = usage.get("total_completion_tokens", 0)
+            usage_after = self._token_tracker.get_usage(sample_id)
+            input_tokens = usage_after.get("total_prompt_tokens", 0) - usage_before.get("total_prompt_tokens", 0)
+            output_tokens = usage_after.get("total_completion_tokens", 0) - usage_before.get("total_completion_tokens", 0)
 
         # 解析 agent 输出：按行拆分为检索到的文本片段
         resources = []

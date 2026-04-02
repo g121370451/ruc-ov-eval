@@ -222,9 +222,29 @@ class PerQuestionPipeline(BenchmarkPipeline):
             if failed_keys:
                 self.logger.warning(f"Failed/timed-out groups: {failed_keys}")
 
+            # 汇总入库时间（从 records 中读取）
+            sum_ingest_time = 0.0
+            sum_ingest_in_tokens = 0
+            sum_ingest_out_tokens = 0
+            for rec in self.records.values():
+                sum_ingest_time += rec.get('ingest_time', 0)
+                sum_ingest_in_tokens += rec.get('ingest_input_tokens', 0)
+                sum_ingest_out_tokens += rec.get('ingest_output_tokens', 0)
+
+            self.metrics_summary["insertion"] = {
+                "time": sum_ingest_time,
+                "input_tokens": sum_ingest_in_tokens,
+                "output_tokens": sum_ingest_out_tokens
+            }
             # 入库全部完成后备份
             self._backup_store_parent()
-
+            self._update_report({
+                "Insertion Efficiency (Total Dataset)": {
+                    "Total Insertion Time (s)": sum_ingest_time,
+                    "Total Input Tokens": sum_ingest_in_tokens,
+                    "Total Output Tokens": sum_ingest_out_tokens
+                }
+            })
         # 过滤掉失败的 group
         if failed_keys:
             group_tasks = [(sk, grp, si, cnt) for sk, grp, si, cnt in group_tasks if sk not in failed_keys]
@@ -261,28 +281,6 @@ class PerQuestionPipeline(BenchmarkPipeline):
 
         # 按 global_idx 排序汇总
         results_list = [all_results[i] for i in sorted(all_results.keys())]
-
-        # 汇总入库时间（从 records 中读取）
-        sum_ingest_time = 0.0
-        sum_ingest_in_tokens = 0
-        sum_ingest_out_tokens = 0
-        for rec in self.records.values():
-            sum_ingest_time += rec.get('ingest_time', 0)
-            sum_ingest_in_tokens += rec.get('ingest_input_tokens', 0)
-            sum_ingest_out_tokens += rec.get('ingest_output_tokens', 0)
-
-        self.metrics_summary["insertion"] = {
-            "time": sum_ingest_time,
-            "input_tokens": sum_ingest_in_tokens,
-            "output_tokens": sum_ingest_out_tokens
-        }
-        self._update_report({
-            "Insertion Efficiency (Total Dataset)": {
-                "Total Insertion Time (s)": sum_ingest_time,
-                "Total Input Tokens": sum_ingest_in_tokens,
-                "Total Output Tokens": sum_ingest_out_tokens
-            }
-        })
 
         dataset_name = self.config.get('dataset_name', 'Unknown_Dataset')
         save_data = {
@@ -347,7 +345,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
             self.records[store_key] = {
                 'ingested': True,
                 'doc_paths': doc_paths,
-                'ingest_time': elapsed_ingest,
+                'ingest_time': stats.get('insert_time',0),
                 'ingest_input_tokens': stats.get('input_tokens', 0),
                 'ingest_output_tokens': stats.get('output_tokens', 0),
                 'deleted': False,

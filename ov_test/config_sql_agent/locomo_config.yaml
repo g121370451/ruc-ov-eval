@@ -20,10 +20,10 @@ store:
     verbose: false
 
 execution:
-  max_workers: 5
+  max_workers: 30
   ingest_workers: 4
-  retrieval_topk: 5
-  max_queries: null
+  retrieval_topk: 30
+  max_queries: 100
   explain_not_mentioned: true
   
 paths:

@@ -22,10 +22,11 @@ store:
     verbose: false
 
 execution:
-  max_workers: 5
+  max_workers: 30
   ingest_workers: 4
-  retrieval_topk: 5
+  retrieval_topk: 30
   max_queries: null
+  explain_not_mentioned: true
 # ==================================
 
 paths:
