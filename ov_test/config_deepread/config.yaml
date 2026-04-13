@@ -1,0 +1,41 @@
+project_name: "RAG_Benchmark"
+
+# ===========修改配置================
+dataset_name: "FinanceBench"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+store:
+  type: "DeepRead"
+  pageindex_config_path: "ov_test/pageindex.conf"
+  # DeepRead-specific options
+  enable_vector: false
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 12
+
+execution:
+  embedding_batch_size: 8 # Batch size for embedding requests
+  max_workers: 1         # LLM 生成任务的并发数
+  ingest_workers: 1      # 数据入库任务的并发数，提交到ov的并发数
+  retrieval_topk: 5
+  max_queries: null      # 最大查询数，null表示全部查询
+  skip_ingestion: true  # 是否关闭数据插入
+# ==================================
+
+paths:
+  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  doc_output_dir: "Data/{dataset_name}/DeepRead/processed_docs"
+  vector_store: "Data/{dataset_name}/viking_store_index"
+  output_dir: "Output/{dataset_name}/experiment_1"
+  log_file: "Output/{dataset_name}/experiment_1/benchmark.log"
+
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "68e15b71-7673-4734-bf7a-01bb80a127ea"

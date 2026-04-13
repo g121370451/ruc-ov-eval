@@ -5,3 +5,5 @@ viking_store_locomo/
 *.json
 ov.conf
 .venv/
+.DS_Store
+CLAUDE.md

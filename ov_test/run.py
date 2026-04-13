@@ -58,7 +58,7 @@ def resolve_path(path_str, base_path):
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
     # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_pageindex/locomo_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_deepread/config.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
@@ -119,7 +119,23 @@ def main():
         store_cfg = config.get('store', {})
         store_type = store_cfg.get('type', 'viking')
 
-        if store_type == 'pageindex':
+        if store_type == 'DeepRead':
+            from src.core.deepread_store import DeepReadWrapper
+            vector_store = DeepReadWrapper(
+                store_path=config['paths']['vector_store'],
+                doc_output_dir=config['paths'].get('doc_output_dir', ''),
+                config_path=store_cfg.get('pageindex_config_path'),
+                model=config.get('llm', {}).get('model'),
+                base_url=config.get('llm', {}).get('base_url'),
+                api_key=config.get('llm', {}).get('api_key'),
+                enable_vector=store_cfg.get('enable_vector', False),
+                enable_hybrid=store_cfg.get('enable_hybrid', False),
+                enable_semantic=store_cfg.get('enable_semantic', False),
+                neighbor_window=store_cfg.get('neighbor_window', '1,-1'),
+                max_rounds=store_cfg.get('max_rounds', 12),
+                temperature=config.get('llm', {}).get('temperature', 0.0),
+            )
+        elif store_type == 'pageindex':
             from src.core.pageindex_store import PageIndexStoreWrapper
             pageindex_conf = store_cfg.get('pageindex_config_path')
             if pageindex_conf:
