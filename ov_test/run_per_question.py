@@ -1,8 +1,10 @@
 import os
 import sys
+import re
 import yaml
 import importlib
 from argparse import ArgumentParser
+from dotenv import load_dotenv
 from src.core.logger import setup_logging
 # ==========================================
 # 1. 环境初始化
@@ -51,19 +53,55 @@ def resolve_path(path_str, base_path):
     # 规范化路径 (处理 ../ 等符号)
     return os.path.normpath(os.path.join(base_path, path_str))
 
+def resolve_env_vars(obj):
+    """递归替换配置中的 ${VAR} 引用为环境变量值"""
+    if isinstance(obj, str):
+        def _replace(match):
+            var_name = match.group(1)
+            value = os.environ.get(var_name)
+            if value is None:
+                raise ValueError(f"环境变量 {var_name} 未设置，请检查 .env 文件")
+            return value
+        return re.sub(r'\$\{(\w+)\}', _replace, obj)
+    elif isinstance(obj, dict):
+        return {k: resolve_env_vars(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [resolve_env_vars(item) for item in obj]
+    return obj
+
+def resolve_auto_output_dir(config):
+    """自动递增实验输出目录编号，基于已解析的 output_dir 的父目录扫描"""
+    output_dir = config['paths']['output_dir']
+    output_base = os.path.dirname(output_dir)  # e.g. .../Output/Locomo/openviking_global
+
+    max_num = 0
+    if os.path.exists(output_base):
+        for name in os.listdir(output_base):
+            m = re.match(r'experiment_(\d+)', name)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+
+    next_num = max_num + 1
+    experiment_dir = os.path.join(output_base, f"experiment_{next_num:04d}")
+    config['paths']['output_dir'] = experiment_dir
+    config['paths']['log_file'] = os.path.join(experiment_dir, "benchmark.log")
+    print(f"[Init] Auto output dir: {experiment_dir}")
+
 # ==========================================
 # 3. 主程序
 # ==========================================
 
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Per-Question Strategy)")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question_pageindex/locomo_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question_sql_agent/hotpot_config.yaml")
 
     parser.add_argument("--config", default=default_config_path,
                         help=f"Path to config file. Default: {default_config_path}")
 
     parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all",
                         help="Execution step: 'gen' (Ingest+Retrieve+Generate+Eval), 'eval' (Re-Eval only), 'del' (Delete only), or 'all'")
+    parser.add_argument("--skip-ingest", action="store_true", default=False,
+                        help="Skip document ingestion, reuse existing store")
 
     args = parser.parse_args()
 
@@ -77,6 +115,10 @@ def main():
         print(f"[Error] {e}")
         return
 
+    # --- B2. 加载 .env 并解析环境变量引用 ---
+    load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
+    config = resolve_env_vars(config)
+
     # --- C. 路径修正 ---
     print(f"[Init] Resolving paths relative to Project Root: {PROJECT_ROOT}")
     dataset_name = config.get('dataset_name', 'UnknownDataset')
@@ -89,6 +131,11 @@ def main():
             resolved = resolve_path(rendered_path, PROJECT_ROOT)
             config['paths'][key] = resolved
             # print(f"  - {key}: {resolved}")
+
+    # --- C2. 自增输出目录 + CLI skip_ingest ---
+    resolve_auto_output_dir(config)
+    if args.skip_ingest:
+        config['execution']['skip_ingestion'] = True
 
     # --- D. 初始化组件 ---
     try:
@@ -114,23 +161,12 @@ def main():
             logger.error(f"Class '{class_name}' not found in module '{module_path}'. Please check your config 'adapter.class_name'. Error: {e}")
             raise e
 
-        # 2. Vector Store（根据配置选择）
+        # 2. Vector Store — per_question 模式由 pipeline 内部管理 per-doc stores
+        #    这里只需解析 pageindex_config_path 的绝对路径
         store_cfg = config.get('store', {})
-        store_type = store_cfg.get('type', 'viking')
-
-        if store_type == 'pageindex':
-            from src.core.pageindex_store import PageIndexStoreWrapper
-            pageindex_conf = store_cfg.get('pageindex_config_path')
-            if pageindex_conf:
-                pageindex_conf = resolve_path(pageindex_conf, PROJECT_ROOT)
-            vector_store = PageIndexStoreWrapper(
-                store_path=config['paths']['vector_store'],
-                doc_output_dir=config['paths'].get('doc_output_dir', ''),
-                config_path=pageindex_conf
-            )
-        else:
-            from src.core.vector_store import VikingStoreWrapper
-            vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
+        pageindex_conf = store_cfg.get('pageindex_config_path')
+        if pageindex_conf:
+            store_cfg['pageindex_config_path'] = resolve_path(pageindex_conf, PROJECT_ROOT)
 
         # 3. LLM Client
         api_key = os.environ.get(
@@ -146,7 +182,7 @@ def main():
         pipeline = PerQuestionPipeline(
             config=config,
             adapter=adapter,
-            vector_db=vector_store,
+            vector_db=None,
             llm=llm_client
         )
 
@@ -159,7 +195,7 @@ def main():
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 
-        if args.step in ["del"]:
+        if args.step in ["all","del"]:
             logger.info("Stage: Delete Vector Store")
             pipeline.run_deletion()
 

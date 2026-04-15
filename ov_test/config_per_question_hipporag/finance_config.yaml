@@ -1,0 +1,43 @@
+project_name: "RAG_Benchmark"
+
+# ===========修改配置================
+dataset_name: "FinanceBench"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+store:
+  type: "hipporag"
+  hipporag_config:
+    llm_name: "${LLM_MODEL}"
+    llm_base_url: "${LLM_BASE_URL}"
+    embedding_model_name: "${EMBEDDING_MODEL_NAME}"
+    embedding_base_url: "${EMBEDDING_BASE_URL}"
+    embedding_api_key: "${EMBEDDING_API_KEY}"
+    use_langchain: true
+    chunk_size: 512
+    chunk_overlap: 50
+    retrieval_top_k: 5
+    qa_top_k: 5
+    temperature: 0
+
+execution:
+  max_workers: 5
+  ingest_workers: 3
+  retrieval_topk: 5
+  max_queries: null
+# ==================================
+
+paths:
+  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  doc_output_dir: "Data/{dataset_name}/hipporag_per_question/processed_docs"
+  vector_store: "Data/{dataset_name}/hipporag_per_question/store_index"
+  output_dir: "Output/{dataset_name}/hipporag_per_question/experiment_0001"
+  log_file: "Output/{dataset_name}/hipporag_per_question/experiment_0001/benchmark.log"
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"

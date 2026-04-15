@@ -89,53 +89,59 @@ class HotpotQAAdapter(BaseAdapter):
     
     def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
         """
-        加载原始文章数据并转换为 OpenViking 友好格式。
-        
-        将每篇 Wikipedia 文章转换为 Markdown 文档，保留以下结构：
-        - 标题（# Title）
-        - 段落（保持原始段落结构）
-        
-        Args:
-            doc_dir: 文档输出目录路径
-            
-        Returns:
-            List[StandardDoc]: 标准化文档对象列表
-            
-        Raises:
-            FileNotFoundError: 文章数据文件不存在
+        加载原始文章数据并转换为 Markdown 文档。
+
+        HotpotQA 每个问题引用多篇文章（多跳），因此一个 sample_id 对应多个 StandardDoc。
+        sample_id 与 load_and_transform() 保持一致（qa_id[:8]）。
+
+        流程：
+        1. 将所有被引用的文章写入磁盘（按 title 去重）
+        2. 遍历 QA 数据，为每个问题的每篇引用文章创建 StandardDoc
         """
         if not os.path.exists(self.articles_file_path):
             raise FileNotFoundError(f"Articles file not found: {self.articles_file_path}")
-
-        res: List[StandardDoc] = []
 
         with open(self.articles_file_path, 'r', encoding='utf-8') as f:
             articles = json.load(f)
 
         os.makedirs(doc_dir, exist_ok=True)
-        
+
         required_titles = self._get_required_titles()
         self.logger.info(f"[HotpotQAAdapter] Required articles: {len(required_titles)}")
-        
+
+        # 1. 写入文章文件（按 title 去重）
+        title_to_path: Dict[str, str] = {}
         for article in articles:
             title = article.get("title", "")
-            
             if title not in required_titles:
                 continue
-            
             doc_content = self._convert_article_to_markdown(article)
-            
             try:
                 safe_title = self._safe_filename(title)
                 doc_path = os.path.join(doc_dir, f"{safe_title}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(title, doc_path))
+                title_to_path[title] = doc_path
             except Exception as e:
                 self.logger.error(f"[hotpotqa adapter] doc:{title} prepare error {e}")
                 raise e
-        
-        self.logger.info(f"[HotpotQAAdapter] Processed {len(res)} articles")
+
+        self.logger.info(f"[HotpotQAAdapter] Processed {len(title_to_path)} articles")
+
+        # 2. 遍历 QA，按 sample_id 聚合引用文章路径
+        with open(self.raw_file_path, 'r', encoding='utf-8') as f:
+            qa_data = json.load(f)
+
+        res: List[StandardDoc] = []
+        for item in qa_data:
+            qa_id = item.get("id", "")
+            sample_id = qa_id[:8] if len(qa_id) >= 8 else qa_id
+            context_titles = item.get("context", {}).get("title", [])
+            paths = [title_to_path[t] for t in context_titles if t in title_to_path]
+            if paths:
+                res.append(StandardDoc(sample_id, paths))
+
+        self.logger.info(f"[HotpotQAAdapter] Created {len(res)} doc mappings for {len(qa_data)} questions")
         return res
     
     def _get_required_titles(self) -> set:

@@ -13,20 +13,19 @@ execution:
   ingest_workers: 1      # 数据入库任务的并发数，提交到ov的并发数
   retrieval_topk: 5
   max_queries: null        # 最大查询数，null表示全部查询
-  skip_ingestion: true  # 是否关闭数据插入
 # ==================================  
 
 paths:
   raw_data: "Data/clapnq-main"
-  doc_output_dir: "Data/clapnq-main/processed_docs"
-  vector_store: "Data/clapnq-main/viking_store_index"
-  output_dir: "Output/ClapNQ/experiment_1"
-  log_file: "Output/ClapNQ/experiment_1/benchmark.log"
+  doc_output_dir: "Data/clapnq-main/openviking/processed_docs"
+  vector_store: "Data/clapnq-main/openviking/store_index"
+  output_dir: "Output/ClapNQ/openviking_global/experiment_0001"
+  log_file: "Output/ClapNQ/openviking_global/experiment_0001/benchmark.log"
 
 
 llm:
-  model: "doubao-seed-2-0-pro-260215"
+  model: "${LLM_MODEL}"
   temperature: 0
-  base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  api_key: "269f7ee6-212a-4f46-9472-978a55cdb625"
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"
 

@@ -1,8 +1,10 @@
 import os
 import sys
+import re
 import yaml
-import importlib 
+import importlib
 from argparse import ArgumentParser
+from dotenv import load_dotenv
 from src.core.logger import setup_logging
 # ==========================================
 # 1. 环境初始化
@@ -51,6 +53,40 @@ def resolve_path(path_str, base_path):
     # 规范化路径 (处理 ../ 等符号)
     return os.path.normpath(os.path.join(base_path, path_str))
 
+def resolve_env_vars(obj):
+    """递归替换配置中的 ${VAR} 引用为环境变量值"""
+    if isinstance(obj, str):
+        def _replace(match):
+            var_name = match.group(1)
+            value = os.environ.get(var_name)
+            if value is None:
+                raise ValueError(f"环境变量 {var_name} 未设置，请检查 .env 文件")
+            return value
+        return re.sub(r'\$\{(\w+)\}', _replace, obj)
+    elif isinstance(obj, dict):
+        return {k: resolve_env_vars(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [resolve_env_vars(item) for item in obj]
+    return obj
+
+def resolve_auto_output_dir(config):
+    """自动递增实验输出目录编号，基于已解析的 output_dir 的父目录扫描"""
+    output_dir = config['paths']['output_dir']
+    output_base = os.path.dirname(output_dir)  # e.g. .../Output/Locomo/openviking_global
+
+    max_num = 0
+    if os.path.exists(output_base):
+        for name in os.listdir(output_base):
+            m = re.match(r'experiment_(\d+)', name)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+
+    next_num = max_num + 1
+    experiment_dir = os.path.join(output_base, f"experiment_{next_num:04d}")
+    config['paths']['output_dir'] = experiment_dir
+    config['paths']['log_file'] = os.path.join(experiment_dir, "benchmark.log")
+    print(f"[Init] Auto output dir: {experiment_dir}")
+
 # ==========================================
 # 3. 主程序
 # ==========================================
@@ -58,14 +94,16 @@ def resolve_path(path_str, base_path):
 def main():
     parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
     # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_pageindex/locomo_config.yaml")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_sql_agent/finance_config.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
     
-    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all", 
+    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all",
                         help="Execution step: 'gen' (Retrieval+LLM), 'eval' (Judge), or 'all'")
-    
+    parser.add_argument("--skip-ingest", action="store_true", default=False,
+                        help="Skip document ingestion, reuse existing store")
+
     args = parser.parse_args()
 
     # --- B. 加载与解析 Config ---
@@ -78,10 +116,14 @@ def main():
         print(f"[Error] {e}")
         return
 
+    # --- B2. 加载 .env 并解析环境变量引用 ---
+    load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
+    config = resolve_env_vars(config)
+
     # --- C. 路径修正 ---
     print(f"[Init] Resolving paths relative to Project Root: {PROJECT_ROOT}")
     dataset_name = config.get('dataset_name', 'UnknownDataset')
-    
+
     path_keys = ['raw_data', 'output_dir', 'vector_store', 'log_file', 'doc_output_dir']
     for key in path_keys:
         if key in config.get('paths', {}):
@@ -90,6 +132,11 @@ def main():
             resolved = resolve_path(rendered_path, PROJECT_ROOT)
             config['paths'][key] = resolved
             # print(f"  - {key}: {resolved}")
+
+    # --- C2. 自增输出目录 + CLI skip_ingest ---
+    resolve_auto_output_dir(config)
+    if args.skip_ingest:
+        config['execution']['skip_ingestion'] = True
 
     # --- D. 初始化组件 ---
     try:
@@ -128,6 +175,22 @@ def main():
                 store_path=config['paths']['vector_store'],
                 doc_output_dir=config['paths'].get('doc_output_dir', ''),
                 config_path=pageindex_conf
+            )
+        elif store_type == 'hipporag':
+            from src.core.hipporag_store import HippoRAGStoreWrapper
+            hipporag_conf = store_cfg.get('hipporag_config', {})
+            vector_store = HippoRAGStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                hipporag_config=hipporag_conf
+            )
+        elif store_type == 'sql_agent':
+            from src.core.sql_agent_store import SQLAgentStoreWrapper
+            sql_agent_conf = store_cfg.get('sql_agent_config', {})
+            sql_agent_conf['dataset_name'] = config.get('dataset_name', '')
+            sql_agent_conf['raw_data_path'] = config['paths'].get('raw_data', '')
+            vector_store = SQLAgentStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                sql_agent_config=sql_agent_conf
             )
         else:
             from src.core.vector_store import VikingStoreWrapper

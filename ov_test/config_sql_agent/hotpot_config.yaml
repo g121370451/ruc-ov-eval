@@ -1,0 +1,40 @@
+project_name: "RAG_Benchmark"
+dataset_name: "HotpotQA"
+
+adapter:
+  module: "src.adapters.hotpotqa_adapter"
+  class_name: "HotpotQAAdapter"
+
+store:
+  type: "sql_agent"
+  sql_agent_config:
+    llm_model: "${LLM_MODEL}"
+    llm_base_url: "${LLM_BASE_URL}"
+    llm_api_key_env: "LLM_API_KEY"
+    chunk_size: 800
+    chunk_overlap: 100
+    sentence_aware_chunk: true
+    chunk_min_size: 200
+    chunk_max_size: 800
+    max_iterations: 15
+    verbose: false
+
+execution:
+  max_workers: 30
+  ingest_workers: 4
+  retrieval_topk: 30
+  max_queries: null
+  explain_not_mentioned: true
+  
+paths:
+  raw_data: "Data/{dataset_name}/hotpot_qa_100.json"
+  doc_output_dir: "Data/{dataset_name}/sql_agent/processed_docs"
+  vector_store: "Data/{dataset_name}/sql_agent/store_index"
+  output_dir: "Output/{dataset_name}/sql_agent_global/experiment_0001"
+  log_file: "Output/{dataset_name}/sql_agent_global/experiment_0001/benchmark.log"
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"

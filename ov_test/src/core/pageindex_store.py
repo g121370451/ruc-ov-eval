@@ -5,6 +5,7 @@ import time
 import asyncio
 import copy
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from tqdm import tqdm
@@ -65,53 +66,116 @@ class PageIndexStoreWrapper:
             import tiktoken
             self.enc = tiktoken.get_encoding("cl100k_base")
         except Exception as e:
-            print(f"[Warning] tiktoken init failed: {e}")
+            self.logger.warning(f"tiktoken init failed: {e}")
             self.enc = None
 
     def _load_local_trees(self):
         """启动时加载硬盘上已有的树结构文件和原文路径映射"""
         if not os.path.exists(self.store_path):
+            self.logger.warning(f"Store path not found, skip loading: {self.store_path}")
             return
-        if not os.path.exists(self.doc_output_dir):
-            return
+        # 加载 doc_paths 映射
         paths_file = os.path.join(self.store_path, "_doc_paths.json")
         if os.path.exists(paths_file):
             with open(paths_file, 'r', encoding='utf-8') as f:
                 self.doc_paths = json.load(f)
+        # 加载树结构（不依赖 doc_output_dir）
         for filename in os.listdir(self.store_path):
             if filename.endswith("_structure.json"):
                 doc_id = filename.replace("_structure.json", "")
                 with open(os.path.join(self.store_path, filename), 'r', encoding='utf-8') as f:
                     self.doc_trees[doc_id] = json.load(f)
-                source_path = os.path.join(self.doc_output_dir, doc_id)
-                if os.path.exists(source_path):
-                    self.doc_paths[doc_id] = source_path
+                # doc_output_dir 存在时才补充源文件路径
+                if self.doc_output_dir:
+                    source_path = os.path.join(self.doc_output_dir, doc_id)
+                    if os.path.exists(source_path):
+                        self.doc_paths[doc_id] = source_path
+        self.logger.info(f"Loaded {len(self.doc_trees)} trees from {self.store_path}")
 
     def count_tokens(self, text: str) -> int:
         if not text or not self.enc:
             return 0
         return len(self.enc.encode(str(text)))
 
+    @staticmethod
+    def _convert_single_pdf(pdf_path: str) -> str:
+        """将单个 PDF 转为 Markdown 并持久化，返回 md 路径"""
+        from pdfminer.high_level import extract_text
+        from markdownify import markdownify
+        md_path = os.path.splitext(pdf_path)[0] + '.md'
+        if os.path.exists(md_path):
+            return md_path
+        raw_text = extract_text(pdf_path)
+        md_content = markdownify(raw_text).strip()
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(md_content)
+        return md_path
+
+    def _batch_convert_pdf(self, pdf_paths: List[str], max_workers: int = 4):
+        """多线程批量将 PDF 转为 Markdown"""
+        to_convert = [p for p in pdf_paths if not os.path.exists(os.path.splitext(p)[0] + '.md')]
+        if not to_convert:
+            self.logger.info(f"All {len(pdf_paths)} PDFs already converted, skipping")
+            return
+        self.logger.info(f"Converting {len(to_convert)} PDFs (skipping {len(pdf_paths) - len(to_convert)} already done)")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(self._convert_single_pdf, p): p for p in to_convert}
+            for future in tqdm(as_completed(futures), total=len(futures), desc="PDF -> Markdown"):
+                pdf_path = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    self.logger.error(f"Failed to convert {pdf_path}: {e}")
+
     def ingest(self, samples: List[StandardDoc], max_workers: int = 4, monitor: Optional[BenchmarkMonitor] = None) -> dict:
         """入库：根据文件类型调用不同的本地解析方法生成树，返回 dict 与 VikingStoreWrapper 对齐"""
         start_time = time.time()
         token_tracker.reset()
 
-        for sample in tqdm(samples, desc="Generating Local Trees"):
+        # 展开 doc_paths 并去重（保持顺序）
+        seen = set()
+        all_paths = []
+        for sample in samples:
+            for p in sample.doc_paths:
+                if p not in seen:
+                    seen.add(p)
+                    all_paths.append(p)
+
+        # 多线程批量将 PDF 转为 Markdown 并持久化
+        pdf_paths = [p for p in all_paths if os.path.splitext(p)[1].lower() == '.pdf']
+        if pdf_paths:
+            self.logger.info(f"Converting {len(pdf_paths)} PDFs to Markdown (workers={max_workers})...")
+            self._batch_convert_pdf(pdf_paths, max_workers)
+
+        # 将 all_paths 中的 .pdf 替换为对应的 .md
+        resolved_paths = []
+        for p in all_paths:
+            if os.path.splitext(p)[1].lower() == '.pdf':
+                md_path = os.path.splitext(p)[0] + '.md'
+                if os.path.exists(md_path):
+                    resolved_paths.append(md_path)
+                else:
+                    self.logger.warning(f"PDF conversion failed, skipping: {p}")
+            else:
+                resolved_paths.append(p)
+
+        for doc_path in tqdm(resolved_paths, desc="Generating Local Trees"):
             if monitor:
                 monitor.worker_start()
             try:
-                ext = os.path.splitext(sample.doc_path)[1].lower()
-                doc_id = os.path.basename(sample.doc_path)
+                ext = os.path.splitext(doc_path)[1].lower()
+                doc_id = os.path.basename(doc_path)
                 tree_data = None
 
                 if ext == '.pdf':
-                    opt = self._get_pageindex_opt()
-                    tree_data = page_index(sample.doc_path, **vars(opt))
+                    self.logger.warning(f"Unexpected PDF in tree generation: {doc_path}")
+                    if monitor:
+                        monitor.worker_end(success=False)
+                    continue
                 elif ext in ['.md', '.markdown']:
                     opt = self._get_pageindex_opt()
                     tree_data = asyncio.run(md_to_tree(
-                        md_path=sample.doc_path,
+                        md_path=doc_path,
                         if_thinning=False,
                         min_token_threshold=5000,
                         if_add_node_summary=opt.if_add_node_summary,
@@ -122,14 +186,14 @@ class PageIndexStoreWrapper:
                         if_add_node_id=opt.if_add_node_id
                     ))
                 else:
-                    print(f"[Warning] Unsupported file type: {ext}")
+                    self.logger.warning(f"Unsupported file type: {ext}")
                     if monitor:
                         monitor.worker_end(success=False)
                     continue
 
                 if tree_data:
                     self.doc_trees[doc_id] = tree_data
-                    self.doc_paths[doc_id] = sample.doc_path
+                    self.doc_paths[doc_id] = doc_path
                     output_file = os.path.join(self.store_path, f"{doc_id}_structure.json")
                     with open(output_file, 'w', encoding='utf-8') as f:
                         json.dump(tree_data, f, indent=2, ensure_ascii=False)
@@ -137,7 +201,7 @@ class PageIndexStoreWrapper:
                 if monitor:
                     monitor.worker_end(success=True)
             except Exception as e:
-                print(f"[Error] Failed to process {sample.doc_path}: {e}")
+                self.logger.error(f"Failed to process {doc_path}: {e}")
                 if monitor:
                     monitor.worker_end(success=False)
 
@@ -167,24 +231,25 @@ class PageIndexStoreWrapper:
             topk: 最多返回的文档数量
             target_uri: 限定搜索的 doc_id，为 None 时走文档级筛选
         """
+        self.logger.debug(f"doc_trees: {self.doc_trees}")
         if not self.doc_trees:
             return PageIndexResult()
 
-        # 记录检索前的 token 快照
-        before = token_tracker.get()
-
+        local_in = 0
+        local_out = 0
+        self.logger.info(f"Retrieve query: {query}")
         # --- 阶段 1：确定要搜索的文档 ---
+        self.logger.info(f"Retrieve target_uri: {target_uri}")
         if target_uri is not None:
-            # 指定了 target_uri，直接搜索该文档，跳过筛选
             scored_docs = [(target_uri, 1.0)] if target_uri in self.doc_trees else []
         elif len(self.doc_trees) == 1:
-            # 只有一个文档，无需筛选
             doc_id = next(iter(self.doc_trees))
             scored_docs = [(doc_id, 1.0)]
         else:
-            # 多文档：用一次 LLM 调用做文档级相关性筛选 + 打分
-            scored_docs = self._rank_documents(query, topk)
-
+            scored_docs, rank_in, rank_out = self._rank_documents(query, topk)
+            local_in += rank_in
+            local_out += rank_out
+        self.logger.info(f"Scored docs: {scored_docs}")
         # --- 阶段 2：对筛出的文档做节点级搜索 ---
         resources = []
         for doc_id, doc_score in scored_docs[:topk]:
@@ -192,7 +257,9 @@ class PageIndexStoreWrapper:
             if tree is None:
                 continue
             try:
-                content = self._search_nodes_in_doc(query, doc_id, tree)
+                content, search_in, search_out = self._search_nodes_in_doc(query, doc_id, tree)
+                local_in += search_in
+                local_out += search_out
                 if content.strip():
                     resources.append(PageIndexResource(
                         uri=doc_id,
@@ -200,19 +267,16 @@ class PageIndexStoreWrapper:
                         score=doc_score,
                     ))
             except Exception as e:
-                print(f"[Warning] Retrieval failed for {doc_id}: {e}")
-
+                self.logger.error(f"Retrieval failed for {doc_id}: {e}")
         result = PageIndexResult(resources=resources)
-
-        # 计算本次检索消耗的 token
-        after = token_tracker.get()
-        result.retrieve_input_tokens = after["input_tokens"] - before["input_tokens"]
-        result.retrieve_output_tokens = after["output_tokens"] - before["output_tokens"]
+        result.retrieve_input_tokens = local_in
+        result.retrieve_output_tokens = local_out
 
         return result
 
-    def _rank_documents(self, query: str, topk: int) -> List[tuple]:
-        """阶段 1：一次 LLM 调用，对所有文档做相关性打分，返回 [(doc_id, score), ...] 降序排列"""
+    def _rank_documents(self, query: str, topk: int) -> tuple:
+        """阶段 1：一次 LLM 调用，对所有文档做相关性打分。
+        返回 ([(doc_id, score), ...], input_tokens, output_tokens)"""
         doc_profiles = {}
         for doc_id, tree in self.doc_trees.items():
             desc = tree.get('doc_description', '')
@@ -224,6 +288,8 @@ class PageIndexStoreWrapper:
                 profile = section_summaries if section_summaries else doc_id
             doc_profiles[doc_id] = profile
 
+        self.logger.info(f"Rank documents append: {doc_profiles}")
+        
         doc_list_str = "\n\n".join(
             f'Document "{doc_id}":\n{profile}' for doc_id, profile in doc_profiles.items()
         )
@@ -247,18 +313,21 @@ Directly return the JSON. Do not output anything else."""
 
         try:
             response = self.llm_client.invoke([HumanMessage(content=rank_prompt)])
-            token_tracker.add(self.count_tokens(rank_prompt), self.count_tokens(response.content))
+            in_t = self.count_tokens(rank_prompt)
+            out_t = self.count_tokens(response.content)
+            token_tracker.add(in_t, out_t)
             result_json = self._extract_json(response.content)
             results = result_json.get("results", [])
             scored = [(r["doc_id"], float(r.get("score", 0))) for r in results if r.get("score", 0) > 0]
             scored.sort(key=lambda x: x[1], reverse=True)
-            return scored[:topk]
+            return scored[:topk], in_t, out_t
         except Exception as e:
-            print(f"[Warning] Document ranking failed: {e}, falling back to all docs")
-            return [(did, 0.5) for did in list(self.doc_trees.keys())[:topk]]
+            self.logger.warning(f"Document ranking failed: {e}, falling back to all docs")
+            return [(did, 0.5) for did in list(self.doc_trees.keys())[:topk]], 0, 0
 
-    def _search_nodes_in_doc(self, query: str, doc_id: str, tree: dict) -> str:
-        """阶段 2：在单个文档的树结构中搜索相关节点，返回拼接后的正文"""
+    def _search_nodes_in_doc(self, query: str, doc_id: str, tree: dict) -> tuple:
+        """阶段 2：在单个文档的树结构中搜索相关节点。
+        返回 (拼接正文, input_tokens, output_tokens)"""
         tree_without_text = self._remove_text_field(tree)
 
         search_prompt = f"""You are given a question and a tree structure of a document.
@@ -282,7 +351,9 @@ Please reply in the following JSON format:
 Directly return the final JSON structure. Do not output anything else."""
 
         response = self.llm_client.invoke([HumanMessage(content=search_prompt)])
-        token_tracker.add(self.count_tokens(search_prompt), self.count_tokens(response.content))
+        in_t = self.count_tokens(search_prompt)
+        out_t = self.count_tokens(response.content)
+        token_tracker.add(in_t, out_t)
         result_json = self._extract_json(response.content)
 
         raw_node_list = result_json.get("node_list", [])
@@ -295,7 +366,8 @@ Directly return the final JSON structure. Do not output anything else."""
 
         node_map = self._create_node_mapping(tree['structure'])
         doc_path = self.doc_paths.get(doc_id, "")
-        return self._resolve_nodes_content(target_node_ids, node_map, doc_path)
+        content = self._resolve_nodes_content(target_node_ids, node_map, doc_path)
+        return content, in_t, out_t
 
     def process_retrieval_results(self, search_res: PageIndexResult):
         """
@@ -310,17 +382,6 @@ Directly return the final JSON structure. Do not output anything else."""
             retrieved_texts.append(r.content)
             context_blocks.append(r.content[:2000])
         return retrieved_texts, context_blocks, retrieved_uris
-
-    def build_uri_map(self, doc_info: List[StandardDoc]) -> Dict[str, list]:
-        """构建 sample_id -> [doc_id] 映射，doc_id 为文件名，在 doc_trees 中验证存在性"""
-        uri_map = {}
-        for doc in doc_info:
-            doc_id = os.path.basename(doc.doc_path)
-            if doc_id in self.doc_trees:
-                uri_map.setdefault(doc.sample_id, []).append(doc_id)
-            else:
-                self.logger.warning(f"Doc not found in PageIndex: {doc_id} (sample_id={doc.sample_id})")
-        return uri_map
 
     def read_resource(self, uri: str) -> str:
         """读取资源内容"""
@@ -339,6 +400,7 @@ Directly return the final JSON structure. Do not output anything else."""
         return "\n\n".join(parts)
 
     def clear(self) -> None:
+        """清空库：清除内存缓存 + 删除所有 JSON 文件"""
         self.doc_trees.clear()
         self.doc_paths.clear()
         if os.path.exists(self.store_path):
@@ -456,5 +518,5 @@ Directly return the final JSON structure. Do not output anything else."""
             json_content = json_content.replace('None', 'null')
             return json.loads(json_content)
         except Exception as e:
-            print(f"[Warning] Failed to extract JSON: {e}")
+            self.logger.warning(f"Failed to extract JSON: {e}")
             return {"node_list": []}

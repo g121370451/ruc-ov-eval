@@ -33,10 +33,11 @@ class FinanceBenchAdapter(BaseAdapter):
         super().__init__(raw_file_path)
         data_dir = os.path.dirname(self.raw_file_path)
         self.pdf_dir = os.path.join(os.path.dirname(data_dir), "pdfs")
+        self.md_dir = os.path.join(os.path.dirname(data_dir), "markdown")
 
     def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
         """
-        准备入库文档列表。仅入库 JSONL 中引用的文档。
+        准备入库文档列表。优先使用 markdown/ 下已转换的 .md，否则使用 pdfs/ 下的 .pdf。
         """
         if not os.path.exists(self.pdf_dir):
             raise FileNotFoundError(f"PDF directory not found: {self.pdf_dir}")
@@ -51,13 +52,16 @@ class FinanceBenchAdapter(BaseAdapter):
 
         docs: List[StandardDoc] = []
         for doc_name in sorted(doc_names):
+            md_path = os.path.join(self.md_dir, f"{doc_name}.md")
             pdf_path = os.path.join(self.pdf_dir, f"{doc_name}.pdf")
-            if not os.path.exists(pdf_path):
-                self.logger.warning(f"PDF not found: {pdf_path}, skipping")
-                continue
-            docs.append(StandardDoc(sample_id=doc_name, doc_path=pdf_path))
+            if os.path.exists(md_path):
+                docs.append(StandardDoc(sample_id=doc_name, doc_paths=[md_path]))
+            elif os.path.exists(pdf_path):
+                docs.append(StandardDoc(sample_id=doc_name, doc_paths=[pdf_path]))
+            else:
+                self.logger.warning(f"Document not found (md/pdf): {doc_name}, skipping")
 
-        self.logger.info(f"[FinanceBench] Prepared {len(docs)} documents for ingestion (referenced only)")
+        self.logger.info(f"[FinanceBench] Prepared {len(docs)} documents for ingestion")
         return docs
 
     def load_and_transform(self) -> List[StandardSample]:

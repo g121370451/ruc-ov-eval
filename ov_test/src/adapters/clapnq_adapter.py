@@ -35,10 +35,12 @@ def sanitize_filename(name: str, max_length: int = 150) -> str:
 
     return name
 
-QA_PROMPT = """Based on the above context, write an answer to the following question. 
-Use information from the context to answer. If no information is available, write 'Not mentioned'.
+QA_PROMPT = """Based on the above context, write an answer to the following question.
+Use information from the context to answer. Even if the context only partially addresses the question, provide the best possible answer based on available information. Only write 'Not mentioned' if the context contains absolutely no relevant information.
+Note: Question words like "who", "what", "where" should be interpreted broadly. For example, "who does X" might be answered by a description of the activity, field, or method rather than a specific person's name. Always answer based on what the context provides.
+Important: If the question contains qualifiers (e.g. "in the bible", "in the US", "in 2020") but the context provides relevant factual content without explicitly mentioning that qualifier, still use the context to answer. Do not refuse just because the context does not restate the qualifier.
 
-Question: {} 
+Question: {}
 Answer:
 """
 
@@ -133,7 +135,7 @@ class ClapNQAdapter(BaseAdapter):
                         self.logger.info(f"doc_path is {doc_path}")
                         with open(doc_path, "w", encoding="utf-8") as f_out:
                             f_out.write(final_content)
-                        res.append(StandardDoc(example_id, doc_path))
+                        res.append(StandardDoc(example_id, [doc_path]))
                     except Exception as e:
                         self.logger.error(f"[clapnq adapter] doc:{example_id} prepare error {e}")
                         raise e
@@ -197,12 +199,15 @@ class ClapNQAdapter(BaseAdapter):
                         selected_sentences = output.get("selected_sentences", [])
                         evidence.extend(selected_sentences)
                     
+                    passages = item.get("passages", [])
+                    first_passage_title = passages[0].get("title", "") if passages else ""
+
                     qa_pairs.append(StandardQA(
                         question=question,
                         gold_answers=gold_answers if gold_answers else ["Not mentioned"],
                         evidence=evidence,
                         category=None,
-                        metadata={"original_id": sample_id}
+                        metadata={"original_id": sample_id, "first_passage_title": first_passage_title}
                     ))
 
                     standard_samples.append(StandardSample(
