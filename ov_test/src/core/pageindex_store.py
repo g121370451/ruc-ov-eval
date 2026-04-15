@@ -231,7 +231,7 @@ class PageIndexStoreWrapper:
             topk: 最多返回的文档数量
             target_uri: 限定搜索的 doc_id，为 None 时走文档级筛选
         """
-        self.logger.info(f"doc_trees: {self.doc_trees}")
+        self.logger.debug(f"doc_trees: {self.doc_trees}")
         if not self.doc_trees:
             return PageIndexResult()
 

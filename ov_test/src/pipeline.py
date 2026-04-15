@@ -70,7 +70,8 @@ class BenchmarkPipeline:
         try:
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception as e:
-            exit(1)
+            self.logger.error(f"Data preparation failed: {e}")
+            raise
         skip_ingestion = self.config['execution'].get('skip_ingestion', False)
 
         # 断点恢复：如果 records 标记已入库完成，跳过入库
@@ -279,16 +280,7 @@ class BenchmarkPipeline:
             latency = time.time() - t0
 
             retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
-            
-            # search_res = {
-            #     'retrieve_input_tokens': 0,
-            #     'retrieve_output_tokens': 0,
-            # }
-            # latency = 0.0
-            # retrieved_texts = qa.evidence
-            # retrieved_uris = []
-            # context_blocks = qa.evidence
-            
+
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
             # 2. 构建 prompt → LLM 生成

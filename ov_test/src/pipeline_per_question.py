@@ -44,8 +44,12 @@ class PerQuestionPipeline(BenchmarkPipeline):
 
     def _load_records(self) -> Dict[str, dict]:
         if os.path.exists(self.records_file):
-            with open(self.records_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            try:
+                with open(self.records_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                from src.core.logger import get_logger
+                get_logger().warning(f"Failed to load records file {self.records_file}, starting fresh: {e}")
         return {}
 
     def _save_records(self):
@@ -109,16 +113,21 @@ class PerQuestionPipeline(BenchmarkPipeline):
     # ---- 备份 ----
 
     def _backup_store_parent(self):
-        """对 store 父目录做一次备份（_backup 后缀），已存在则先删除"""
+        """对 store 父目录做一次备份（_backup 后缀），用新入库结果替换旧备份"""
         backup_path = self.store_parent_path.rstrip('/\\') + '_backup'
-        if os.path.exists(backup_path):
-            shutil.rmtree(backup_path)
         if not os.path.exists(self.store_parent_path):
             return None
         contents = [f for f in os.listdir(self.store_parent_path) if not f.startswith('_')]
         if not contents:
             return None
-        shutil.copytree(self.store_parent_path, backup_path)
+        # 先复制到临时路径，成功后再替换旧备份，避免中途失败丢失两份数据
+        temp_backup = backup_path + '_tmp'
+        if os.path.exists(temp_backup):
+            shutil.rmtree(temp_backup)
+        shutil.copytree(self.store_parent_path, temp_backup)
+        if os.path.exists(backup_path):
+            shutil.rmtree(backup_path)
+        os.rename(temp_backup, backup_path)
         self.logger.info(f"Store parent backed up to: {backup_path}")
         return backup_path
 
@@ -134,7 +143,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
         try:
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception:
-            exit(1)
+            self.logger.error("Data preparation failed")
+            raise
 
         skip_ingestion = self.config['execution'].get('skip_ingestion', False)
 
@@ -360,26 +370,28 @@ class PerQuestionPipeline(BenchmarkPipeline):
         store_path = os.path.join(self.store_parent_path, store_key)
         store = self._create_store(store_path)
 
-        qa_tasks = []
-        idx = start_idx
-        for sample in group['samples']:
-            for qa in sample.qa_pairs:
+        try:
+            qa_tasks = []
+            idx = start_idx
+            for sample in group['samples']:
+                for qa in sample.qa_pairs:
+                    if idx >= start_idx + task_count:
+                        break
+                    qa_tasks.append({'id': idx, 'sample_id': sample.sample_id, 'qa': qa})
+                    idx += 1
                 if idx >= start_idx + task_count:
                     break
-                qa_tasks.append({'id': idx, 'sample_id': sample.sample_id, 'qa': qa})
-                idx += 1
-            if idx >= start_idx + task_count:
-                break
 
-        results_map = {}
-        for t in qa_tasks:
-            try:
-                res = self._retrieve_and_generate(t['id'], t['sample_id'], t['qa'], store)
-                results_map[res['_global_index']] = res
-            except Exception as e:
-                self.logger.error(f"Generation failed for task {t['id']}: {e}")
+            results_map = {}
+            for t in qa_tasks:
+                try:
+                    res = self._retrieve_and_generate(t['id'], t['sample_id'], t['qa'], store)
+                    results_map[res['_global_index']] = res
+                except Exception as e:
+                    self.logger.error(f"Generation failed for task {t['id']}: {e}")
+        finally:
+            self._close_store(store)
 
-        self._close_store(store)
         return results_map
 
     # ---- 检索 + 生成 ----

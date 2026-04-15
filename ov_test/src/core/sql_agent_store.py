@@ -167,7 +167,8 @@ class SQLAgentStoreWrapper:
         try:
             import tiktoken
             self.enc = tiktoken.get_encoding("cl100k_base")
-        except Exception:
+        except Exception as e:
+            self.logger.warning(f"tiktoken init failed, token counting will return 0: {e}")
             self.enc = None
 
         self._engine = None
@@ -216,7 +217,6 @@ class SQLAgentStoreWrapper:
         from langchain_community.agent_toolkits import SQLDatabaseToolkit
         from langchain_community.utilities import SQLDatabase
         from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-        from langchain_core.tools import Tool
         from langchain_openai import ChatOpenAI
         try:
             from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
@@ -234,25 +234,6 @@ class SQLAgentStoreWrapper:
         )
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
         tools = toolkit.get_tools()
-
-        def _run_write_sql(query: str) -> str:
-            try:
-                with engine.connect() as conn:
-                    result = conn.execute(text(query))
-                    conn.commit()
-                    if query.strip().upper().startswith("SELECT"):
-                        return str(result.fetchall()[:50])
-                    return f"OK – rows affected: {result.rowcount}"
-            except Exception as exc:
-                return f"Error: {exc}"
-
-        tools.append(Tool(name="sql_db_write",
-                          description=(
-                              "Execute a SQL statement that MODIFIES the database "
-                              "(INSERT, UPDATE, DELETE). Returns confirmation or error. "
-                              "For read-only SELECT queries, prefer sql_db_query."
-                          ),
-                          func=_run_write_sql))
 
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -420,16 +401,16 @@ class SQLAgentStoreWrapper:
                 for turn_idx, turn in enumerate(conv[sess_key]):
                     turn_text = turn.get('text', '')
                     total_tokens += self.count_tokens(turn_text)
-                    conv_rows.append({"a": sid, "b": sess_idx, "c": sess_date, "d": turn_idx + 1,
-                                      "e": turn.get('dia_id', ''), "f": turn.get('speaker', ''),
-                                      "g": turn_text})
+                    conv_rows.append({"sample_id": sid, "session_id": sess_idx, "session_date": sess_date,
+                                      "turn_number": turn_idx + 1, "dia_id": turn.get('dia_id', ''),
+                                      "speaker": turn.get('speaker', ''), "text": turn_text})
 
             summaries = entry.get('session_summary', {})
             for i in range(1, max_sess + 1):
                 skey = f'session_{i}_summary'
                 if skey in summaries and summaries[skey]:
                     total_tokens += self.count_tokens(summaries[skey])
-                    summary_rows.append({"a": sid, "b": i, "c": summaries[skey]})
+                    summary_rows.append({"sample_id": sid, "session_id": i, "summary": summaries[skey]})
 
             observations = entry.get('observation', {})
             for i in range(1, max_sess + 1):
@@ -446,8 +427,8 @@ class SQLAgentStoreWrapper:
                             if isinstance(dia_ref, list):
                                 dia_ref = ', '.join(str(x) for x in dia_ref)
                             total_tokens += self.count_tokens(str(obs_item[0]))
-                            obs_rows.append({"a": sid, "b": i, "c": speaker,
-                                             "d": str(obs_item[0]), "e": str(dia_ref)})
+                            obs_rows.append({"sample_id": sid, "session_id": i, "speaker": speaker,
+                                             "observation": str(obs_item[0]), "dia_id": str(dia_ref)})
 
         # 纯 INSERT 计时
         t_insert = time.time()
@@ -456,18 +437,18 @@ class SQLAgentStoreWrapper:
                 conn.execute(text(
                     "INSERT INTO conversations "
                     "(sample_id,session_id,session_date,turn_number,dia_id,speaker,text) "
-                    "VALUES (:a,:b,:c,:d,:e,:f,:g)"
+                    "VALUES (:sample_id,:session_id,:session_date,:turn_number,:dia_id,:speaker,:text)"
                 ), r)
             for r in summary_rows:
                 conn.execute(text(
                     "INSERT INTO session_summaries (sample_id,session_id,summary) "
-                    "VALUES (:a,:b,:c)"
+                    "VALUES (:sample_id,:session_id,:summary)"
                 ), r)
             for r in obs_rows:
                 conn.execute(text(
                     "INSERT INTO observations "
                     "(sample_id,session_id,speaker,observation,dia_id) "
-                    "VALUES (:a,:b,:c,:d,:e)"
+                    "VALUES (:sample_id,:session_id,:speaker,:observation,:dia_id)"
                 ), r)
             conn.commit()
         insert_time = time.time() - t_insert
@@ -508,9 +489,9 @@ class SQLAgentStoreWrapper:
                 if not content:
                     continue
                 total_tokens += self.count_tokens(content)
-                article_rows.append({"a": sid, "b": title, "c": content})
+                article_rows.append({"sample_id": sid, "title": title, "content": content})
                 for ci, chunk in enumerate(self._do_chunk(content)):
-                    chunk_rows.append({"a": sid, "b": title, "c": ci, "d": chunk})
+                    chunk_rows.append({"sample_id": sid, "title": title, "chunk_index": ci, "content": chunk})
                     total_chunks += 1
 
         # 纯 INSERT 计时
@@ -518,12 +499,12 @@ class SQLAgentStoreWrapper:
         with engine.connect() as conn:
             for r in article_rows:
                 conn.execute(text(
-                    "INSERT INTO articles (sample_id,title,content) VALUES (:a,:b,:c)"
+                    "INSERT INTO articles (sample_id,title,content) VALUES (:sample_id,:title,:content)"
                 ), r)
             for r in chunk_rows:
                 conn.execute(text(
                     "INSERT INTO article_chunks (sample_id,title,chunk_index,content) "
-                    "VALUES (:a,:b,:c,:d)"
+                    "VALUES (:sample_id,:title,:chunk_index,:content)"
                 ), r)
             conn.commit()
         insert_time = time.time() - t_insert
@@ -563,7 +544,7 @@ class SQLAgentStoreWrapper:
             pid = paper['id']
             abstract = paper.get('abstract', '')
             total_tokens += self.count_tokens(abstract)
-            paper_rows.append({"a": pid, "b": paper.get('title', ''), "c": abstract})
+            paper_rows.append({"paper_id": pid, "title": paper.get('title', ''), "abstract": abstract})
 
             ft = paper.get('full_text', [])
             sections = []
@@ -582,9 +563,9 @@ class SQLAgentStoreWrapper:
 
             for i, sname, content in sections:
                 total_tokens += self.count_tokens(content)
-                section_rows.append({"a": pid, "b": i, "c": sname, "d": content})
+                section_rows.append({"paper_id": pid, "section_index": i, "section_name": sname, "content": content})
                 for ci, chunk in enumerate(self._do_chunk(content)):
-                    chunk_rows.append({"a": pid, "b": i, "c": ci, "d": chunk})
+                    chunk_rows.append({"paper_id": pid, "section_index": i, "chunk_index": ci, "content": chunk})
                     total_chunks += 1
 
         # 纯 INSERT 计时
@@ -592,17 +573,17 @@ class SQLAgentStoreWrapper:
         with engine.connect() as conn:
             for r in paper_rows:
                 conn.execute(text(
-                    "INSERT OR IGNORE INTO papers (paper_id,title,abstract) VALUES (:a,:b,:c)"
+                    "INSERT OR IGNORE INTO papers (paper_id,title,abstract) VALUES (:paper_id,:title,:abstract)"
                 ), r)
             for r in section_rows:
                 conn.execute(text(
                     "INSERT INTO sections (paper_id,section_index,section_name,content) "
-                    "VALUES (:a,:b,:c,:d)"
+                    "VALUES (:paper_id,:section_index,:section_name,:content)"
                 ), r)
             for r in chunk_rows:
                 conn.execute(text(
                     "INSERT INTO section_chunks (paper_id,section_index,chunk_index,content) "
-                    "VALUES (:a,:b,:c,:d)"
+                    "VALUES (:paper_id,:section_index,:chunk_index,:content)"
                 ), r)
             conn.commit()
         insert_time = time.time() - t_insert
@@ -645,11 +626,11 @@ class SQLAgentStoreWrapper:
                 content += self._read_document(dp)
             total_tokens += self.count_tokens(content)
             m = meta.get(name, {})
-            syllabus_rows.append({"a": name, "b": m.get('course', ''), "c": m.get('major', ''),
-                                  "d": m.get('area', ''), "e": m.get('university', ''),
-                                  "f": int(m.get('num_pages', 0) or 0), "g": content})
+            syllabus_rows.append({"syllabus_name": name, "course": m.get('course', ''), "major": m.get('major', ''),
+                                  "area": m.get('area', ''), "university": m.get('university', ''),
+                                  "num_pages": int(m.get('num_pages', 0) or 0), "content": content})
             for ci, chunk in enumerate(self._do_chunk(content)):
-                chunk_rows.append({"a": name, "b": ci, "c": chunk})
+                chunk_rows.append({"syllabus_name": name, "chunk_index": ci, "content": chunk})
                 total_chunks += 1
 
         # 纯 INSERT 计时
@@ -659,12 +640,12 @@ class SQLAgentStoreWrapper:
                 conn.execute(text(
                     "INSERT INTO syllabi "
                     "(syllabus_name,course,major,area,university,num_pages,content) "
-                    "VALUES (:a,:b,:c,:d,:e,:f,:g)"
+                    "VALUES (:syllabus_name,:course,:major,:area,:university,:num_pages,:content)"
                 ), r)
             for r in chunk_rows:
                 conn.execute(text(
                     "INSERT INTO syllabus_chunks (syllabus_name,chunk_index,content) "
-                    "VALUES (:a,:b,:c)"
+                    "VALUES (:syllabus_name,:chunk_index,:content)"
                 ), r)
             conn.commit()
         insert_time = time.time() - t_insert
@@ -702,9 +683,9 @@ class SQLAgentStoreWrapper:
                 title = pg.get('title', '')
                 content = pg.get('text', '')
                 total_tokens += self.count_tokens(content)
-                passage_rows.append({"a": qa_id, "b": title, "c": content})
+                passage_rows.append({"qa_id": qa_id, "title": title, "content": content})
                 for ci, chunk in enumerate(self._do_chunk(content)):
-                    chunk_rows.append({"a": qa_id, "b": title, "c": ci, "d": chunk})
+                    chunk_rows.append({"qa_id": qa_id, "title": title, "chunk_index": ci, "content": chunk})
                     total_chunks += 1
 
         # 纯 INSERT 计时
@@ -712,12 +693,12 @@ class SQLAgentStoreWrapper:
         with engine.connect() as conn:
             for r in passage_rows:
                 conn.execute(text(
-                    "INSERT INTO passages (qa_id,title,content) VALUES (:a,:b,:c)"
+                    "INSERT INTO passages (qa_id,title,content) VALUES (:qa_id,:title,:content)"
                 ), r)
             for r in chunk_rows:
                 conn.execute(text(
                     "INSERT INTO passage_chunks (qa_id,title,chunk_index,content) "
-                    "VALUES (:a,:b,:c,:d)"
+                    "VALUES (:qa_id,:title,:chunk_index,:content)"
                 ), r)
             conn.commit()
         insert_time = time.time() - t_insert
@@ -767,11 +748,11 @@ class SQLAgentStoreWrapper:
                 content += self._read_document(dp)
             total_tokens += self.count_tokens(content)
             m = doc_info.get(doc_name, {})
-            doc_rows.append({"a": doc_name, "b": m.get('company', ''), "c": m.get('gics_sector', ''),
-                             "d": m.get('doc_type', ''), "e": int(m.get('doc_period', 0) or 0),
-                             "f": 0, "g": content})
+            doc_rows.append({"doc_name": doc_name, "company": m.get('company', ''), "gics_sector": m.get('gics_sector', ''),
+                             "doc_type": m.get('doc_type', ''), "doc_period": int(m.get('doc_period', 0) or 0),
+                             "num_pages": 0, "content": content})
             for ci, chunk in enumerate(self._do_chunk(content, chunk_size=cs, chunk_overlap=co)):
-                chunk_rows.append({"a": doc_name, "b": ci, "c": 0, "d": chunk})
+                chunk_rows.append({"doc_name": doc_name, "chunk_index": ci, "page_num": 0, "content": chunk})
                 total_chunks += 1
             self.logger.info(f"[SQLAgent-FinanceBench] Prepared doc '{doc_name}' with {total_tokens} tokens and {total_chunks} chunks")
 
@@ -782,12 +763,12 @@ class SQLAgentStoreWrapper:
                 conn.execute(text(
                     "INSERT OR IGNORE INTO documents "
                     "(doc_name,company,gics_sector,doc_type,doc_period,num_pages,content) "
-                    "VALUES (:a,:b,:c,:d,:e,:f,:g)"
+                    "VALUES (:doc_name,:company,:gics_sector,:doc_type,:doc_period,:num_pages,:content)"
                 ), r)
             for r in chunk_rows:
                 conn.execute(text(
                     "INSERT INTO document_chunks (doc_name,chunk_index,page_num,content) "
-                    "VALUES (:a,:b,:c,:d)"
+                    "VALUES (:doc_name,:chunk_index,:page_num,:content)"
                 ), r)
             conn.commit()
         insert_time = time.time() - t_insert
@@ -820,9 +801,9 @@ class SQLAgentStoreWrapper:
                     continue
                 total_tokens += self.count_tokens(content)
                 doc_id = os.path.splitext(os.path.basename(dp))[0]
-                doc_rows.append({"a": doc_id, "b": content})
+                doc_rows.append({"doc_id": doc_id, "content": content})
                 for ci, chunk in enumerate(self._do_chunk(content)):
-                    chunk_rows.append({"a": doc_id, "b": ci, "c": chunk})
+                    chunk_rows.append({"doc_id": doc_id, "chunk_index": ci, "content": chunk})
                     total_chunks += 1
 
         # 纯 INSERT 计时
@@ -830,12 +811,12 @@ class SQLAgentStoreWrapper:
         with engine.connect() as conn:
             for r in doc_rows:
                 conn.execute(text(
-                    "INSERT OR REPLACE INTO documents (doc_id,content) VALUES (:a,:b)"
+                    "INSERT OR REPLACE INTO documents (doc_id,content) VALUES (:doc_id,:content)"
                 ), r)
             for r in chunk_rows:
                 conn.execute(text(
                     "INSERT OR REPLACE INTO document_chunks (doc_id,chunk_index,content) "
-                    "VALUES (:a,:b,:c)"
+                    "VALUES (:doc_id,:chunk_index,:content)"
                 ), r)
             conn.commit()
         insert_time = time.time() - t_insert

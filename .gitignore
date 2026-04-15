@@ -6,5 +6,5 @@ viking_store_locomo/
 ov.conf
 pageindex.conf
 .venv/
-.env
+**/.env
 LangChain-SQL-Agent-master/
