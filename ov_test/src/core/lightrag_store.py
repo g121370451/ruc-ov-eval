@@ -6,6 +6,7 @@ import shutil
 import sys
 import threading
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -496,6 +497,7 @@ class LightRAGStoreWrapper:
         texts = []
         file_paths = []
         ids = []
+        id_debug_rows = []
         for sample in samples:
             for doc_path in sample.doc_paths:
                 try:
@@ -512,10 +514,37 @@ class LightRAGStoreWrapper:
                 texts.append(content)
                 file_paths.append(doc_path)
                 doc_name = os.path.splitext(os.path.basename(doc_path))[0]
-                ids.append(f"{sample.sample_id}:{doc_name}")
+                doc_id = f"{sample.sample_id}:{doc_name}"
+                ids.append(doc_id)
+                id_debug_rows.append(
+                    {
+                        "id": doc_id,
+                        "sample_id": sample.sample_id,
+                        "doc_name": doc_name,
+                        "doc_path": doc_path,
+                    }
+                )
                 if monitor:
                     monitor.worker_start()
                     monitor.worker_end(success=True)
+
+        duplicate_id_rows: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+        for row in id_debug_rows:
+            duplicate_id_rows[row["id"]].append(row)
+        duplicate_id_rows = {
+            doc_id: rows for doc_id, rows in duplicate_id_rows.items() if len(rows) > 1
+        }
+        if duplicate_id_rows:
+            self.logger.error(
+                f"[LightRAGStore][Debug] Duplicate ingest ids detected before insert: {len(duplicate_id_rows)}"
+            )
+            for doc_id, rows in list(duplicate_id_rows.items())[:20]:
+                self.logger.error(f"[LightRAGStore][Debug] duplicate id='{doc_id}'")
+                for row in rows:
+                    self.logger.error(
+                        f"[LightRAGStore][Debug] sample_id={row['sample_id']} "
+                        f"doc_name={row['doc_name']} doc_path={row['doc_path']}"
+                    )
 
         scope = self._make_scope("ingest")
         scope_token = self._token_tracker.set_scope(scope)
