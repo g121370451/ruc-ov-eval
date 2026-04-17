@@ -271,12 +271,15 @@ class BenchmarkPipeline:
 
             # 1. Retrieval
             t0 = time.time()
+            retrieval_topk = self.config.get('execution', {}).get('retrieval_topk')
             if self.store_type == 'sql_agent':
                 search_res = self.db.retrieve(
-                    query=qa.question, topk=self.config['execution']['retrieval_topk'],
+                    query=qa.question, topk=retrieval_topk,
                     sample_id=task['sample_id'], qa_metadata=qa.metadata)
+            elif self.store_type == 'lightrag' and retrieval_topk is None:
+                search_res = self.db.retrieve(query=qa.question)
             else:
-                search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
+                search_res = self.db.retrieve(query=qa.question, topk=retrieval_topk)
             latency = time.time() - t0
 
             retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)

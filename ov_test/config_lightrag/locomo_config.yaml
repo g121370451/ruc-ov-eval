@@ -17,9 +17,8 @@ store:
     embedding_api_key: "${EMBEDDING_API_KEY}"
 
 execution:
-  max_workers: 5
-  ingest_workers: 3
-  retrieval_topk: 5
+  max_workers: 10
+  ingest_workers: 5
   max_queries: null
 
 paths:

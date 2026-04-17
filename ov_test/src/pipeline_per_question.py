@@ -407,11 +407,13 @@ class PerQuestionPipeline(BenchmarkPipeline):
         """单个问题：从单个 store 检索 → 生成答案"""
         self.monitor.worker_start()
         try:
-            topk = self.config['execution']['retrieval_topk']
+            topk = self.config.get('execution', {}).get('retrieval_topk')
             t0 = time.time()
             if self.store_type == 'sql_agent':
                 res = store.retrieve(query=qa.question, topk=topk,
                                      sample_id=sample_id, qa_metadata=qa.metadata)
+            elif self.store_type == 'lightrag' and topk is None:
+                res = store.retrieve(query=qa.question)
             else:
                 res = store.retrieve(query=qa.question, topk=topk)
             latency = time.time() - t0
