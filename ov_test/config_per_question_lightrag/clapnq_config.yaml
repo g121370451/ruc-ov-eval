@@ -15,10 +15,11 @@ store:
     embedding_model_name: "${EMBEDDING_MODEL_NAME}"
     embedding_base_url: "${EMBEDDING_BASE_URL}"
     embedding_api_key: "${EMBEDDING_API_KEY}"
+    use_native_answer_generation: false
 
 execution:
   max_workers: 10
-  ingest_workers: 5
+  ingest_group_workers: 10
   max_queries: null
 
 paths:

@@ -35,8 +35,13 @@ class LightRAGResult:
     """LightRAG 检索结果，与其他 Store wrapper 保持一致。"""
 
     resources: List[LightRAGResource] = field(default_factory=list)
+    lightrag_context: str = ""
     retrieve_input_tokens: int = 0
     retrieve_output_tokens: int = 0
+    native_generation_used: bool = False
+    native_final_answer: str = ""
+    native_input_tokens: int = 0
+    native_output_tokens: int = 0
     raw_result: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -177,6 +182,8 @@ class LightRAGStoreWrapper:
         self.embedding_api_key = self.config.get("embedding_api_key", "")
         self.embedding_api_key_env = self.config.get("embedding_api_key_env", "")
         self.enable_llm_cache = self._coerce_optional_bool(self.config.get("enable_llm_cache"))
+        self.use_native_answer_generation = bool(self.config.get("use_native_answer_generation", False))
+        self.max_parallel_insert = self._coerce_optional_int(self.config.get("max_parallel_insert"))
         self.workspace = hashlib.sha1(os.path.abspath(store_path).encode("utf-8")).hexdigest()[:16]
 
         self._rag = None
@@ -370,6 +377,8 @@ class LightRAGStoreWrapper:
             rag_kwargs["embedding_func_max_async"] = self.embedding_func_max_async
         if self.enable_llm_cache is not None:
             rag_kwargs["enable_llm_cache"] = self.enable_llm_cache
+        if self.max_parallel_insert is not None:
+            rag_kwargs["max_parallel_insert"] = self.max_parallel_insert
 
         rag = self.LightRAG(**rag_kwargs)
         await rag.initialize_storages()
@@ -384,74 +393,23 @@ class LightRAGStoreWrapper:
             self._rag = rag
             return rag
 
-    def ingest(self, samples: List[StandardDoc], max_workers: int = 4, monitor=None) -> dict:
-        start_time = time.time()
-        rag = self._ensure_rag()
-
-        texts = []
-        file_paths = []
-        ids = []
-        for sample in samples:
-            for doc_path in sample.doc_paths:
-                try:
-                    content = self._read_document(doc_path)
-                except Exception as e:
-                    self.logger.error(f"Failed to read {doc_path}: {e}")
-                    if monitor:
-                        monitor.worker_end(success=False)
-                    continue
-
-                if not content:
-                    continue
-
-                texts.append(content)
-                file_paths.append(doc_path)
-                doc_name = os.path.splitext(os.path.basename(doc_path))[0]
-                ids.append(f"{sample.sample_id}:{doc_name}")
-                if monitor:
-                    monitor.worker_start()
-                    monitor.worker_end(success=True)
-
-        scope = self._make_scope("ingest")
-        scope_token = self._token_tracker.set_scope(scope)
-        before = self._token_tracker.get_usage(scope)
-        try:
-            if texts:
-                with self._operation_lock:
-                    rag.insert(texts, ids=ids, file_paths=file_paths)
-            after = self._token_tracker.get_usage(scope)
-        finally:
-            self._token_tracker.reset_scope(scope_token)
-
-        usage = self._get_token_delta(before, after)
-        return {
-            "time": time.time() - start_time,
-            "input_tokens": usage["prompt_tokens"],
-            "output_tokens": usage["completion_tokens"],
-        }
-
-    def retrieve(self, query: str, topk: int = 10, target_uri: str = None) -> LightRAGResult:
-        rag = self._ensure_rag()
+    def _build_query_param(self, topk: Optional[int], *, only_need_context: bool = False) -> Any:
         query_param_kwargs = {
             "mode": self.query_mode,
-            "top_k": topk,
-            "chunk_top_k": topk,
             "stream": False,
         }
+        if only_need_context:
+            query_param_kwargs["only_need_context"] = True
+            query_param_kwargs["only_need_prompt"] = False
+        if topk is not None:
+            query_param_kwargs["top_k"] = topk
+            query_param_kwargs["chunk_top_k"] = topk
         if self.enable_rerank is not None:
             query_param_kwargs["enable_rerank"] = self.enable_rerank
-        param = self.QueryParam(**query_param_kwargs)
+        return self.QueryParam(**query_param_kwargs)
 
-        scope = self._make_scope("retrieve")
-        scope_token = self._token_tracker.set_scope(scope)
-        before = self._token_tracker.get_usage(scope)
-        try:
-            with self._operation_lock:
-                result = rag.query_data(query, param=param)
-            after = self._token_tracker.get_usage(scope)
-        finally:
-            self._token_tracker.reset_scope(scope_token)
-
+    @staticmethod
+    def _extract_resources_from_raw_result(result: Dict[str, Any]) -> List[LightRAGResource]:
         data_section = result.get("data", {}) if isinstance(result, dict) else {}
         resources: List[LightRAGResource] = []
 
@@ -509,24 +467,125 @@ class LightRAGStoreWrapper:
                     )
                 )
 
+        return resources
+
+    @staticmethod
+    def _extract_native_answer_from_raw_result(result: Dict[str, Any]) -> str:
+        if not isinstance(result, dict):
+            return ""
+        llm_response = result.get("llm_response", {})
+        content = llm_response.get("content", "")
+        return content.strip() if isinstance(content, str) else ""
+
+    @staticmethod
+    def _extract_context_from_raw_result(result: Dict[str, Any]) -> str:
+        if not isinstance(result, dict):
+            return ""
+        llm_response = result.get("llm_response", {})
+        content = llm_response.get("content", "")
+        return content.strip() if isinstance(content, str) else ""
+
+    def ingest(self, samples: List[StandardDoc], max_workers: Optional[int] = None, monitor=None) -> dict:
+        start_time = time.time()
+        rag = self._ensure_rag()
+        previous_max_parallel_insert = None
+        if max_workers is not None:
+            previous_max_parallel_insert = getattr(rag, "max_parallel_insert", None)
+            rag.max_parallel_insert = int(max_workers)
+
+        texts = []
+        file_paths = []
+        ids = []
+        for sample in samples:
+            for doc_path in sample.doc_paths:
+                try:
+                    content = self._read_document(doc_path)
+                except Exception as e:
+                    self.logger.error(f"Failed to read {doc_path}: {e}")
+                    if monitor:
+                        monitor.worker_end(success=False)
+                    continue
+
+                if not content:
+                    continue
+
+                texts.append(content)
+                file_paths.append(doc_path)
+                doc_name = os.path.splitext(os.path.basename(doc_path))[0]
+                ids.append(f"{sample.sample_id}:{doc_name}")
+                if monitor:
+                    monitor.worker_start()
+                    monitor.worker_end(success=True)
+
+        scope = self._make_scope("ingest")
+        scope_token = self._token_tracker.set_scope(scope)
+        before = self._token_tracker.get_usage(scope)
+        try:
+            if texts:
+                with self._operation_lock:
+                    rag.insert(texts, ids=ids, file_paths=file_paths)
+            after = self._token_tracker.get_usage(scope)
+        finally:
+            if max_workers is not None and previous_max_parallel_insert is not None:
+                rag.max_parallel_insert = previous_max_parallel_insert
+            self._token_tracker.reset_scope(scope_token)
+
+        usage = self._get_token_delta(before, after)
+        return {
+            "time": time.time() - start_time,
+            "input_tokens": usage["prompt_tokens"],
+            "output_tokens": usage["completion_tokens"],
+        }
+
+    def retrieve(self, query: str, topk: Optional[int] = None, target_uri: str = None) -> LightRAGResult:
+        rag = self._ensure_rag()
+        native_generation_used = self.use_native_answer_generation
+        param = self._build_query_param(topk, only_need_context=not native_generation_used)
+        scope = self._make_scope("retrieve_native" if native_generation_used else "retrieve")
+        scope_token = self._token_tracker.set_scope(scope)
+        before = self._token_tracker.get_usage(scope)
+        try:
+            with self._operation_lock:
+                result = rag.query_llm(query, param=param)
+            after = self._token_tracker.get_usage(scope)
+        finally:
+            self._token_tracker.reset_scope(scope_token)
+
+        result_dict = result if isinstance(result, dict) else {}
+        resources = self._extract_resources_from_raw_result(result_dict)
+        lightrag_context = ""
+        if not native_generation_used:
+            lightrag_context = self._extract_context_from_raw_result(result_dict)
         usage = self._get_token_delta(before, after)
         return LightRAGResult(
             resources=resources,
+            lightrag_context=lightrag_context,
             retrieve_input_tokens=usage["prompt_tokens"],
             retrieve_output_tokens=usage["completion_tokens"],
-            raw_result=result if isinstance(result, dict) else {},
+            native_generation_used=native_generation_used,
+            native_final_answer=self._extract_native_answer_from_raw_result(result_dict) if native_generation_used else "",
+            native_input_tokens=usage["prompt_tokens"] if native_generation_used else 0,
+            native_output_tokens=usage["completion_tokens"] if native_generation_used else 0,
+            raw_result=result_dict,
         )
 
     def process_retrieval_results(self, search_res: LightRAGResult):
         retrieved_texts = []
-        context_blocks = []
         retrieved_uris = []
         for resource in search_res.resources:
             if not resource.content:
                 continue
             retrieved_uris.append(resource.uri)
             retrieved_texts.append(resource.content)
-            context_blocks.append(resource.content[:2000])
+
+        context_blocks = []
+        if search_res.lightrag_context:
+            context_blocks.append(search_res.lightrag_context)
+        else:
+            for resource in search_res.resources:
+                if not resource.content:
+                    continue
+                context_blocks.append(resource.content[:2000])
         return retrieved_texts, context_blocks, retrieved_uris
 
     async def _clear_async(self) -> None:

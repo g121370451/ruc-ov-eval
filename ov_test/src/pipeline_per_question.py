@@ -111,6 +111,14 @@ class PerQuestionPipeline(BenchmarkPipeline):
             return VikingStoreWrapper(store_path=store_path)
 
     def _close_store(self, store):
+        close_fn = getattr(store, 'close', None)
+        if callable(close_fn):
+            try:
+                close_fn()
+                return
+            except Exception:
+                pass
+
         if hasattr(store, 'client') and hasattr(store.client, 'close'):
             try:
                 store.client.close()
@@ -193,7 +201,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
             if max_queries is not None and global_idx >= max_queries:
                 break
 
-        ingest_workers = self.config['execution'].get('ingest_workers', 4)
+        ingest_workers = self.config['execution'].get('ingest_workers')
+        ingest_group_workers = self.config['execution'].get('ingest_group_workers')
 
         # ---- Phase 1: 并行入库 ----
         failed_keys = set()
@@ -213,7 +222,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
             self._save_records()
 
             ingest_timeout = self.config['execution'].get('ingest_timeout')
-            with ThreadPoolExecutor(max_workers=ingest_workers) as executor:
+            with ThreadPoolExecutor(max_workers=ingest_group_workers) as executor:
                 future_to_key = {
                     executor.submit(self._ingest_group, sk, grp): sk
                     for sk, grp, _, _ in group_tasks
@@ -350,7 +359,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
                                             metadata=doc_meta))
             else:
                 docs = [StandardDoc(sample_id=store_key, doc_paths=doc_paths)]
-            ingest_workers = self.config['execution'].get('ingest_workers', 10)
+            ingest_workers = self.config['execution'].get('ingest_workers')
             stats = store.ingest(docs, max_workers=ingest_workers, monitor=self.monitor)
         except Exception as e:
             self.logger.error(f"[{store_key}] Ingest error: {e}")
@@ -358,11 +367,14 @@ class PerQuestionPipeline(BenchmarkPipeline):
         finally:
             self._close_store(store)
         elapsed_ingest = time.time() - t_ingest
+        recorded_ingest_time = stats.get('time')
+        if recorded_ingest_time is None:
+            recorded_ingest_time = elapsed_ingest
         with self._records_lock:
             self.records[store_key] = {
                 'ingested': True,
                 'doc_paths': doc_paths,
-                'ingest_time': stats.get('insert_time',0),
+                'ingest_time': recorded_ingest_time,
                 'ingest_input_tokens': stats.get('input_tokens', 0),
                 'ingest_output_tokens': stats.get('output_tokens', 0),
                 'deleted': False,
@@ -424,12 +436,19 @@ class PerQuestionPipeline(BenchmarkPipeline):
             retrieved_texts, context_blocks, retrieved_uris = \
                 store.process_retrieval_results(res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
+            native_answer_used = bool(getattr(res, 'native_generation_used', False))
 
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            ans_raw = self.llm.generate(full_prompt)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-            in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
-            out_tok = store.count_tokens(ans) + retrieve_out
+            if native_answer_used:
+                ans_raw = getattr(res, 'native_final_answer', '')
+                ans = self.adapter.post_process_answer(qa, ans_raw, {})
+                in_tok = getattr(res, 'native_input_tokens', retrieve_in)
+                out_tok = getattr(res, 'native_output_tokens', retrieve_out)
+            else:
+                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                ans_raw = self.llm.generate(full_prompt)
+                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+                in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
+                out_tok = store.count_tokens(ans) + retrieve_out
 
             # 检查是否需要解释 Not mentioned
             not_mentioned_reason = ""

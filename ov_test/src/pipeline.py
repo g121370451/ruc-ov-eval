@@ -97,7 +97,7 @@ class BenchmarkPipeline:
                 shutil.rmtree(store_path)
                 os.makedirs(store_path, exist_ok=True)
                 self.logger.info(f"Store directory cleared: {store_path}")
-            ingest_workers = self.config['execution'].get('ingest_workers', 10)
+            ingest_workers = self.config['execution'].get('ingest_workers')
             ingest_stats = self.db.ingest(
                 doc_info,
                 max_workers=ingest_workers,
@@ -289,12 +289,19 @@ class BenchmarkPipeline:
             # 2. 构建 prompt → LLM 生成
             retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
+            native_answer_used = bool(getattr(search_res, 'native_generation_used', False))
 
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            ans_raw = self.llm.generate(full_prompt)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
-            out_tokens = self.db.count_tokens(ans) + retrieve_out
+            if native_answer_used:
+                ans_raw = getattr(search_res, 'native_final_answer', '')
+                ans = self.adapter.post_process_answer(qa, ans_raw, {})
+                in_tokens = getattr(search_res, 'native_input_tokens', retrieve_in)
+                out_tokens = getattr(search_res, 'native_output_tokens', retrieve_out)
+            else:
+                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                ans_raw = self.llm.generate(full_prompt)
+                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+                in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
+                out_tokens = self.db.count_tokens(ans) + retrieve_out
 
             # 检查是否需要解释 Not mentioned
             not_mentioned_reason = ""
