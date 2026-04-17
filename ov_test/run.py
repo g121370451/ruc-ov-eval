@@ -183,6 +183,13 @@ def main():
                 store_path=config['paths']['vector_store'],
                 hipporag_config=hipporag_conf
             )
+        elif store_type == 'lightrag':
+            from src.core.lightrag_store import LightRAGStoreWrapper
+            lightrag_conf = store_cfg.get('lightrag_config', {})
+            vector_store = LightRAGStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                lightrag_config=lightrag_conf
+            )
         elif store_type == 'sql_agent':
             from src.core.sql_agent_store import SQLAgentStoreWrapper
             sql_agent_conf = store_cfg.get('sql_agent_config', {})

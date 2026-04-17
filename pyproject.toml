@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3>=1.42.57",
     "gritlm>=1.0.2",
+    "lightrag-hku",
     "igraph>=1.0.0",
     "langchain-community>=0.4.1",
     "langchain-core>=1.2.16",
@@ -36,3 +37,4 @@ members = [
 
 [tool.uv.sources]
 openviking = { workspace = true }
+lightrag-hku = { path = "lightrag" }

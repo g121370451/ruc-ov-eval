@@ -2,3 +2,6 @@
 	path = OpenViking
 	url = https://github.com/g121370451/OpenViking.git
 	branch = ruc-eval
+[submodule "lightrag"]
+	path = lightrag
+	url = https://github.com/HKUDS/LightRAG.git

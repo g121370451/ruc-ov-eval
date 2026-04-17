@@ -90,6 +90,13 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 store_path=store_path,
                 hipporag_config=hipporag_conf
             )
+        elif self.store_type == 'lightrag':
+            from src.core.lightrag_store import LightRAGStoreWrapper
+            lightrag_conf = self.store_config.get('lightrag_config', {})
+            return LightRAGStoreWrapper(
+                store_path=store_path,
+                lightrag_config=lightrag_conf
+            )
         elif self.store_type == 'sql_agent':
             from src.core.sql_agent_store import SQLAgentStoreWrapper
             sql_agent_conf = self.store_config.get('sql_agent_config', {})
