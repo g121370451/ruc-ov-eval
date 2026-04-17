@@ -12,18 +12,248 @@ doc_paths 内容完全相同的 sample 共享同一个 store（通过 store_key 
 import os
 import json
 import hashlib
+import importlib
+import multiprocessing as mp
 import re
 import shutil
 import time
 import threading
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Any
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from typing import Dict, List, Any, Optional
 from tqdm import tqdm
 
 from src.pipeline import BenchmarkPipeline
 from src.adapters.base import StandardDoc, StandardSample
+from src.core.llm_client import LLMClientWrapper
+from src.core.logger import get_logger
 from src.core.metrics import MetricsCalculator
+
+
+def _create_store_from_config(config: dict, store_path: str):
+    store_cfg = config.get('store', {})
+    store_type = store_cfg.get('type', 'viking')
+
+    if store_type == 'pageindex':
+        from src.core.pageindex_store import PageIndexStoreWrapper
+
+        pageindex_conf = store_cfg.get('pageindex_config_path')
+        return PageIndexStoreWrapper(
+            store_path=store_path,
+            doc_output_dir=config['paths'].get('doc_output_dir', ''),
+            config_path=pageindex_conf
+        )
+    if store_type == 'hipporag':
+        from src.core.hipporag_store import HippoRAGStoreWrapper
+
+        hipporag_conf = store_cfg.get('hipporag_config', {})
+        return HippoRAGStoreWrapper(
+            store_path=store_path,
+            hipporag_config=hipporag_conf
+        )
+    if store_type == 'lightrag':
+        from src.core.lightrag_store import LightRAGStoreWrapper
+
+        lightrag_conf = store_cfg.get('lightrag_config', {})
+        return LightRAGStoreWrapper(
+            store_path=store_path,
+            lightrag_config=lightrag_conf
+        )
+    if store_type == 'sql_agent':
+        from src.core.sql_agent_store import SQLAgentStoreWrapper
+
+        sql_agent_conf = dict(store_cfg.get('sql_agent_config', {}))
+        sql_agent_conf['dataset_name'] = config.get('dataset_name', '')
+        sql_agent_conf['raw_data_path'] = config['paths'].get('raw_data', '')
+        return SQLAgentStoreWrapper(
+            store_path=store_path,
+            sql_agent_config=sql_agent_conf
+        )
+
+    from src.core.vector_store import VikingStoreWrapper
+
+    return VikingStoreWrapper(store_path=store_path)
+
+
+def _close_store_instance(store):
+    close_fn = getattr(store, 'close', None)
+    if callable(close_fn):
+        try:
+            close_fn()
+            return
+        except Exception:
+            pass
+
+    if hasattr(store, 'client') and hasattr(store.client, 'close'):
+        try:
+            store.client.close()
+        except Exception:
+            pass
+
+
+def _build_adapter_from_config(config: dict):
+    adapter_cfg = config.get('adapter', {})
+    module_path = adapter_cfg.get('module', 'src.adapters.locomo_adapter')
+    class_name = adapter_cfg.get('class_name', 'LocomoAdapter')
+    mod = importlib.import_module(module_path)
+    adapter_cls = getattr(mod, class_name)
+    return adapter_cls(raw_file_path=config['paths']['raw_data'])
+
+
+def _build_llm_from_config(config: dict):
+    api_key = os.environ.get(
+        config['llm'].get('api_key_env_var', ''),
+        config['llm'].get('api_key')
+    )
+    return LLMClientWrapper(config=config['llm'], api_key=api_key)
+
+
+def _run_generation_task(
+    config: dict,
+    adapter,
+    llm,
+    store,
+    task_id: int,
+    sample_id: str,
+    qa,
+    logger=None,
+):
+    logger = logger or get_logger()
+    topk = config.get('execution', {}).get('retrieval_topk')
+    store_type = config.get('store', {}).get('type', 'viking')
+
+    t0 = time.time()
+    if store_type == 'sql_agent':
+        res = store.retrieve(
+            query=qa.question,
+            topk=topk,
+            sample_id=sample_id,
+            qa_metadata=qa.metadata,
+        )
+    elif store_type == 'lightrag' and topk is None:
+        res = store.retrieve(query=qa.question)
+    else:
+        res = store.retrieve(query=qa.question, topk=topk)
+    latency = time.time() - t0
+
+    retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
+    retrieve_out = getattr(res, 'retrieve_output_tokens', 0)
+
+    retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(res)
+    recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
+    native_answer_used = bool(getattr(res, 'native_generation_used', False))
+
+    if native_answer_used:
+        ans_raw = getattr(res, 'native_final_answer', '')
+        ans = adapter.post_process_answer(qa, ans_raw, {})
+        in_tok = getattr(res, 'native_input_tokens', retrieve_in)
+        out_tok = getattr(res, 'native_output_tokens', retrieve_out)
+    else:
+        full_prompt, meta = adapter.build_prompt(qa, context_blocks)
+        ans_raw = llm.generate(full_prompt)
+        ans = adapter.post_process_answer(qa, ans_raw, meta)
+        in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
+        out_tok = store.count_tokens(ans) + retrieve_out
+
+    not_mentioned_reason = ""
+    if config.get('execution', {}).get('explain_not_mentioned', False):
+        if MetricsCalculator.check_refusal(ans):
+            not_mentioned_reason = llm.explain_not_mentioned(qa.question, context_blocks)
+
+    logger.info(
+        f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s"
+    )
+    return {
+        "_global_index": task_id,
+        "sample_id": sample_id,
+        "question": qa.question,
+        "gold_answers": qa.gold_answers,
+        "category": str(qa.category),
+        "evidence": qa.evidence,
+        "retrieval": {
+            "latency_sec": latency,
+            "uris": retrieved_uris,
+            "recall_texts": retrieved_texts,
+            "prompt_texts": context_blocks,
+            "sql_queries": getattr(res, 'sql_queries', []),
+        },
+        "llm": {
+            "final_answer": ans,
+            "not_mentioned_reason": not_mentioned_reason,
+        },
+        "metrics": {"Recall": recall},
+        "token_usage": {
+            "total_input_tokens": in_tok,
+            "llm_output_tokens": out_tok,
+        },
+    }
+
+
+def _lightrag_ingest_group_worker(
+    config: dict,
+    store_parent_path: str,
+    store_key: str,
+    group: dict,
+):
+    store_path = os.path.join(store_parent_path, store_key)
+    store = _create_store_from_config(config, store_path)
+    started_at = time.time()
+    try:
+        docs = [StandardDoc(sample_id=store_key, doc_paths=group['doc_paths'])]
+        ingest_workers = config['execution'].get('ingest_workers')
+        stats = store.ingest(docs, max_workers=ingest_workers, monitor=None)
+        return {
+            "store_key": store_key,
+            "doc_paths": group['doc_paths'],
+            "stats": stats,
+            "elapsed_ingest": time.time() - started_at,
+        }
+    finally:
+        _close_store_instance(store)
+
+
+def _lightrag_query_group_worker(
+    config: dict,
+    store_parent_path: str,
+    store_key: str,
+    group: dict,
+    start_idx: int,
+    task_count: int,
+):
+    logger = get_logger()
+    adapter = _build_adapter_from_config(config)
+    llm = _build_llm_from_config(config)
+    store_path = os.path.join(store_parent_path, store_key)
+    store = _create_store_from_config(config, store_path)
+
+    try:
+        qa_tasks = []
+        idx = start_idx
+        for sample in group['samples']:
+            for qa in sample.qa_pairs:
+                if idx >= start_idx + task_count:
+                    break
+                qa_tasks.append({'id': idx, 'sample_id': sample.sample_id, 'qa': qa})
+                idx += 1
+            if idx >= start_idx + task_count:
+                break
+
+        results_map = {}
+        for task in qa_tasks:
+            res = _run_generation_task(
+                config=config,
+                adapter=adapter,
+                llm=llm,
+                store=store,
+                task_id=task['id'],
+                sample_id=task['sample_id'],
+                qa=task['qa'],
+                logger=logger,
+            )
+            results_map[res['_global_index']] = res
+        return results_map
+    finally:
+        _close_store_instance(store)
 
 
 class PerQuestionPipeline(BenchmarkPipeline):
@@ -75,55 +305,32 @@ class PerQuestionPipeline(BenchmarkPipeline):
     # ---- store 工厂 ----
 
     def _create_store(self, store_path):
-        if self.store_type == 'pageindex':
-            from src.core.pageindex_store import PageIndexStoreWrapper
-            pageindex_conf = self.store_config.get('pageindex_config_path')
-            return PageIndexStoreWrapper(
-                store_path=store_path,
-                doc_output_dir=self.config['paths'].get('doc_output_dir', ''),
-                config_path=pageindex_conf
-            )
-        elif self.store_type == 'hipporag':
-            from src.core.hipporag_store import HippoRAGStoreWrapper
-            hipporag_conf = self.store_config.get('hipporag_config', {})
-            return HippoRAGStoreWrapper(
-                store_path=store_path,
-                hipporag_config=hipporag_conf
-            )
-        elif self.store_type == 'lightrag':
-            from src.core.lightrag_store import LightRAGStoreWrapper
-            lightrag_conf = self.store_config.get('lightrag_config', {})
-            return LightRAGStoreWrapper(
-                store_path=store_path,
-                lightrag_config=lightrag_conf
-            )
-        elif self.store_type == 'sql_agent':
-            from src.core.sql_agent_store import SQLAgentStoreWrapper
-            sql_agent_conf = self.store_config.get('sql_agent_config', {})
-            sql_agent_conf['dataset_name'] = self.config.get('dataset_name', '')
-            sql_agent_conf['raw_data_path'] = self.config['paths'].get('raw_data', '')
-            return SQLAgentStoreWrapper(
-                store_path=store_path,
-                sql_agent_config=sql_agent_conf
-            )
-        else:
-            from src.core.vector_store import VikingStoreWrapper
-            return VikingStoreWrapper(store_path=store_path)
+        return _create_store_from_config(self.config, store_path)
 
     def _close_store(self, store):
-        close_fn = getattr(store, 'close', None)
-        if callable(close_fn):
-            try:
-                close_fn()
-                return
-            except Exception:
-                pass
+        _close_store_instance(store)
 
-        if hasattr(store, 'client') and hasattr(store.client, 'close'):
-            try:
-                store.client.close()
-            except Exception:
-                pass
+    def _record_ingest_success(
+        self,
+        store_key: str,
+        doc_paths: List[str],
+        stats: dict,
+        elapsed_ingest: Optional[float] = None,
+    ):
+        recorded_ingest_time = stats.get('time')
+        if recorded_ingest_time is None:
+            recorded_ingest_time = elapsed_ingest or 0.0
+        with self._records_lock:
+            self.records[store_key] = {
+                'ingested': True,
+                'doc_paths': doc_paths,
+                'ingest_time': recorded_ingest_time,
+                'ingest_input_tokens': stats.get('input_tokens', 0),
+                'ingest_output_tokens': stats.get('output_tokens', 0),
+                'deleted': False,
+                'delete_time': 0,
+            }
+        self._save_records()
 
     # ---- 备份 ----
 
@@ -222,28 +429,69 @@ class PerQuestionPipeline(BenchmarkPipeline):
             self._save_records()
 
             ingest_timeout = self.config['execution'].get('ingest_timeout')
-            with ThreadPoolExecutor(max_workers=ingest_group_workers) as executor:
-                future_to_key = {
-                    executor.submit(self._ingest_group, sk, grp): sk
-                    for sk, grp, _, _ in group_tasks
-                }
-                pbar = tqdm(total=len(future_to_key), desc="Ingesting Groups", unit="group")
-                try:
-                    for future in as_completed(future_to_key, timeout=ingest_timeout):
-                        sk = future_to_key[future]
-                        try:
-                            future.result()
-                        except Exception as e:
-                            self.logger.error(f"Ingest group {sk} failed: {e}")
-                            failed_keys.add(sk)
-                        pbar.update(1)
-                except TimeoutError:
-                    for fut, sk in future_to_key.items():
-                        if not fut.done():
-                            self.logger.error(f"Ingest group {sk} timed out")
-                            failed_keys.add(sk)
-                            fut.cancel()
-                pbar.close()
+            if self.store_type == 'lightrag' and ingest_group_workers != 1:
+                mp_context = mp.get_context("spawn")
+                with ProcessPoolExecutor(
+                    max_workers=ingest_group_workers,
+                    mp_context=mp_context,
+                    max_tasks_per_child=1,
+                ) as executor:
+                    future_to_key = {
+                        executor.submit(
+                            _lightrag_ingest_group_worker,
+                            self.config,
+                            self.store_parent_path,
+                            sk,
+                            grp,
+                        ): sk
+                        for sk, grp, _, _ in group_tasks
+                    }
+                    pbar = tqdm(total=len(future_to_key), desc="Ingesting Groups", unit="group")
+                    try:
+                        for future in as_completed(future_to_key, timeout=ingest_timeout):
+                            sk = future_to_key[future]
+                            try:
+                                payload = future.result()
+                                self._record_ingest_success(
+                                    store_key=payload['store_key'],
+                                    doc_paths=payload['doc_paths'],
+                                    stats=payload['stats'],
+                                    elapsed_ingest=payload.get('elapsed_ingest'),
+                                )
+                            except Exception as e:
+                                self.logger.error(f"Ingest group {sk} failed: {e}")
+                                failed_keys.add(sk)
+                            pbar.update(1)
+                    except TimeoutError:
+                        for fut, sk in future_to_key.items():
+                            if not fut.done():
+                                self.logger.error(f"Ingest group {sk} timed out")
+                                failed_keys.add(sk)
+                                fut.cancel()
+                    pbar.close()
+            else:
+                with ThreadPoolExecutor(max_workers=ingest_group_workers) as executor:
+                    future_to_key = {
+                        executor.submit(self._ingest_group, sk, grp): sk
+                        for sk, grp, _, _ in group_tasks
+                    }
+                    pbar = tqdm(total=len(future_to_key), desc="Ingesting Groups", unit="group")
+                    try:
+                        for future in as_completed(future_to_key, timeout=ingest_timeout):
+                            sk = future_to_key[future]
+                            try:
+                                future.result()
+                            except Exception as e:
+                                self.logger.error(f"Ingest group {sk} failed: {e}")
+                                failed_keys.add(sk)
+                            pbar.update(1)
+                    except TimeoutError:
+                        for fut, sk in future_to_key.items():
+                            if not fut.done():
+                                self.logger.error(f"Ingest group {sk} timed out")
+                                failed_keys.add(sk)
+                                fut.cancel()
+                    pbar.close()
 
             if failed_keys:
                 self.logger.warning(f"Failed/timed-out groups: {failed_keys}")
@@ -288,6 +536,35 @@ class PerQuestionPipeline(BenchmarkPipeline):
                     self.logger.error(f"Group {sk} failed: {e}")
                 pbar.update(1)
             pbar.close()
+        elif self.store_type == 'lightrag':
+            mp_context = mp.get_context("spawn")
+            with ProcessPoolExecutor(
+                max_workers=max_workers,
+                mp_context=mp_context,
+                max_tasks_per_child=1,
+            ) as executor:
+                future_to_key = {
+                    executor.submit(
+                        _lightrag_query_group_worker,
+                        self.config,
+                        self.store_parent_path,
+                        sk,
+                        grp,
+                        si,
+                        cnt,
+                    ): sk
+                    for sk, grp, si, cnt in group_tasks
+                }
+                pbar = tqdm(total=len(future_to_key), desc="Query Groups", unit="group")
+                for future in as_completed(future_to_key):
+                    sk = future_to_key[future]
+                    try:
+                        group_result = future.result()
+                        all_results.update(group_result)
+                    except Exception as e:
+                        self.logger.error(f"Group {sk} failed: {e}")
+                    pbar.update(1)
+                pbar.close()
         else:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_key = {
@@ -367,20 +644,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
         finally:
             self._close_store(store)
         elapsed_ingest = time.time() - t_ingest
-        recorded_ingest_time = stats.get('time')
-        if recorded_ingest_time is None:
-            recorded_ingest_time = elapsed_ingest
-        with self._records_lock:
-            self.records[store_key] = {
-                'ingested': True,
-                'doc_paths': doc_paths,
-                'ingest_time': recorded_ingest_time,
-                'ingest_input_tokens': stats.get('input_tokens', 0),
-                'ingest_output_tokens': stats.get('output_tokens', 0),
-                'deleted': False,
-                'delete_time': 0,
-            }
-        self._save_records()
+        self._record_ingest_success(store_key, doc_paths, stats, elapsed_ingest)
 
     # ---- 检索生成（单组）----
 
@@ -419,57 +683,21 @@ class PerQuestionPipeline(BenchmarkPipeline):
         """单个问题：从单个 store 检索 → 生成答案"""
         self.monitor.worker_start()
         try:
-            topk = self.config.get('execution', {}).get('retrieval_topk')
-            t0 = time.time()
-            if self.store_type == 'sql_agent':
-                res = store.retrieve(query=qa.question, topk=topk,
-                                     sample_id=sample_id, qa_metadata=qa.metadata)
-            elif self.store_type == 'lightrag' and topk is None:
-                res = store.retrieve(query=qa.question)
-            else:
-                res = store.retrieve(query=qa.question, topk=topk)
-            latency = time.time() - t0
-
-            retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
-            retrieve_out = getattr(res, 'retrieve_output_tokens', 0)
-
-            retrieved_texts, context_blocks, retrieved_uris = \
-                store.process_retrieval_results(res)
-            recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
-            native_answer_used = bool(getattr(res, 'native_generation_used', False))
-
-            if native_answer_used:
-                ans_raw = getattr(res, 'native_final_answer', '')
-                ans = self.adapter.post_process_answer(qa, ans_raw, {})
-                in_tok = getattr(res, 'native_input_tokens', retrieve_in)
-                out_tok = getattr(res, 'native_output_tokens', retrieve_out)
-            else:
-                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-                ans_raw = self.llm.generate(full_prompt)
-                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-                in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
-                out_tok = store.count_tokens(ans) + retrieve_out
-
-            # 检查是否需要解释 Not mentioned
-            not_mentioned_reason = ""
-            if self.config.get('execution', {}).get('explain_not_mentioned', False):
-                if MetricsCalculator.check_refusal(ans):
-                    not_mentioned_reason = self.llm.explain_not_mentioned(qa.question, context_blocks)
-
-            self.monitor.worker_end(tokens=in_tok + out_tok)
-
-            self.logger.info(f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")
-            return {
-                "_global_index": task_id, "sample_id": sample_id,
-                "question": qa.question, "gold_answers": qa.gold_answers,
-                "category": str(qa.category), "evidence": qa.evidence,
-                "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
-                              "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
-                              "sql_queries": getattr(res, 'sql_queries', [])},
-                "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
-                "metrics": {"Recall": recall},
-                "token_usage": {"total_input_tokens": in_tok, "llm_output_tokens": out_tok}
-            }
+            result = _run_generation_task(
+                config=self.config,
+                adapter=self.adapter,
+                llm=self.llm,
+                store=store,
+                task_id=task_id,
+                sample_id=sample_id,
+                qa=qa,
+                logger=self.logger,
+            )
+            token_usage = result.get('token_usage', {})
+            self.monitor.worker_end(
+                tokens=token_usage.get('total_input_tokens', 0) + token_usage.get('llm_output_tokens', 0)
+            )
+            return result
         except Exception as e:
             self.monitor.worker_end(success=False)
             raise e
