@@ -122,7 +122,7 @@ def main():
         if store_type == 'DeepRead':
             from src.core.deepread_store import DeepReadWrapper
             vector_store = DeepReadWrapper.from_config(
-                paths=config['path'],
+                paths=config['paths'],
                 llm_cfg=config.get('llm', {}),
                 store_cfg=store_cfg
             )

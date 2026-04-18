@@ -46,7 +46,7 @@ class DeepReadWrapper:
     DeepRead 向量存储包装器，接口与 VikingStoreWrapper 对齐。
 
     每个 sample_id 对应 doc_output_dir/{sample_id}/ 下的独立目录。
-    ingest 阶段：PDF -> PaddleOCP -> Markdown -> corpus JSON + embedding .npy
+    ingest 阶段：PDF -> PaddleOCR -> Markdown -> corpus JSON + embedding .npy
     retrieve 阶段：按 target_uri（即 sample_id）加载对应目录的 corpus，
     调用 run_agent 返回最终答案字符串。
     """
@@ -77,7 +77,6 @@ class DeepReadWrapper:
 
         os.makedirs(self.store_path, exist_ok=True)
 
-        # LLM 配置（用于 run_agent）
         self.model = model
         self.base_url = base_url
         self.api_key = api_key
@@ -109,7 +108,7 @@ class DeepReadWrapper:
 
     @classmethod
     def from_config(cls, paths: dict, llm_cfg: dict, store_cfg: dict) -> "DeepReadWrapper":
-        """"""
+        """从 config.yaml 的三个子块构造实例，供 run.py 调用。"""
         neighbor_window = store_cfg.get("neighbor_window", "1,-1")
         return cls(
             store_path=paths["vector_store"],
@@ -128,6 +127,9 @@ class DeepReadWrapper:
     
     def _pdf_to_markdown_pymupdf(self, pdf_path: str, md_path: str, sample_id: str):
         """
+        用 pymupdf 从数字原生 PDF 提取文本，写成 Markdown 文件。
+        每页以 `## Page N` 作为标题，保留段落换行。
+        仅适用于数字原生 PDF（非扫描版）
         """
         import fitz
         # pymupdf
@@ -139,18 +141,18 @@ class DeepReadWrapper:
                 text = page.get_text("text").strip()
                 if not text:
                     continue
-                f.write(f'## Page {page_num}\n\n')
+                f.write(f"## Page {page_num}\n\n")
                 f.write(text)
                 f.write("\n\n")
         doc.close()
         self.logger.info(f"[{sample_id}] pymupdf extracted {page_count} pages -> {md_path}")
 
     def _sample_dir(self, sample_id: str) -> str:
-        """"""
+        """返回 sample 的独立工作目录路径"""
         return os.path.join(self.doc_output_dir, sample_id)
     
-    def _corpus_dir(self, sample_id: str) -> str:
-        """"""
+    def _corpus_path(self, sample_id: str) -> str:
+        """返回 sample 的 corpus JSON 路径"""
         return os.path.join(self._sample_dir(sample_id), f"{sample_id}_corpus.json")
 
     def count_tokens(self, text: str) -> int:
@@ -177,9 +179,9 @@ class DeepReadWrapper:
         else:
             from paddleocr import PaddleOCRVL
             ocr_pipeline = PaddleOCRVL(
-            vl_rec_backend="vllm-server",
-            vl_rec_server_url="http://127.0.0.1:8956/v1",
-        )
+                vl_rec_backend="vllm-server",
+                vl_rec_server_url="http://127.0.0.1:8956/v1",
+            )
 
         embedder = VolcengineEmbedder(
             model_name="doubao-embedding-vision-250615",
@@ -202,7 +204,7 @@ class DeepReadWrapper:
                 if monitor:
                     monitor.worker_end(success=False)
                 raise e
-                
+
         token_usage = embedding_token_tracker.get()
         return {
             "time": time.time() - start_time,
@@ -211,7 +213,7 @@ class DeepReadWrapper:
         }
     
     def _ingest_one(self, sample: StandardDoc, ocr_pipeline, embedder: VolcengineEmbedder):
-        """"""
+        """处理单个 PDF：（OCR 或 pymupdf） -> Markdown -> corpus JSON + embedding。"""
         sample_id = sample.sample_id
         sample_dir = self._sample_dir(sample_id)
         os.makedirs(sample_dir, exist_ok=True)
@@ -251,18 +253,18 @@ class DeepReadWrapper:
                 except Exception as e:
                     self.logger.warning(f"[{sample_id}] Markdown page {i+1} error: {e}")
 
-                try:
-                    with open(merged_json_path, "w", encoding="utf-8") as f:
-                        json.dump(all_json_data, f, indent=2, ensure_ascii=False)
-                except Exception as e:
-                    self.logger.warning(f"[{sample_id}] Save merged JSON error: {e}")
+            try:
+                with open(merged_json_path, "w", encoding="utf-8") as f:
+                    json.dump(all_json_data, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                self.logger.warning(f"[{sample_id}] Save merged JSON error: {e}")
 
-                for p in (temp_json_path, temp_md_path):
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except Exception:
-                            pass
+            for p in (temp_json_path, temp_md_path):
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
 
         # --- Step 2: Markdown -> corpus ---
         corpus = parse_markdown_to_corpus(merged_md_path)
@@ -273,8 +275,7 @@ class DeepReadWrapper:
 
         for n in corpus.get("nodes", []):
             nid = n.get("id")
-            pars = n.get("paragraphs", [])
-            for pi, p in enumerate(pars):
+            for pi, p in enumerate(n.get("paragraphs", [])):
                 if isinstance(p, str):
                     t = p.strip()
                 elif isinstance(p, dict):
@@ -288,17 +289,16 @@ class DeepReadWrapper:
                 id_map.append({"node_id": nid, "paragraph_index": pi})
 
         if texts:
-            emb_list: List[List[float]] = []
+            emb_list: List[List[float]] = [embedder.embed(text=t) for t in texts]
             arr = np.asarray(emb_list, dtype=np.float16)
 
             emb_path = os.path.join(sample_dir, f"{sample_id}_emb.npy")
             idmap_path = os.path.join(sample_dir, f"{sample_id}_idmap.json")
 
-            np.save(emb_path, arr.astype(np.float16))
-            with open(idmap_path, "w", encoding="utf-8") as f_id:
-                json.dump(id_map, f_id, ensure_ascii=False)
+            np.save(emb_path, arr)
+            with open(idmap_path, "w", encoding="utf-8") as f:
+                json.dump(id_map, f, ensure_ascii=False)
 
-            # TODO 参数化embedder相关信息
             corpus["vector_store"] = {
                 "matrix_path": emb_path,
                 "id_map_path": idmap_path,
@@ -309,22 +309,21 @@ class DeepReadWrapper:
             }
 
         # --- Step 4: save corpus JSON ---
-        corpus_path = self._corpus_dir(sample_id)
-        with open(corpus_path, "w", encoding="utf-8") as f_c:
-            json.dump(corpus, f_c, indent=2, ensure_ascii=False)
+        corpus_path = self._corpus_path(sample_id)
+        with open(corpus_path, "w", encoding="utf-8") as f:
+            json.dump(corpus, f, indent=2, ensure_ascii=False)
         self.logger.info(f"[{sample_id}] Corpus saved to {corpus_path}")
                 
     def retrieve(self, query: str, topk: int = 5, target_uri: str = None) -> DeepReadResult:
         """
-        使用 run_agent 执行多轮检索。
+        使用 run_agent 对指定 sample 执行多轮检索并返回最终答案。
 
-        注意：DeepRead 是一个 Agent 系统，它会自行决定调用哪些搜索工具
-        和读取哪些章节，最终返回一个答案字符串。我们将其包装为
-        与 VikingStoreWrapper.retrieve() 一致的返回格式。
+        target_uri: sample_id，用于定位该 sample 的 corpus 目录。
+        返回值中 resource[0].content 即为 agent 的最终答案字符串。
         """
         sample_id = target_uri
         if not sample_id:
-            self.logger.error("retrueve() called without target_uri (sample_id).")
+            self.logger.error("retrieve() called without target_uri (sample_id).")
             return DeepReadResult()
         
         corpus_path = self._corpus_path(sample_id)
@@ -340,7 +339,8 @@ class DeepReadWrapper:
 
         jsonl_logger = JsonlLogger(self.log_path)
 
-        # 调用 run_agent
+        # reset 追踪器，确保只统计本次 run_agent 的 token 消耗
+        # 必须用 utils（非 DeepRead.utils)，与 DeepRead.py 内部的 _token_tracker 是同一实例
         token_tracker = _deepread_utils.token_tracker
         token_tracker.reset()
 
@@ -367,21 +367,21 @@ class DeepReadWrapper:
                 hybrid_topk=1,
                 semantic_topk1=30,
                 semantic_topk2=1,
-                collected_texts=collected_texts
+                collected_texts=collected_texts,
             )
         except Exception as e:
             self.logger.error(f"run_agent failed for '{sample_id}': {e}")
             answer = f"[Error] {str(e)}"
 
-        usege = token_tracker.get()
+        usage = token_tracker.get()
         return DeepReadResult(
             resources=[DeepReadResource(
                 uri=f"deepread://{sample_id}",
                 content=answer,
                 score=1.0,
             )],
-            retrieve_input_tokens=usege["input_tokens"],
-            retrieve_output_tokens=usege["output_tokens"],
+            retrieve_input_tokens=usage["input_tokens"],
+            retrieve_output_tokens=usage["output_tokens"],
             retrieved_texts=collected_texts,
         )
 
@@ -396,7 +396,7 @@ class DeepReadWrapper:
         return retrieved_texts, context_blocks, retrieved_uris
 
     def read_resource(self, uri: str) -> str:
-        """读取资源内容"""
+        """读取 sample 对应的 Markdown 文件内容。uri 格式为 deepread://{sample_id}。"""
         sample_id = uri.replace("deepread://", "")
         md_path = os.path.join(self._sample_dir(sample_id), f"{sample_id}.md")
         if os.path.exists(md_path):
@@ -405,7 +405,7 @@ class DeepReadWrapper:
         return ""
 
     def clear(self):
-        """清空索引"""
+        """清空所有 sample 的 corpus 目录。"""
         if os.path.exists(self.doc_output_dir):
             import shutil
             for entry in os.listdir(self.doc_output_dir):

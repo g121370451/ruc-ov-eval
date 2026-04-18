@@ -15,7 +15,7 @@ import sys
 import time
 import uuid
 
-# token tracker (imported lazily to avoid hard dependency when use standlone)
+# Token tracker (imported lazily to avoid hard dependency when used standlone)
 try: 
     _DEEPREAD_DIR = os.path.dirname(os.path.abspath(__file__))
     if _DEEPREAD_DIR not in sys.path:
@@ -1493,7 +1493,7 @@ def http_chat_completions(
                 usage = out.get("usage") or {}
                 _token_tracker.add(
                     int(usage.get("prompt_tokens") or 0),
-                    int(usage.get("completion_tokens") or 0)
+                    int(usage.get("completion_tokens") or 0),
                 )
             return out
 
@@ -1774,13 +1774,13 @@ def run_agent(
                             if r.get("text"):
                                 collected_texts.append(r["text"])
                             for nb in r.get("neighbors", []):
-                                if isinstance(nb, dict) and nb.get("type") == "text" and nb.get("type"):
+                                if isinstance(nb, dict) and nb.get("type") == "text" and nb.get("text"):
                                     collected_texts.append(nb["text"])
                     elif tool_name == "read_section":
                         for p in out.get("paragraphs", []):
-                            if isinstance(p, dict) and p.get("type") == "text" and p.get("type"):
+                            if isinstance(p, dict) and p.get("type") == "text" and p.get("text"):
                                 collected_texts.append(p["text"])
-                                
+
                 if (
                     enable_multimodal
                     and tool_name in ("bm25_search", "regex_search", "vector_search", "hybrid_search", "semantic_retrieval")

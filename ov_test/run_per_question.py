@@ -121,11 +121,11 @@ def main():
         if store_type == 'DeepRead':
             from src.core.deepread_store import DeepReadWrapper
             vector_store = DeepReadWrapper.from_config(
-                paths=config['path'],
+                paths=config['paths'],
                 llm_cfg=config.get('llm', {}),
                 store_cfg=store_cfg
             )
-        if store_type == 'pageindex':
+        elif store_type == 'pageindex':
             from src.core.pageindex_store import PageIndexStoreWrapper
             pageindex_conf = store_cfg.get('pageindex_config_path')
             if pageindex_conf:

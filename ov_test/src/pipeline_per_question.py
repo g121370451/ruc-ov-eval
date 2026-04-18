@@ -148,7 +148,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
 
             # 2. 构造临时结果对象，复用 process_retrieval_results 接口
             if getattr(self.db, 'is_agent_mode', False):
-                # DeepRead: res 已是完整 DeepReadResult，直接传入（保留 retrived_texts）
+                # DeepRead: res 已是完整 DeepReadResult，直接传入（保留 retrieved_texts）
                 retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(res)
             else:
                 class _TempResult:
@@ -159,12 +159,12 @@ class PerQuestionPipeline(BenchmarkPipeline):
 
             if getattr(self.db, 'is_agent_mode', False):
                 # DeepRead: run_agent 已返回最终答案，跳过 build_prompt + llm.generate
-                # retrive_in_tokens 已包含 run_agent 内所有 LLM prompt token（含问题），不重复计入
+                # retreive_in_tokens 已包含 run_agent 内所有 LLM prompt token（含问题），不重复计入
                 ans = context_blocks[0] if context_blocks else ""
                 in_tokens = retrieve_in_tokens
                 out_tokens = retrieve_out_tokens
             else:
-                # 3. Prompt + 生成（与父类一致）
+                # 3. Prompt + 生成
                 full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
                 ans_raw = self.llm.generate(full_prompt)
                 ans = self.adapter.post_process_answer(qa, ans_raw, meta)
