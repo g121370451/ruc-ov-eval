@@ -7,3 +7,6 @@ ov.conf
 .venv/
 .DS_Store
 CLAUDE.md
+Data
+raw_data
+Output

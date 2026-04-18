@@ -29,7 +29,8 @@ class PerQuestionPipeline(BenchmarkPipeline):
         try:
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception as e:
-            exit(1)
+            self.logger.exception(f"data_prepare failed: {e}")
+            raise
 
         # 1. 入库（与父类逻辑一致）
         skip_ingestion = self.config['execution'].get('skip_ingestion', False)
@@ -108,12 +109,16 @@ class PerQuestionPipeline(BenchmarkPipeline):
         """
         覆写父类：检索时对每个 target_uri 分别检索，合并结果按 score 取 topK。
         其余逻辑（prompt构建、生成、token统计）与父类完全一致。
+
+        DeepRead agent 模式：target_uri 即 sample_id，run_agent 已返回最终答案，
+        跳过 build_prompt + llm.generate。
         """
         self.monitor.worker_start()
         try:
             qa = task['qa']
+            sample_id = task['sample_id']
             topk = self.config['execution']['retrieval_topk']
-            target_uris = self._uri_map.get(task['sample_id'], [])
+            target_uris = self._uri_map.get(sample_id, [])
 
             # 1. 限定路径检索
             t0 = time.time()
@@ -130,8 +135,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
                     except Exception as e:
                         self.logger.warning(f"Retrieve from {uri} failed: {e}")
             else:
-                # 回退到全局检索
-                self.logger.warning("No target URIs found for sample_id %s, falling back to global retrieval.", task['sample_id'])
+                self.logger.warning("No target URIs found for sample_id %s, falling back to global retrieval.", sample_id)
                 res = self.db.retrieve(query=qa.question, topk=topk)
                 all_resources = list(res.resources)
                 retrieve_in_tokens += getattr(res, 'retrieve_input_tokens', 0)
@@ -141,27 +145,39 @@ class PerQuestionPipeline(BenchmarkPipeline):
             all_resources.sort(key=lambda r: getattr(r, 'score', 0), reverse=True)
             top_resources = all_resources[:topk]
             latency = time.time() - t0
+
             # 2. 构造临时结果对象，复用 process_retrieval_results 接口
-            class _TempResult:
-                def __init__(self, resources):
-                    self.resources = resources
-            retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(_TempResult(top_resources))
+            if getattr(self.db, 'is_agent_mode', False):
+                # DeepRead: res 已是完整 DeepReadResult，直接传入（保留 retrived_texts）
+                retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(res)
+            else:
+                class _TempResult:
+                    def __init__(self, resources):
+                        self.resources = resources
+                retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(_TempResult(top_resources))
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
-            # 3. Prompt + 生成（与父类一致）
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            ans_raw = self.llm.generate(full_prompt)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+            if getattr(self.db, 'is_agent_mode', False):
+                # DeepRead: run_agent 已返回最终答案，跳过 build_prompt + llm.generate
+                # retrive_in_tokens 已包含 run_agent 内所有 LLM prompt token（含问题），不重复计入
+                ans = context_blocks[0] if context_blocks else ""
+                in_tokens = retrieve_in_tokens
+                out_tokens = retrieve_out_tokens
+            else:
+                # 3. Prompt + 生成（与父类一致）
+                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                ans_raw = self.llm.generate(full_prompt)
+                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
 
-            # 4. Token stats（含检索阶段 token）
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in_tokens
-            out_tokens = self.db.count_tokens(ans) + retrieve_out_tokens
+                # 4. Token stats（含检索阶段 token）
+                in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in_tokens
+                out_tokens = self.db.count_tokens(ans) + retrieve_out_tokens
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
 
             self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")
 
             return {
-                "_global_index": task['id'], "sample_id": task['sample_id'], "question": qa.question,
+                "_global_index": task['id'], "sample_id": sample_id, "question": qa.question,
                 "gold_answers": qa.gold_answers, "category": str(qa.category), "evidence": qa.evidence,
                 "retrieval": {"latency_sec": latency, "uris": retrieved_uris},
                 "llm": {"final_answer": ans},

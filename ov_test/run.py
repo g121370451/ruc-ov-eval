@@ -121,19 +121,10 @@ def main():
 
         if store_type == 'DeepRead':
             from src.core.deepread_store import DeepReadWrapper
-            vector_store = DeepReadWrapper(
-                store_path=config['paths']['vector_store'],
-                doc_output_dir=config['paths'].get('doc_output_dir', ''),
-                config_path=store_cfg.get('pageindex_config_path'),
-                model=config.get('llm', {}).get('model'),
-                base_url=config.get('llm', {}).get('base_url'),
-                api_key=config.get('llm', {}).get('api_key'),
-                enable_vector=store_cfg.get('enable_vector', False),
-                enable_hybrid=store_cfg.get('enable_hybrid', False),
-                enable_semantic=store_cfg.get('enable_semantic', False),
-                neighbor_window=store_cfg.get('neighbor_window', '1,-1'),
-                max_rounds=store_cfg.get('max_rounds', 12),
-                temperature=config.get('llm', {}).get('temperature', 0.0),
+            vector_store = DeepReadWrapper.from_config(
+                paths=config['path'],
+                llm_cfg=config.get('llm', {}),
+                store_cfg=store_cfg
             )
         elif store_type == 'pageindex':
             from src.core.pageindex_store import PageIndexStoreWrapper

@@ -11,8 +11,18 @@ import math
 import mimetypes
 import os
 import re
+import sys
 import time
 import uuid
+
+# token tracker (imported lazily to avoid hard dependency when use standlone)
+try: 
+    _DEEPREAD_DIR = os.path.dirname(os.path.abspath(__file__))
+    if _DEEPREAD_DIR not in sys.path:
+        sys.path.insert(0, _DEEPREAD_DIR)
+    from utils import token_tracker as _token_tracker
+except Exception:
+    _token_tracker = None
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
@@ -1479,6 +1489,12 @@ def http_chat_completions(
             out = resp.json()
             if logger:
                 logger.log("llm_http_success", attempt=attempt + 1, status_code=status)
+            if _token_tracker is not None:
+                usage = out.get("usage") or {}
+                _token_tracker.add(
+                    int(usage.get("prompt_tokens") or 0),
+                    int(usage.get("completion_tokens") or 0)
+                )
             return out
 
         except requests.exceptions.RequestException as exc:
@@ -1539,6 +1555,7 @@ def run_agent(
     rerank_model: str = "Qwen/Qwen3-Reranker-8B",
     tool_fallback: bool = True,
     enable_reasoning: bool = True,
+    collected_texts: Optional[List[str]] = None,
 ) -> str:
     tools = make_tools_schema(doc_index, enable_semantic=enable_semantic)
 
@@ -1751,6 +1768,19 @@ def run_agent(
 
                 messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(out, ensure_ascii=False)})
 
+                if collected_texts is not None and isinstance(out, dict) and out.get("ok", True):
+                    if tool_name in ("bm25_search", "regex_search", "vector_search", "hybrid_search", "semantic_retrieval"):
+                        for r in out.get("results", []):
+                            if r.get("text"):
+                                collected_texts.append(r["text"])
+                            for nb in r.get("neighbors", []):
+                                if isinstance(nb, dict) and nb.get("type") == "text" and nb.get("type"):
+                                    collected_texts.append(nb["text"])
+                    elif tool_name == "read_section":
+                        for p in out.get("paragraphs", []):
+                            if isinstance(p, dict) and p.get("type") == "text" and p.get("type"):
+                                collected_texts.append(p["text"])
+                                
                 if (
                     enable_multimodal
                     and tool_name in ("bm25_search", "regex_search", "vector_search", "hybrid_search", "semantic_retrieval")

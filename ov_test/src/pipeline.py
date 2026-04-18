@@ -76,7 +76,7 @@ class BenchmarkPipeline:
             })
         """Step 2 & 3: 数据入库 + 检索生成"""
         # 1. 始终加载数据
-        samples = self.adapter.load_and_transform()    
+        samples = self.adapter.load_and_transform()
         # 2. 准备 QA 任务
         tasks = self._prepare_tasks(samples)
         results_map = {}
@@ -207,18 +207,18 @@ class BenchmarkPipeline:
         self.monitor.worker_start()
         try:
             qa = task['qa']
-            
+
             # 1. Retrieval
             t0 = time.time()
             search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
             latency = time.time() - t0
-            
+
             retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
-            
+
             # 2. Prompting logic (调用 Adapter 动态生成)
             full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            
+
             # 3. Generation
             ans_raw = self.llm.generate(full_prompt)
 

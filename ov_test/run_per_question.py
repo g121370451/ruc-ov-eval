@@ -118,6 +118,13 @@ def main():
         store_cfg = config.get('store', {})
         store_type = store_cfg.get('type', 'viking')
 
+        if store_type == 'DeepRead':
+            from src.core.deepread_store import DeepReadWrapper
+            vector_store = DeepReadWrapper.from_config(
+                paths=config['path'],
+                llm_cfg=config.get('llm', {}),
+                store_cfg=store_cfg
+            )
         if store_type == 'pageindex':
             from src.core.pageindex_store import PageIndexStoreWrapper
             pageindex_conf = store_cfg.get('pageindex_config_path')
