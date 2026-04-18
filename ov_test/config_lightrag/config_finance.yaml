@@ -15,6 +15,13 @@ store:
     embedding_model_name: "${EMBEDDING_MODEL_NAME}"
     embedding_base_url: "${EMBEDDING_BASE_URL}"
     embedding_api_key: "${EMBEDDING_API_KEY}"
+    enable_rerank: true
+    rerank_ak_env: "RERANK_AK"
+    rerank_sk_env: "RERANK_SK"
+    rerank_host: "api-vikingdb.vikingdb.cn-beijing.volces.com"
+    rerank_model_name: "doubao-seed-rerank"
+    rerank_model_version: "251028"
+    rerank_threshold: 0.1
     use_native_answer_generation: false
 
 execution:

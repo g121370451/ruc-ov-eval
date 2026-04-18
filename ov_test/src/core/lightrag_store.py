@@ -158,6 +158,45 @@ def _ensure_vendored_lightrag():
     return LightRAG, QueryParam, EmbeddingFunc
 
 
+def _ensure_vendored_openviking_cli():
+    """确保复用仓库内 OpenViking 的 rerank 实现，避免环境中的其他安装副本。"""
+
+    repo_root = Path(__file__).resolve().parents[3]
+    vendored_root = repo_root / "OpenViking"
+    vendored_package = vendored_root / "openviking_cli"
+
+    if not vendored_package.exists():
+        raise ImportError(f"Vendored OpenViking CLI package not found: {vendored_package}")
+
+    vendored_root_str = str(vendored_root)
+    if vendored_root_str not in sys.path:
+        sys.path.insert(0, vendored_root_str)
+    else:
+        sys.path.remove(vendored_root_str)
+        sys.path.insert(0, vendored_root_str)
+
+    loaded_module = sys.modules.get("openviking_cli")
+    if loaded_module is not None:
+        module_file = getattr(loaded_module, "__file__", "") or ""
+        module_paths = [str(p) for p in getattr(loaded_module, "__path__", [])]
+        if module_file and not Path(module_file).resolve().is_relative_to(vendored_root.resolve()):
+            for key in [k for k in sys.modules if k == "openviking_cli" or k.startswith("openviking_cli.")]:
+                sys.modules.pop(key, None)
+        elif module_paths and any(not Path(p).resolve().is_relative_to(vendored_root.resolve()) for p in module_paths):
+            for key in [k for k in sys.modules if k == "openviking_cli" or k.startswith("openviking_cli.")]:
+                sys.modules.pop(key, None)
+
+    from openviking_cli.utils.rerank import RerankClient  # type: ignore
+
+    module_file = getattr(sys.modules["openviking_cli"], "__file__", "") or ""
+    if module_file and not Path(module_file).resolve().is_relative_to(vendored_root.resolve()):
+        raise ImportError(
+            f"Imported OpenViking CLI from unexpected location: {module_file}, expected under {vendored_root}"
+        )
+
+    return RerankClient
+
+
 class LightRAGStoreWrapper:
     """LightRAG 向量/图检索包装器，统一对齐 benchmark store 接口。"""
 
@@ -169,6 +208,16 @@ class LightRAGStoreWrapper:
         self.config = dict(lightrag_config or {})
         self.query_mode = self.config.get("query_mode", "mix")
         self.enable_rerank = self._coerce_optional_bool(self.config.get("enable_rerank"))
+        self.rerank_ak = self.config.get("rerank_ak", "")
+        self.rerank_sk = self.config.get("rerank_sk", "")
+        self.rerank_ak_env = self.config.get("rerank_ak_env", "")
+        self.rerank_sk_env = self.config.get("rerank_sk_env", "")
+        self.rerank_host = self.config.get(
+            "rerank_host", "api-vikingdb.vikingdb.cn-beijing.volces.com"
+        )
+        self.rerank_model_name = self.config.get("rerank_model_name", "doubao-seed-rerank")
+        self.rerank_model_version = self.config.get("rerank_model_version", "251028")
+        self.rerank_threshold = self._coerce_optional_float(self.config.get("rerank_threshold"))
         self.embedding_max_token_size = self._coerce_optional_int(self.config.get("embedding_max_token_size"))
         self.embedding_batch_num = self._coerce_optional_int(self.config.get("embedding_batch_num"))
         self.embedding_func_max_async = self._coerce_optional_int(self.config.get("embedding_func_max_async"))
@@ -193,8 +242,10 @@ class LightRAGStoreWrapper:
         self._token_tracker = ScopedTokenTracker()
         self._embedding_dim = None
         self._closed = False
+        self._rerank_warning_emitted = False
 
         self.LightRAG, self.QueryParam, self.EmbeddingFunc = _ensure_vendored_lightrag()
+        self.RerankClient = _ensure_vendored_openviking_cli()
 
         try:
             import tiktoken
@@ -216,6 +267,12 @@ class LightRAGStoreWrapper:
         if value is None or value == "":
             return None
         return int(value)
+
+    @staticmethod
+    def _coerce_optional_float(value: Any) -> Optional[float]:
+        if value is None or value == "":
+            return None
+        return float(value)
 
     @staticmethod
     def _coerce_optional_bool(value: Any) -> Optional[bool]:
@@ -249,6 +306,23 @@ class LightRAGStoreWrapper:
         if self.embedding_api_key_env:
             return os.environ.get(self.embedding_api_key_env, "")
         return ""
+
+    def _get_rerank_ak(self) -> str:
+        if self.rerank_ak:
+            return self.rerank_ak
+        if self.rerank_ak_env:
+            return os.environ.get(self.rerank_ak_env, "")
+        return ""
+
+    def _get_rerank_sk(self) -> str:
+        if self.rerank_sk:
+            return self.rerank_sk
+        if self.rerank_sk_env:
+            return os.environ.get(self.rerank_sk_env, "")
+        return ""
+
+    def _has_rerank_backend(self) -> bool:
+        return bool(self._get_rerank_ak() and self._get_rerank_sk())
 
     async def _ark_multimodal_embed(self, texts: List[str]) -> np.ndarray:
         from volcenginesdkarkruntime import Ark
@@ -298,6 +372,41 @@ class LightRAGStoreWrapper:
             token_tracker=tracker,
             **kwargs,
         )
+
+    async def _rerank_model_func(
+        self,
+        query: str,
+        documents: List[str],
+        top_n: Optional[int] = None,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        if not documents:
+            return []
+
+        ak = self._get_rerank_ak()
+        sk = self._get_rerank_sk()
+        if not ak or not sk:
+            return []
+
+        def _run_rerank() -> List[Dict[str, Any]]:
+            client = self.RerankClient(
+                ak=ak,
+                sk=sk,
+                host=self.rerank_host,
+                model_name=self.rerank_model_name,
+                model_version=self.rerank_model_version,
+            )
+            scores = client.rerank_batch(query=query, documents=documents)
+            results = [
+                {"index": idx, "relevance_score": float(score or 0.0)}
+                for idx, score in enumerate(scores)
+            ]
+            results.sort(key=lambda item: item["relevance_score"], reverse=True)
+            if top_n is not None:
+                return results[:top_n]
+            return results
+
+        return await asyncio.to_thread(_run_rerank)
 
     def _read_document(self, doc_path: str) -> str:
         ext = os.path.splitext(doc_path)[1].lower()
@@ -380,6 +489,10 @@ class LightRAGStoreWrapper:
             rag_kwargs["enable_llm_cache"] = self.enable_llm_cache
         if self.max_parallel_insert is not None:
             rag_kwargs["max_parallel_insert"] = self.max_parallel_insert
+        if self._has_rerank_backend():
+            rag_kwargs["rerank_model_func"] = self._rerank_model_func
+            if self.rerank_threshold is not None:
+                rag_kwargs["min_rerank_score"] = self.rerank_threshold
 
         rag = self.LightRAG(**rag_kwargs)
         await rag.initialize_storages()
@@ -395,9 +508,22 @@ class LightRAGStoreWrapper:
             return rag
 
     def _build_query_param(self, topk: Optional[int], *, only_need_context: bool = False) -> Any:
+        rerank_available = self._has_rerank_backend()
+        effective_enable_rerank = self.enable_rerank
+        if effective_enable_rerank is None:
+            effective_enable_rerank = rerank_available
+        elif effective_enable_rerank and not rerank_available:
+            if not self._rerank_warning_emitted:
+                self.logger.warning(
+                    "LightRAG rerank is enabled in config but rerank AK/SK are missing; rerank will be disabled."
+                )
+                self._rerank_warning_emitted = True
+            effective_enable_rerank = False
+
         query_param_kwargs = {
             "mode": self.query_mode,
             "stream": False,
+            "enable_rerank": effective_enable_rerank,
         }
         if only_need_context:
             query_param_kwargs["only_need_context"] = True
@@ -405,8 +531,6 @@ class LightRAGStoreWrapper:
         if topk is not None:
             query_param_kwargs["top_k"] = topk
             query_param_kwargs["chunk_top_k"] = topk
-        if self.enable_rerank is not None:
-            query_param_kwargs["enable_rerank"] = self.enable_rerank
         return self.QueryParam(**query_param_kwargs)
 
     @staticmethod
