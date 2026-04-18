@@ -15,7 +15,7 @@ import sys
 import time
 import uuid
 
-# Token tracker (imported lazily to avoid hard dependency when used standlone)
+# Token tracker (imported lazily to avoid hard dependency when used standalone)
 try: 
     _DEEPREAD_DIR = os.path.dirname(os.path.abspath(__file__))
     if _DEEPREAD_DIR not in sys.path:

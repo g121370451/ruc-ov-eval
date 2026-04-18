@@ -129,7 +129,7 @@ class DeepReadWrapper:
         """
         用 pymupdf 从数字原生 PDF 提取文本，写成 Markdown 文件。
         每页以 `## Page N` 作为标题，保留段落换行。
-        仅适用于数字原生 PDF（非扫描版）
+        仅适用于数字原生 PDF（非扫描版）。
         """
         import fitz
         # pymupdf
@@ -148,11 +148,11 @@ class DeepReadWrapper:
         self.logger.info(f"[{sample_id}] pymupdf extracted {page_count} pages -> {md_path}")
 
     def _sample_dir(self, sample_id: str) -> str:
-        """返回 sample 的独立工作目录路径"""
+        """返回 sample 的独立工作目录路径。"""
         return os.path.join(self.doc_output_dir, sample_id)
     
     def _corpus_path(self, sample_id: str) -> str:
-        """返回 sample 的 corpus JSON 路径"""
+        """返回 sample 的 corpus JSON 路径。"""
         return os.path.join(self._sample_dir(sample_id), f"{sample_id}_corpus.json")
 
     def count_tokens(self, text: str) -> int:
@@ -319,7 +319,7 @@ class DeepReadWrapper:
         使用 run_agent 对指定 sample 执行多轮检索并返回最终答案。
 
         target_uri: sample_id，用于定位该 sample 的 corpus 目录。
-        返回值中 resource[0].content 即为 agent 的最终答案字符串。
+        返回值中 resources[0].content 即为 agent 的最终答案字符串。
         """
         sample_id = target_uri
         if not sample_id:
@@ -340,7 +340,7 @@ class DeepReadWrapper:
         jsonl_logger = JsonlLogger(self.log_path)
 
         # reset 追踪器，确保只统计本次 run_agent 的 token 消耗
-        # 必须用 utils（非 DeepRead.utils)，与 DeepRead.py 内部的 _token_tracker 是同一实例
+        # 必须用 utils（非 DeepRead.utils），与 DeepRead.py 内部的 _token_tracker 是同一实例
         token_tracker = _deepread_utils.token_tracker
         token_tracker.reset()
 
