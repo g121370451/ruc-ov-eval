@@ -13,6 +13,7 @@ import os
 import json
 import hashlib
 import importlib
+import asyncio
 import multiprocessing as mp
 import re
 import shutil
@@ -238,20 +239,84 @@ def _lightrag_query_group_worker(
             if idx >= start_idx + task_count:
                 break
 
-        results_map = {}
-        for task in qa_tasks:
-            res = _run_generation_task(
-                config=config,
-                adapter=adapter,
-                llm=llm,
-                store=store,
-                task_id=task['id'],
-                sample_id=task['sample_id'],
-                qa=task['qa'],
-                logger=logger,
-            )
-            results_map[res['_global_index']] = res
-        return results_map
+        async def _run_group_async():
+            query_group_workers = int(config.get('execution', {}).get('query_group_workers', 10) or 10)
+            topk = config.get('execution', {}).get('retrieval_topk')
+            semaphore = asyncio.Semaphore(query_group_workers)
+            if hasattr(store, "aensure_ready"):
+                await store.aensure_ready()
+
+            async def _run_single_task(task):
+                qa = task['qa']
+                task_id = task['id']
+                sample_id = task['sample_id']
+                async with semaphore:
+                    t0 = time.time()
+                    if topk is None:
+                        res = await store.aretrieve(query=qa.question)
+                    else:
+                        res = await store.aretrieve(query=qa.question, topk=topk)
+                    latency = time.time() - t0
+
+                    retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
+                    retrieve_out = getattr(res, 'retrieve_output_tokens', 0)
+                    retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(res)
+
+                    recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
+                    native_answer_used = bool(getattr(res, 'native_generation_used', False))
+                    if native_answer_used:
+                        ans_raw = getattr(res, 'native_final_answer', '')
+                        ans = adapter.post_process_answer(qa, ans_raw, {})
+                        in_tok = getattr(res, 'native_input_tokens', retrieve_in)
+                        out_tok = getattr(res, 'native_output_tokens', retrieve_out)
+                    else:
+                        full_prompt, meta = adapter.build_prompt(qa, context_blocks)
+                        ans_raw = await llm.agenerate(full_prompt)
+                        ans = adapter.post_process_answer(qa, ans_raw, meta)
+                        in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
+                        out_tok = store.count_tokens(ans) + retrieve_out
+
+                    not_mentioned_reason = ""
+                    if config.get('execution', {}).get('explain_not_mentioned', False):
+                        if MetricsCalculator.check_refusal(ans):
+                            not_mentioned_reason = await llm.aexplain_not_mentioned(qa.question, context_blocks)
+
+                    logger.info(
+                        f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s"
+                    )
+                    return {
+                        "_global_index": task_id,
+                        "sample_id": sample_id,
+                        "question": qa.question,
+                        "gold_answers": qa.gold_answers,
+                        "category": str(qa.category),
+                        "evidence": qa.evidence,
+                        "retrieval": {
+                            "latency_sec": latency,
+                            "uris": retrieved_uris,
+                            "recall_texts": retrieved_texts,
+                            "prompt_texts": context_blocks,
+                            "sql_queries": getattr(res, 'sql_queries', []),
+                        },
+                        "llm": {
+                            "final_answer": ans,
+                            "not_mentioned_reason": not_mentioned_reason,
+                        },
+                        "metrics": {"Recall": recall},
+                        "token_usage": {
+                            "total_input_tokens": in_tok,
+                            "llm_output_tokens": out_tok,
+                        },
+                    }
+
+            tasks = [asyncio.create_task(_run_single_task(task)) for task in qa_tasks]
+            results = {}
+            for completed in asyncio.as_completed(tasks):
+                res = await completed
+                results[res['_global_index']] = res
+            return results
+
+        return asyncio.run(_run_group_async())
     finally:
         _close_store_instance(store)
 
@@ -409,7 +474,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 break
 
         ingest_workers = self.config['execution'].get('ingest_workers')
-        ingest_group_workers = self.config['execution'].get('ingest_group_workers')
+        max_workers = self.config['execution'].get('max_workers', 1)
 
         # ---- Phase 1: 并行入库 ----
         failed_keys = set()
@@ -429,10 +494,10 @@ class PerQuestionPipeline(BenchmarkPipeline):
             self._save_records()
 
             ingest_timeout = self.config['execution'].get('ingest_timeout')
-            if self.store_type == 'lightrag' and ingest_group_workers != 1:
+            if self.store_type == 'lightrag' and max_workers != 1:
                 mp_context = mp.get_context("spawn")
                 with ProcessPoolExecutor(
-                    max_workers=ingest_group_workers,
+                    max_workers=max_workers,
                     mp_context=mp_context,
                     max_tasks_per_child=1,
                 ) as executor:
@@ -470,7 +535,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
                                 fut.cancel()
                     pbar.close()
             else:
-                with ThreadPoolExecutor(max_workers=ingest_group_workers) as executor:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     future_to_key = {
                         executor.submit(self._ingest_group, sk, grp): sk
                         for sk, grp, _, _ in group_tasks
@@ -523,10 +588,9 @@ class PerQuestionPipeline(BenchmarkPipeline):
         if failed_keys:
             group_tasks = [(sk, grp, si, cnt) for sk, grp, si, cnt in group_tasks if sk not in failed_keys]
 
-        # ---- Phase 2: max_workers 控制并发度，pageindex 建议设为 1）----
-        max_workers = self.config['execution'].get('max_workers', 1)
+        # ---- Phase 2: max_workers 控制组间并发度 ----
         all_results = {}
-        if max_workers <= 1:
+        if max_workers <= 1 and self.store_type != 'lightrag':
             pbar = tqdm(total=len(group_tasks), desc="Query Groups", unit="group")
             for sk, grp, si, cnt in group_tasks:
                 try:
@@ -537,34 +601,52 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 pbar.update(1)
             pbar.close()
         elif self.store_type == 'lightrag':
-            mp_context = mp.get_context("spawn")
-            with ProcessPoolExecutor(
-                max_workers=max_workers,
-                mp_context=mp_context,
-                max_tasks_per_child=1,
-            ) as executor:
-                future_to_key = {
-                    executor.submit(
-                        _lightrag_query_group_worker,
-                        self.config,
-                        self.store_parent_path,
-                        sk,
-                        grp,
-                        si,
-                        cnt,
-                    ): sk
-                    for sk, grp, si, cnt in group_tasks
-                }
-                pbar = tqdm(total=len(future_to_key), desc="Query Groups", unit="group")
-                for future in as_completed(future_to_key):
-                    sk = future_to_key[future]
+            if max_workers <= 1:
+                pbar = tqdm(total=len(group_tasks), desc="Query Groups", unit="group")
+                for sk, grp, si, cnt in group_tasks:
                     try:
-                        group_result = future.result()
+                        group_result = _lightrag_query_group_worker(
+                            self.config,
+                            self.store_parent_path,
+                            sk,
+                            grp,
+                            si,
+                            cnt,
+                        )
                         all_results.update(group_result)
                     except Exception as e:
                         self.logger.error(f"Group {sk} failed: {e}")
                     pbar.update(1)
                 pbar.close()
+            else:
+                mp_context = mp.get_context("spawn")
+                with ProcessPoolExecutor(
+                    max_workers=max_workers,
+                    mp_context=mp_context,
+                    max_tasks_per_child=1,
+                ) as executor:
+                    future_to_key = {
+                        executor.submit(
+                            _lightrag_query_group_worker,
+                            self.config,
+                            self.store_parent_path,
+                            sk,
+                            grp,
+                            si,
+                            cnt,
+                        ): sk
+                        for sk, grp, si, cnt in group_tasks
+                    }
+                    pbar = tqdm(total=len(future_to_key), desc="Query Groups", unit="group")
+                    for future in as_completed(future_to_key):
+                        sk = future_to_key[future]
+                        try:
+                            group_result = future.result()
+                            all_results.update(group_result)
+                        except Exception as e:
+                            self.logger.error(f"Group {sk} failed: {e}")
+                        pbar.update(1)
+                    pbar.close()
         else:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_key = {

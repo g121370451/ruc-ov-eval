@@ -1,4 +1,5 @@
 # src/pipeline.py
+import asyncio
 import os
 import json
 import time
@@ -141,30 +142,38 @@ class BenchmarkPipeline:
         if results_map:
             self.logger.info(f"Resumed {len(results_map)} completed tasks, {len(pending_tasks)} remaining")
 
-        max_workers = self.config['execution']['max_workers']
+        if self.store_type == 'lightrag':
+            async_results = asyncio.run(self._run_lightrag_generation_group_async(pending_tasks))
+            for task_id, res in async_results.items():
+                results_map[task_id] = res
+                with self._records_lock:
+                    self.records.setdefault("tasks", {})[str(task_id)] = res
+                self._save_records()
+        else:
+            max_workers = self.config.get('execution', {}).get('max_workers', 1)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_task = {
-                executor.submit(self._process_generation_task, task): task
-                for task in pending_tasks
-            }
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_task = {
+                    executor.submit(self._process_generation_task, task): task
+                    for task in pending_tasks
+                }
 
-            pbar = tqdm(total=len(pending_tasks), desc="Generating Answers", unit="task")
-            for future in as_completed(future_to_task):
-                task = future_to_task[future]
-                try:
-                    res = future.result()
-                    results_map[res['_global_index']] = res
-                    # 持久化单个 task 结果
-                    with self._records_lock:
-                        self.records.setdefault("tasks", {})[str(res['_global_index'])] = res
-                    self._save_records()
-                except Exception as e:
-                    self.logger.error(f"Generation failed for task {task['id']}: {e}")
-                    self.monitor.worker_end(success=False)
-                pbar.set_postfix(self.monitor.get_status_dict())
-                pbar.update(1)
-            pbar.close()
+                pbar = tqdm(total=len(pending_tasks), desc="Generating Answers", unit="task")
+                for future in as_completed(future_to_task):
+                    task = future_to_task[future]
+                    try:
+                        res = future.result()
+                        results_map[res['_global_index']] = res
+                        # 持久化单个 task 结果
+                        with self._records_lock:
+                            self.records.setdefault("tasks", {})[str(res['_global_index'])] = res
+                        self._save_records()
+                    except Exception as e:
+                        self.logger.error(f"Generation failed for task {task['id']}: {e}")
+                        self.monitor.worker_end(success=False)
+                    pbar.set_postfix(self.monitor.get_status_dict())
+                    pbar.update(1)
+                pbar.close()
 
         # 3. 保存中间回答文件
         sorted_results = [results_map[i] for i in sorted(results_map.keys())]
@@ -201,7 +210,7 @@ class BenchmarkPipeline:
         eval_items = items
         eval_results_map = {}
         
-        with ThreadPoolExecutor(max_workers=self.config['execution']['max_workers']) as executor:
+        with ThreadPoolExecutor(max_workers=self.config.get('execution', {}).get('max_workers', 1)) as executor:
             future_to_item = {
                 executor.submit(self._process_evaluation_task, item): item 
                 for item in eval_items
@@ -323,8 +332,97 @@ class BenchmarkPipeline:
                 "metrics": {"Recall": recall}, "token_usage": {"total_input_tokens": in_tokens, "llm_output_tokens": out_tokens}
             }
         except Exception as e:
+            self.logger.exception(f"[Query-{task['id']}] Failed during generation task")
             self.monitor.worker_end(success=False)
             raise e
+
+    async def _run_lightrag_single_generation_task_async(self, task, semaphore, retrieval_topk):
+        qa = task['qa']
+        task_id = task['id']
+        sample_id = task['sample_id']
+        self.monitor.worker_start()
+
+        async with semaphore:
+            t0 = time.time()
+            try:
+                if retrieval_topk is None:
+                    search_res = await self.db.aretrieve(query=qa.question)
+                else:
+                    search_res = await self.db.aretrieve(query=qa.question, topk=retrieval_topk)
+                latency = time.time() - t0
+
+                retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
+
+                recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
+
+                retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
+                retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
+                native_answer_used = bool(getattr(search_res, 'native_generation_used', False))
+
+                if native_answer_used:
+                    ans_raw = getattr(search_res, 'native_final_answer', '')
+                    ans = self.adapter.post_process_answer(qa, ans_raw, {})
+                    in_tokens = getattr(search_res, 'native_input_tokens', retrieve_in)
+                    out_tokens = getattr(search_res, 'native_output_tokens', retrieve_out)
+                else:
+                    full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                    ans_raw = await self.llm.agenerate(full_prompt)
+                    ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+                    in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
+                    out_tokens = self.db.count_tokens(ans) + retrieve_out
+
+                not_mentioned_reason = ""
+                if self.config.get('execution', {}).get('explain_not_mentioned', False):
+                    if MetricsCalculator.check_refusal(ans):
+                        not_mentioned_reason = await self.llm.aexplain_not_mentioned(qa.question, context_blocks)
+
+                self.monitor.worker_end(tokens=in_tokens + out_tokens)
+                self.logger.info(
+                    f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s"
+                )
+
+                return {
+                    "_global_index": task_id, "sample_id": sample_id, "question": qa.question,
+                    "gold_answers": qa.gold_answers, "category": str(qa.category), "evidence": qa.evidence,
+                    "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
+                                  "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
+                                  "sql_queries": getattr(search_res, 'sql_queries', [])},
+                    "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
+                    "metrics": {"Recall": recall},
+                    "token_usage": {"total_input_tokens": in_tokens, "llm_output_tokens": out_tokens}
+                }
+            except Exception:
+                self.logger.exception(f"[Query-{task_id}] Failed during async generation task")
+                self.monitor.worker_end(success=False)
+                raise
+
+    async def _run_lightrag_generation_group_async(self, pending_tasks):
+        query_group_workers = int(self.config.get('execution', {}).get('query_group_workers', 10) or 10)
+        retrieval_topk = self.config.get('execution', {}).get('retrieval_topk')
+        semaphore = asyncio.Semaphore(query_group_workers)
+        results_map = {}
+        if hasattr(self.db, "aensure_ready"):
+            await self.db.aensure_ready()
+
+        pbar = tqdm(total=len(pending_tasks), desc="Generating Answers", unit="task")
+        running = [
+            asyncio.create_task(self._run_lightrag_single_generation_task_async(task, semaphore, retrieval_topk))
+            for task in pending_tasks
+        ]
+        try:
+            for completed in asyncio.as_completed(running):
+                try:
+                    res = await completed
+                    results_map[res['_global_index']] = res
+                except Exception as e:
+                    self.logger.error(f"Generation failed during async LightRAG group execution: {e}")
+                pbar.set_postfix(self.monitor.get_status_dict())
+                pbar.update(1)
+        finally:
+            pbar.close()
+            if hasattr(self.db, "afinalize"):
+                await self.db.afinalize()
+        return results_map
 
     def _process_evaluation_task(self, item):
         """

@@ -25,7 +25,7 @@ store:
     use_native_answer_generation: false
 
 execution:
-  max_workers: 10
+  query_group_workers: 10
   max_queries: null
 
 paths:

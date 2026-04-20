@@ -6,8 +6,8 @@ import shutil
 import sys
 import threading
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -411,11 +411,37 @@ class LightRAGStoreWrapper:
     def _read_document(self, doc_path: str) -> str:
         ext = os.path.splitext(doc_path)[1].lower()
         if ext == ".pdf":
-            from markdownify import markdownify
-            from pdfminer.high_level import extract_text
+            try:
+                import docling  # noqa: F401  # type: ignore[import-not-found]
+            except ImportError:
+                docling = None
 
-            raw_text = extract_text(doc_path)
-            return markdownify(raw_text).strip()
+            if docling is not None:
+                from docling.document_converter import DocumentConverter  # type: ignore
+
+                converter = DocumentConverter()
+                result = converter.convert(Path(doc_path))
+                return result.document.export_to_markdown().strip()
+
+            from pypdf import PdfReader  # type: ignore
+
+            pdf_password = os.environ.get("PDF_DECRYPT_PASSWORD")
+            with open(doc_path, "rb") as f:
+                pdf_file = BytesIO(f.read())
+
+            reader = PdfReader(pdf_file)
+            if reader.is_encrypted:
+                decrypt_result = reader.decrypt(pdf_password or "")
+                if decrypt_result == 0:
+                    if pdf_password:
+                        raise Exception("Incorrect PDF password")
+                    raise Exception("PDF is encrypted but no password provided")
+
+            content = ""
+            for page in reader.pages:
+                extracted = page.extract_text() or ""
+                content += extracted + "\n"
+            return content.strip()
 
         with open(doc_path, "r", encoding="utf-8") as f:
             return f.read().strip()
@@ -533,6 +559,30 @@ class LightRAGStoreWrapper:
             query_param_kwargs["chunk_top_k"] = topk
         return self.QueryParam(**query_param_kwargs)
 
+    def _build_result_from_raw_result(
+        self,
+        result: Any,
+        *,
+        native_generation_used: bool,
+        usage: Dict[str, int],
+    ) -> LightRAGResult:
+        result_dict = result if isinstance(result, dict) else {}
+        resources = self._extract_resources_from_raw_result(result_dict)
+        lightrag_context = ""
+        if not native_generation_used:
+            lightrag_context = self._extract_context_from_raw_result(result_dict)
+        return LightRAGResult(
+            resources=resources,
+            lightrag_context=lightrag_context,
+            retrieve_input_tokens=usage["prompt_tokens"],
+            retrieve_output_tokens=usage["completion_tokens"],
+            native_generation_used=native_generation_used,
+            native_final_answer=self._extract_native_answer_from_raw_result(result_dict) if native_generation_used else "",
+            native_input_tokens=usage["prompt_tokens"] if native_generation_used else 0,
+            native_output_tokens=usage["completion_tokens"] if native_generation_used else 0,
+            raw_result=result_dict,
+        )
+
     @staticmethod
     def _extract_resources_from_raw_result(result: Dict[str, Any]) -> List[LightRAGResource]:
         data_section = result.get("data", {}) if isinstance(result, dict) else {}
@@ -621,7 +671,6 @@ class LightRAGStoreWrapper:
         texts = []
         file_paths = []
         ids = []
-        id_debug_rows = []
         for sample in samples:
             for doc_path in sample.doc_paths:
                 try:
@@ -640,35 +689,9 @@ class LightRAGStoreWrapper:
                 doc_name = os.path.splitext(os.path.basename(doc_path))[0]
                 doc_id = f"{sample.sample_id}:{doc_name}"
                 ids.append(doc_id)
-                id_debug_rows.append(
-                    {
-                        "id": doc_id,
-                        "sample_id": sample.sample_id,
-                        "doc_name": doc_name,
-                        "doc_path": doc_path,
-                    }
-                )
                 if monitor:
                     monitor.worker_start()
                     monitor.worker_end(success=True)
-
-        duplicate_id_rows: Dict[str, List[Dict[str, str]]] = defaultdict(list)
-        for row in id_debug_rows:
-            duplicate_id_rows[row["id"]].append(row)
-        duplicate_id_rows = {
-            doc_id: rows for doc_id, rows in duplicate_id_rows.items() if len(rows) > 1
-        }
-        if duplicate_id_rows:
-            self.logger.error(
-                f"[LightRAGStore][Debug] Duplicate ingest ids detected before insert: {len(duplicate_id_rows)}"
-            )
-            for doc_id, rows in list(duplicate_id_rows.items())[:20]:
-                self.logger.error(f"[LightRAGStore][Debug] duplicate id='{doc_id}'")
-                for row in rows:
-                    self.logger.error(
-                        f"[LightRAGStore][Debug] sample_id={row['sample_id']} "
-                        f"doc_name={row['doc_name']} doc_path={row['doc_path']}"
-                    )
 
         scope = self._make_scope("ingest")
         scope_token = self._token_tracker.set_scope(scope)
@@ -704,23 +727,35 @@ class LightRAGStoreWrapper:
         finally:
             self._token_tracker.reset_scope(scope_token)
 
-        result_dict = result if isinstance(result, dict) else {}
-        resources = self._extract_resources_from_raw_result(result_dict)
-        lightrag_context = ""
-        if not native_generation_used:
-            lightrag_context = self._extract_context_from_raw_result(result_dict)
         usage = self._get_token_delta(before, after)
-        return LightRAGResult(
-            resources=resources,
-            lightrag_context=lightrag_context,
-            retrieve_input_tokens=usage["prompt_tokens"],
-            retrieve_output_tokens=usage["completion_tokens"],
+        return self._build_result_from_raw_result(
+            result,
             native_generation_used=native_generation_used,
-            native_final_answer=self._extract_native_answer_from_raw_result(result_dict) if native_generation_used else "",
-            native_input_tokens=usage["prompt_tokens"] if native_generation_used else 0,
-            native_output_tokens=usage["completion_tokens"] if native_generation_used else 0,
-            raw_result=result_dict,
+            usage=usage,
         )
+
+    async def aretrieve(self, query: str, topk: Optional[int] = None, target_uri: str = None) -> LightRAGResult:
+        rag = await self._ensure_rag_async()
+        native_generation_used = self.use_native_answer_generation
+        param = self._build_query_param(topk, only_need_context=not native_generation_used)
+        scope = self._make_scope("retrieve_native" if native_generation_used else "retrieve")
+        scope_token = self._token_tracker.set_scope(scope)
+        before = self._token_tracker.get_usage(scope)
+        try:
+            result = await rag.aquery_llm(query, param=param)
+            after = self._token_tracker.get_usage(scope)
+        finally:
+            self._token_tracker.reset_scope(scope_token)
+
+        usage = self._get_token_delta(before, after)
+        return self._build_result_from_raw_result(
+            result,
+            native_generation_used=native_generation_used,
+            usage=usage,
+        )
+
+    async def aensure_ready(self) -> None:
+        await self._ensure_rag_async()
 
     def process_retrieval_results(self, search_res: LightRAGResult):
         retrieved_texts = []
@@ -778,6 +813,20 @@ class LightRAGStoreWrapper:
     def clear(self) -> None:
         with self._operation_lock:
             self._run_async(self._clear_async())
+
+    async def afinalize(self) -> None:
+        if self._closed:
+            return
+        rag = self._rag
+        if rag is None:
+            self._shutdown_loop()
+            return
+        try:
+            await rag.finalize_storages()
+        except Exception as e:
+            self.logger.warning(f"Failed to finalize LightRAG during async close: {e}")
+        self._rag = None
+        self._shutdown_loop()
 
     def close(self):
         if self._closed:

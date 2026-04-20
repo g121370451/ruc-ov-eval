@@ -26,7 +26,7 @@ store:
 
 execution:
   max_workers: 10
-  ingest_group_workers: 10
+  query_group_workers: 10
   max_queries: null
 
 paths:

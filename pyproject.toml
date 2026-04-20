@@ -28,6 +28,8 @@ dependencies = [
     "torch>=2.10.0",
     "tqdm>=4.67.3",
     "transformers>=5.3.0",
+    "docling>=2.90.0",
+    "pypdf>=6.10.2",
 ]
 
 [tool.uv.workspace]
