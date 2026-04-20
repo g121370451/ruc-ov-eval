@@ -52,11 +52,11 @@ class FinanceBenchAdapter(BaseAdapter):
 
         docs: List[StandardDoc] = []
         for doc_name in sorted(doc_names):
-            md_path = os.path.join(self.md_dir, f"{doc_name}.md")
+            # md_path = os.path.join(self.md_dir, f"{doc_name}.md")
             pdf_path = os.path.join(self.pdf_dir, f"{doc_name}.pdf")
-            if os.path.exists(md_path):
-                docs.append(StandardDoc(sample_id=doc_name, doc_paths=[md_path]))
-            elif os.path.exists(pdf_path):
+            # if os.path.exists(md_path):
+            #     docs.append(StandardDoc(sample_id=doc_name, doc_paths=[md_path]))
+            if os.path.exists(pdf_path):
                 docs.append(StandardDoc(sample_id=doc_name, doc_paths=[pdf_path]))
             else:
                 self.logger.warning(f"Document not found (md/pdf): {doc_name}, skipping")

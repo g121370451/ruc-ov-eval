@@ -74,7 +74,11 @@ class ScopedTokenTracker:
         prompt_tokens = int(token_counts.get("prompt_tokens", 0) or 0)
         completion_tokens = int(token_counts.get("completion_tokens", 0) or 0)
         total_tokens = token_counts.get("total_tokens")
-        total_tokens = int(total_tokens) if total_tokens is not None else prompt_tokens + completion_tokens
+        total_tokens = (
+            int(total_tokens)
+            if total_tokens is not None
+            else prompt_tokens + completion_tokens
+        )
 
         with self._lock:
             usage = self._usage_by_scope.setdefault(
@@ -139,18 +143,29 @@ def _ensure_vendored_lightrag():
         module_file = getattr(loaded_module, "__file__", "") or ""
         module_paths = [str(p) for p in getattr(loaded_module, "__path__", [])]
         expected_prefix = str(vendored_root.resolve())
-        if module_file and not Path(module_file).resolve().is_relative_to(vendored_root.resolve()):
-            for key in [k for k in sys.modules if k == "lightrag" or k.startswith("lightrag.")]:
+        if module_file and not Path(module_file).resolve().is_relative_to(
+            vendored_root.resolve()
+        ):
+            for key in [
+                k for k in sys.modules if k == "lightrag" or k.startswith("lightrag.")
+            ]:
                 sys.modules.pop(key, None)
-        elif module_paths and any(not Path(p).resolve().is_relative_to(vendored_root.resolve()) for p in module_paths):
-            for key in [k for k in sys.modules if k == "lightrag" or k.startswith("lightrag.")]:
+        elif module_paths and any(
+            not Path(p).resolve().is_relative_to(vendored_root.resolve())
+            for p in module_paths
+        ):
+            for key in [
+                k for k in sys.modules if k == "lightrag" or k.startswith("lightrag.")
+            ]:
                 sys.modules.pop(key, None)
 
     from lightrag import LightRAG, QueryParam  # type: ignore
     from lightrag.utils import EmbeddingFunc  # type: ignore
 
     module_file = getattr(sys.modules["lightrag"], "__file__", "") or ""
-    if module_file and not Path(module_file).resolve().is_relative_to(vendored_root.resolve()):
+    if module_file and not Path(module_file).resolve().is_relative_to(
+        vendored_root.resolve()
+    ):
         raise ImportError(
             f"Imported LightRAG from unexpected location: {module_file}, expected under {vendored_root}"
         )
@@ -166,7 +181,9 @@ def _ensure_vendored_openviking_cli():
     vendored_package = vendored_root / "openviking_cli"
 
     if not vendored_package.exists():
-        raise ImportError(f"Vendored OpenViking CLI package not found: {vendored_package}")
+        raise ImportError(
+            f"Vendored OpenViking CLI package not found: {vendored_package}"
+        )
 
     vendored_root_str = str(vendored_root)
     if vendored_root_str not in sys.path:
@@ -179,17 +196,32 @@ def _ensure_vendored_openviking_cli():
     if loaded_module is not None:
         module_file = getattr(loaded_module, "__file__", "") or ""
         module_paths = [str(p) for p in getattr(loaded_module, "__path__", [])]
-        if module_file and not Path(module_file).resolve().is_relative_to(vendored_root.resolve()):
-            for key in [k for k in sys.modules if k == "openviking_cli" or k.startswith("openviking_cli.")]:
+        if module_file and not Path(module_file).resolve().is_relative_to(
+            vendored_root.resolve()
+        ):
+            for key in [
+                k
+                for k in sys.modules
+                if k == "openviking_cli" or k.startswith("openviking_cli.")
+            ]:
                 sys.modules.pop(key, None)
-        elif module_paths and any(not Path(p).resolve().is_relative_to(vendored_root.resolve()) for p in module_paths):
-            for key in [k for k in sys.modules if k == "openviking_cli" or k.startswith("openviking_cli.")]:
+        elif module_paths and any(
+            not Path(p).resolve().is_relative_to(vendored_root.resolve())
+            for p in module_paths
+        ):
+            for key in [
+                k
+                for k in sys.modules
+                if k == "openviking_cli" or k.startswith("openviking_cli.")
+            ]:
                 sys.modules.pop(key, None)
 
     from openviking_cli.utils.rerank import RerankClient  # type: ignore
 
     module_file = getattr(sys.modules["openviking_cli"], "__file__", "") or ""
-    if module_file and not Path(module_file).resolve().is_relative_to(vendored_root.resolve()):
+    if module_file and not Path(module_file).resolve().is_relative_to(
+        vendored_root.resolve()
+    ):
         raise ImportError(
             f"Imported OpenViking CLI from unexpected location: {module_file}, expected under {vendored_root}"
         )
@@ -207,7 +239,9 @@ class LightRAGStoreWrapper:
 
         self.config = dict(lightrag_config or {})
         self.query_mode = self.config.get("query_mode", "mix")
-        self.enable_rerank = self._coerce_optional_bool(self.config.get("enable_rerank"))
+        self.enable_rerank = self._coerce_optional_bool(
+            self.config.get("enable_rerank")
+        )
         self.rerank_ak = self.config.get("rerank_ak", "")
         self.rerank_sk = self.config.get("rerank_sk", "")
         self.rerank_ak_env = self.config.get("rerank_ak_env", "")
@@ -215,14 +249,28 @@ class LightRAGStoreWrapper:
         self.rerank_host = self.config.get(
             "rerank_host", "api-vikingdb.vikingdb.cn-beijing.volces.com"
         )
-        self.rerank_model_name = self.config.get("rerank_model_name", "doubao-seed-rerank")
+        self.rerank_model_name = self.config.get(
+            "rerank_model_name", "doubao-seed-rerank"
+        )
         self.rerank_model_version = self.config.get("rerank_model_version", "251028")
-        self.rerank_threshold = self._coerce_optional_float(self.config.get("rerank_threshold"))
-        self.embedding_max_token_size = self._coerce_optional_int(self.config.get("embedding_max_token_size"))
-        self.embedding_batch_num = self._coerce_optional_int(self.config.get("embedding_batch_num"))
-        self.embedding_func_max_async = self._coerce_optional_int(self.config.get("embedding_func_max_async"))
-        self.chunk_token_size = self._coerce_optional_int(self.config.get("chunk_token_size"))
-        self.chunk_overlap_token_size = self._coerce_optional_int(self.config.get("chunk_overlap_token_size"))
+        self.rerank_threshold = self._coerce_optional_float(
+            self.config.get("rerank_threshold")
+        )
+        self.embedding_max_token_size = self._coerce_optional_int(
+            self.config.get("embedding_max_token_size")
+        )
+        self.embedding_batch_num = self._coerce_optional_int(
+            self.config.get("embedding_batch_num")
+        )
+        self.embedding_func_max_async = self._coerce_optional_int(
+            self.config.get("embedding_func_max_async")
+        )
+        self.chunk_token_size = self._coerce_optional_int(
+            self.config.get("chunk_token_size")
+        )
+        self.chunk_overlap_token_size = self._coerce_optional_int(
+            self.config.get("chunk_overlap_token_size")
+        )
         self.llm_model = self.config.get("llm_model", "")
         self.llm_base_url = self.config.get("llm_base_url", "")
         self.llm_api_key = self.config.get("llm_api_key", "")
@@ -231,10 +279,18 @@ class LightRAGStoreWrapper:
         self.embedding_base_url = self.config.get("embedding_base_url", "")
         self.embedding_api_key = self.config.get("embedding_api_key", "")
         self.embedding_api_key_env = self.config.get("embedding_api_key_env", "")
-        self.enable_llm_cache = self._coerce_optional_bool(self.config.get("enable_llm_cache"))
-        self.use_native_answer_generation = bool(self.config.get("use_native_answer_generation", False))
-        self.max_parallel_insert = self._coerce_optional_int(self.config.get("max_parallel_insert"))
-        self.workspace = hashlib.sha1(os.path.abspath(store_path).encode("utf-8")).hexdigest()[:16]
+        self.enable_llm_cache = self._coerce_optional_bool(
+            self.config.get("enable_llm_cache")
+        )
+        self.use_native_answer_generation = bool(
+            self.config.get("use_native_answer_generation", False)
+        )
+        self.max_parallel_insert = self._coerce_optional_int(
+            self.config.get("max_parallel_insert")
+        )
+        self.workspace = hashlib.sha1(
+            os.path.abspath(store_path).encode("utf-8")
+        ).hexdigest()[:16]
 
         self._rag = None
         self._rag_lock = threading.Lock()
@@ -338,8 +394,12 @@ class LightRAGStoreWrapper:
             )
             self._token_tracker.add_usage(
                 {
-                    "prompt_tokens": getattr(getattr(response, "usage", None), "prompt_tokens", 0),
-                    "total_tokens": getattr(getattr(response, "usage", None), "total_tokens", 0),
+                    "prompt_tokens": getattr(
+                        getattr(response, "usage", None), "prompt_tokens", 0
+                    ),
+                    "total_tokens": getattr(
+                        getattr(response, "usage", None), "total_tokens", 0
+                    ),
                 }
             )
             embeddings.append(response.data.embedding)
@@ -408,6 +468,66 @@ class LightRAGStoreWrapper:
 
         return await asyncio.to_thread(_run_rerank)
 
+    def _extract_pdf_text(self, pdf_path: str) -> str:
+        """Extract text from PDF: pdfplumber -> pypdf -> docling fallback chain."""
+        # Priority 1: pdfplumber
+        try:
+            import pdfplumber
+
+            self.logger.info("Attempting to extract text using pdfplumber")
+            pages_text = []
+            with pdfplumber.open(pdf_path) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        pages_text.append(t)
+            content = "\n\n".join(pages_text)
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("pdfplumber failed for %s: %s", pdf_path, exc)
+        # Priority 2: docling
+        try:
+            from docling.document_converter import DocumentConverter
+
+            converter = DocumentConverter()
+            result = converter.convert(pdf_path)
+            content = result.document.export_to_markdown()
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning(
+                "docling failed for %s: %s, falling back", pdf_path, exc
+            )
+
+        # Priority 3: pypdf
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(pdf_path)
+            if reader.is_encrypted:
+                reader.decrypt("")
+            content = ""
+            for page in reader.pages:
+                content += (page.extract_text() or "") + "\n"
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("pypdf failed for %s: %s, falling back", pdf_path, exc)
+
+        self.logger.error(
+            "Cannot extract text from %s. "
+            "Install one of: pip install 'docling>=2' / pip install pypdf / pip install pdfplumber",
+            pdf_path,
+        )
+        return ""
+
     def _read_document(self, doc_path: str) -> str:
         ext = os.path.splitext(doc_path)[1].lower()
         if ext == ".pdf":
@@ -474,11 +594,16 @@ class LightRAGStoreWrapper:
     def _make_scope(self, prefix: str) -> str:
         return f"{prefix}:{time.time_ns()}:{threading.get_ident()}"
 
-    def _get_token_delta(self, before: Dict[str, int], after: Dict[str, int]) -> Dict[str, int]:
+    def _get_token_delta(
+        self, before: Dict[str, int], after: Dict[str, int]
+    ) -> Dict[str, int]:
         return {
-            "prompt_tokens": after.get("prompt_tokens", 0) - before.get("prompt_tokens", 0),
-            "completion_tokens": after.get("completion_tokens", 0) - before.get("completion_tokens", 0),
-            "total_tokens": after.get("total_tokens", 0) - before.get("total_tokens", 0),
+            "prompt_tokens": after.get("prompt_tokens", 0)
+            - before.get("prompt_tokens", 0),
+            "completion_tokens": after.get("completion_tokens", 0)
+            - before.get("completion_tokens", 0),
+            "total_tokens": after.get("total_tokens", 0)
+            - before.get("total_tokens", 0),
             "call_count": after.get("call_count", 0) - before.get("call_count", 0),
         }
 
@@ -533,7 +658,9 @@ class LightRAGStoreWrapper:
             self._rag = rag
             return rag
 
-    def _build_query_param(self, topk: Optional[int], *, only_need_context: bool = False) -> Any:
+    def _build_query_param(
+        self, topk: Optional[int], *, only_need_context: bool = False
+    ) -> Any:
         rerank_available = self._has_rerank_backend()
         effective_enable_rerank = self.enable_rerank
         if effective_enable_rerank is None:
@@ -577,14 +704,20 @@ class LightRAGStoreWrapper:
             retrieve_input_tokens=usage["prompt_tokens"],
             retrieve_output_tokens=usage["completion_tokens"],
             native_generation_used=native_generation_used,
-            native_final_answer=self._extract_native_answer_from_raw_result(result_dict) if native_generation_used else "",
+            native_final_answer=self._extract_native_answer_from_raw_result(result_dict)
+            if native_generation_used
+            else "",
             native_input_tokens=usage["prompt_tokens"] if native_generation_used else 0,
-            native_output_tokens=usage["completion_tokens"] if native_generation_used else 0,
+            native_output_tokens=usage["completion_tokens"]
+            if native_generation_used
+            else 0,
             raw_result=result_dict,
         )
 
     @staticmethod
-    def _extract_resources_from_raw_result(result: Dict[str, Any]) -> List[LightRAGResource]:
+    def _extract_resources_from_raw_result(
+        result: Dict[str, Any],
+    ) -> List[LightRAGResource]:
         data_section = result.get("data", {}) if isinstance(result, dict) else {}
         resources: List[LightRAGResource] = []
 
@@ -592,7 +725,10 @@ class LightRAGStoreWrapper:
             chunk_content = chunk.get("content", "") or ""
             resources.append(
                 LightRAGResource(
-                    uri=chunk.get("reference_id") or chunk.get("chunk_id") or chunk.get("file_path") or "",
+                    uri=chunk.get("reference_id")
+                    or chunk.get("chunk_id")
+                    or chunk.get("file_path")
+                    or "",
                     content=chunk_content,
                     score=float(chunk.get("score", 0.0) or 0.0),
                     file_path=chunk.get("file_path", "") or "",
@@ -614,7 +750,10 @@ class LightRAGStoreWrapper:
                     continue
                 resources.append(
                     LightRAGResource(
-                        uri=entity.get("reference_id") or entity.get("file_path") or entity.get("entity_name") or "",
+                        uri=entity.get("reference_id")
+                        or entity.get("file_path")
+                        or entity.get("entity_name")
+                        or "",
                         content=content,
                         score=float(entity.get("score", 0.0) or 0.0),
                         file_path=entity.get("file_path", "") or "",
@@ -634,7 +773,9 @@ class LightRAGStoreWrapper:
                     continue
                 resources.append(
                     LightRAGResource(
-                        uri=relation.get("reference_id") or relation.get("file_path") or "",
+                        uri=relation.get("reference_id")
+                        or relation.get("file_path")
+                        or "",
                         content=content,
                         score=float(relation.get("weight", 0.0) or 0.0),
                         file_path=relation.get("file_path", "") or "",
@@ -660,7 +801,12 @@ class LightRAGStoreWrapper:
         content = llm_response.get("content", "")
         return content.strip() if isinstance(content, str) else ""
 
-    def ingest(self, samples: List[StandardDoc], max_workers: Optional[int] = None, monitor=None) -> dict:
+    def ingest(
+        self,
+        samples: List[StandardDoc],
+        max_workers: Optional[int] = None,
+        monitor=None,
+    ) -> dict:
         start_time = time.time()
         rag = self._ensure_rag()
         previous_max_parallel_insert = None
@@ -713,11 +859,17 @@ class LightRAGStoreWrapper:
             "output_tokens": usage["completion_tokens"],
         }
 
-    def retrieve(self, query: str, topk: Optional[int] = None, target_uri: str = None) -> LightRAGResult:
+    def retrieve(
+        self, query: str, topk: Optional[int] = None, target_uri: str = None
+    ) -> LightRAGResult:
         rag = self._ensure_rag()
         native_generation_used = self.use_native_answer_generation
-        param = self._build_query_param(topk, only_need_context=not native_generation_used)
-        scope = self._make_scope("retrieve_native" if native_generation_used else "retrieve")
+        param = self._build_query_param(
+            topk, only_need_context=not native_generation_used
+        )
+        scope = self._make_scope(
+            "retrieve_native" if native_generation_used else "retrieve"
+        )
         scope_token = self._token_tracker.set_scope(scope)
         before = self._token_tracker.get_usage(scope)
         try:
@@ -734,11 +886,17 @@ class LightRAGStoreWrapper:
             usage=usage,
         )
 
-    async def aretrieve(self, query: str, topk: Optional[int] = None, target_uri: str = None) -> LightRAGResult:
+    async def aretrieve(
+        self, query: str, topk: Optional[int] = None, target_uri: str = None
+    ) -> LightRAGResult:
         rag = await self._ensure_rag_async()
         native_generation_used = self.use_native_answer_generation
-        param = self._build_query_param(topk, only_need_context=not native_generation_used)
-        scope = self._make_scope("retrieve_native" if native_generation_used else "retrieve")
+        param = self._build_query_param(
+            topk, only_need_context=not native_generation_used
+        )
+        scope = self._make_scope(
+            "retrieve_native" if native_generation_used else "retrieve"
+        )
         scope_token = self._token_tracker.set_scope(scope)
         before = self._token_tracker.get_usage(scope)
         try:
@@ -799,7 +957,9 @@ class LightRAGStoreWrapper:
                 try:
                     await storage.drop()
                 except Exception as e:
-                    self.logger.warning(f"LightRAG storage drop failed for {type(storage).__name__}: {e}")
+                    self.logger.warning(
+                        f"LightRAG storage drop failed for {type(storage).__name__}: {e}"
+                    )
             try:
                 await rag.finalize_storages()
             except Exception as e:
