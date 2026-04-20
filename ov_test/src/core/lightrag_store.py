@@ -408,14 +408,66 @@ class LightRAGStoreWrapper:
 
         return await asyncio.to_thread(_run_rerank)
 
+    def _extract_pdf_text(self, pdf_path: str) -> str:
+        """Extract text from PDF: pdfplumber -> pypdf -> docling fallback chain."""
+        # Priority 1: pdfplumber
+        try:
+            import pdfplumber
+            self.logger.info("Attempting to extract text using pdfplumber")
+            pages_text = []
+            with pdfplumber.open(pdf_path) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        pages_text.append(t)
+            content = "\n\n".join(pages_text)
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("pdfplumber failed for %s: %s", pdf_path, exc)
+        # Priority 2: docling
+        try:
+            from docling.document_converter import DocumentConverter
+            converter = DocumentConverter()
+            result = converter.convert(pdf_path)
+            content = result.document.export_to_markdown()
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("docling failed for %s: %s, falling back", pdf_path, exc)
+
+        # Priority 3: pypdf
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(pdf_path)
+            if reader.is_encrypted:
+                reader.decrypt("")
+            content = ""
+            for page in reader.pages:
+                content += (page.extract_text() or "") + "\n"
+            if content.strip():
+                return content
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("pypdf failed for %s: %s, falling back", pdf_path, exc)
+
+
+        self.logger.error(
+            "Cannot extract text from %s. "
+            "Install one of: pip install 'docling>=2' / pip install pypdf / pip install pdfplumber",
+            pdf_path,
+        )
+        return ""
+
     def _read_document(self, doc_path: str) -> str:
         ext = os.path.splitext(doc_path)[1].lower()
         if ext == ".pdf":
-            from markdownify import markdownify
-            from pdfminer.high_level import extract_text
-
-            raw_text = extract_text(doc_path)
-            return markdownify(raw_text).strip()
+            return self._extract_pdf_text(doc_path)
 
         with open(doc_path, "r", encoding="utf-8") as f:
             return f.read().strip()
