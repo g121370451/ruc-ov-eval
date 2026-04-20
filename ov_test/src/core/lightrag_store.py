@@ -380,6 +380,20 @@ class LightRAGStoreWrapper:
     def _has_rerank_backend(self) -> bool:
         return bool(self._get_rerank_ak() and self._get_rerank_sk())
 
+    def _should_enable_rerank(self) -> bool:
+        rerank_available = self._has_rerank_backend()
+        effective_enable_rerank = self.enable_rerank
+        if effective_enable_rerank is None:
+            effective_enable_rerank = rerank_available
+        elif effective_enable_rerank and not rerank_available:
+            if not self._rerank_warning_emitted:
+                self.logger.warning(
+                    "LightRAG rerank is enabled in config but rerank AK/SK are missing; rerank will be disabled."
+                )
+                self._rerank_warning_emitted = True
+            effective_enable_rerank = False
+        return bool(effective_enable_rerank)
+
     async def _ark_multimodal_embed(self, texts: List[str]) -> np.ndarray:
         from volcenginesdkarkruntime import Ark
 
@@ -640,7 +654,7 @@ class LightRAGStoreWrapper:
             rag_kwargs["enable_llm_cache"] = self.enable_llm_cache
         if self.max_parallel_insert is not None:
             rag_kwargs["max_parallel_insert"] = self.max_parallel_insert
-        if self._has_rerank_backend():
+        if self._should_enable_rerank():
             rag_kwargs["rerank_model_func"] = self._rerank_model_func
             if self.rerank_threshold is not None:
                 rag_kwargs["min_rerank_score"] = self.rerank_threshold
@@ -661,22 +675,10 @@ class LightRAGStoreWrapper:
     def _build_query_param(
         self, topk: Optional[int], *, only_need_context: bool = False
     ) -> Any:
-        rerank_available = self._has_rerank_backend()
-        effective_enable_rerank = self.enable_rerank
-        if effective_enable_rerank is None:
-            effective_enable_rerank = rerank_available
-        elif effective_enable_rerank and not rerank_available:
-            if not self._rerank_warning_emitted:
-                self.logger.warning(
-                    "LightRAG rerank is enabled in config but rerank AK/SK are missing; rerank will be disabled."
-                )
-                self._rerank_warning_emitted = True
-            effective_enable_rerank = False
-
         query_param_kwargs = {
             "mode": self.query_mode,
             "stream": False,
-            "enable_rerank": effective_enable_rerank,
+            "enable_rerank": self._should_enable_rerank(),
         }
         if only_need_context:
             query_param_kwargs["only_need_context"] = True

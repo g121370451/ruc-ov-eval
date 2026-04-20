@@ -15,7 +15,7 @@ store:
     embedding_model_name: "${EMBEDDING_MODEL_NAME}"
     embedding_base_url: "${EMBEDDING_BASE_URL}"
     embedding_api_key: "${EMBEDDING_API_KEY}"
-    enable_rerank: true
+    enable_rerank: false
     rerank_ak_env: "RERANK_AK"
     rerank_sk_env: "RERANK_SK"
     rerank_host: "api-vikingdb.vikingdb.cn-beijing.volces.com"
