@@ -138,6 +138,9 @@ class VolcengineEmbedder():
         Raises:
             RuntimeError: When API call fails
         """
+        # Handle empty or whitespace-only text to avoid API errors
+        if not text or not text.strip():
+            return [0.0] * self.dimension
 
         def _embed_call():
             if self.input_type == "multimodal":
@@ -179,7 +182,15 @@ class VolcengineEmbedder():
 
         def _call() -> List[List[float]]:
             if self.input_type == "multimodal":
-                return [self.embed(text=t) for t in texts]
+                results = []
+                for t in texts:
+                    # Skip empty or whitespace-only texts to avoid API errors
+                    if t and t.strip():
+                        results.append(self.embed(text=t))
+                    else:
+                        # Return zero vector for empty texts
+                        results.append([0.0] * self.dimension)
+                return results
             else:
                 response = self.client.embeddings.create(input=texts, model=self.model_name)
                 self._update_telemetry_token_usage(response)
