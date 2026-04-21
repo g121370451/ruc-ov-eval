@@ -1,0 +1,41 @@
+project_name: "RAG_Benchmark"
+
+# ===========修改配置================
+dataset_name: "FinanceBench"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+store:
+  type: "DeepRead"
+  enable_vector: true
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  # 本地调试用：用 pymupdf 替代 PaddleOCR（仅适用于数字原生 PDF）
+  # 服务器上有 GPU 时改为 false
+  use_pymupdf: true
+
+execution:
+  max_workers: 1
+  ingest_workers: 1
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: true
+# ==================================
+
+paths:
+  raw_data: "ruc-ov-eval/Data/{dataset_name}/financebench_open_source.jsonl"
+  doc_output_dir: "ruc-ov-eval/Data/{dataset_name}/DeepRead/processed_docs"
+  vector_store: "ruc-ov-eval/Data/{dataset_name}/DeepRead/store_index"
+  output_dir: "ruc-ov-eval/Output/{dataset_name}/experiment_1"
+  log_file: "ruc-ov-eval/Output/{dataset_name}/experiment_1/benchmark.log"
+
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "68e15b71-7673-4734-bf7a-01bb80a127ea"

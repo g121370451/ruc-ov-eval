@@ -126,6 +126,13 @@ def main():
                 llm_cfg=config.get('llm', {}),
                 store_cfg=store_cfg
             )
+        elif store_type == 'KohakuRAG':
+            from src.core.kohaku_store import KohakuStoreWrapper
+            vector_store = KohakuStoreWrapper.from_config(
+                paths=config['paths'],
+                llm_cfg=config.get('llm', {}),
+                store_cfg=store_cfg
+            )
         elif store_type == 'pageindex':
             from src.core.pageindex_store import PageIndexStoreWrapper
             pageindex_conf = store_cfg.get('pageindex_config_path')

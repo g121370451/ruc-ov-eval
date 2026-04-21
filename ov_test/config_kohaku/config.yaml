@@ -1,0 +1,44 @@
+project_name: "RAG_Benchmark"
+dataset_name: "FinanceBench"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+store:
+  type: "KohakuRAG"
+  # Embedding dimension for doubao-embedding-vision-250615
+  embedding_dimension: 2048
+  # Retrieval settings
+  parent_depth: 1  # How many parent levels to include in context expansion
+  child_depth: 0   # How many child levels to include in context expansion
+  deduplicate_retrieval: true
+  rerank_strategy: null  # null | "frequency" | "score" | "combined"
+  # Paragraph embedding mode
+  Options:
+    # - "averaged": Paragraph embedding = average of sentence embeddings
+    # - "full": Paragraph embedding = direct embedding of paragraph text
+    # - "both": Store both averaged (main) and full (separate table) - allows runtime toggle
+  store_paragraph_embedding_mode: "averaged"
+  per_sample_db: true  # run_per_question.py 用
+  # per_sample_db: false # run.py 用
+
+execution:
+  max_workers: 1      # LLM 生成任务的并发数
+  ingest_workers: 1   # 数据入任务的并发数
+  retrieval_topk: 5
+  max_queries: null   # null 表示全部查询
+  skip_ingestion: true  # 是否跳过数据入库
+
+paths:
+  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  doc_output_dir: "Data/{dataset_name}/KohakuRAG/processed_docs"
+  vector_store: "Data/{dataset_name}/KohakuRAG/store"
+  output_dir: "Output/{dataset_name}/kohaku_experiment_1"
+  log_file: "Output/{dataset_name}/kohaku_experiment_1/benchmark.log"
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "68e15b71-7673-4734-bf7a-01bb80a127ea"

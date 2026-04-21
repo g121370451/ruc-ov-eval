@@ -47,6 +47,7 @@ class BenchmarkPipeline:
         try:
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception as e:
+            self.logger.exception(f"data_prepare failed: {e}")
             exit(1)
         skip_ingestion = self.config['execution'].get('skip_ingestion', False)
 

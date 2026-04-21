@@ -32,7 +32,7 @@ class FinanceBenchAdapter(BaseAdapter):
     def __init__(self, raw_file_path: str):
         super().__init__(raw_file_path)
         data_dir = os.path.dirname(self.raw_file_path)
-        self.pdf_dir = os.path.join(data_dir, "pdfs")
+        self.pdf_dir = os.path.join(os.path.dirname(data_dir), "pdfs")
 
     def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
         """

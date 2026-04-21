@@ -66,13 +66,11 @@ class DeepReadWrapper:
         enable_hybrid: bool = False,
         enable_semantic: bool = False,
         neighbor_window: str = "1,-1",
-        max_rounds: int = 12,
+        max_rounds: int = 50,
         use_pymupdf: bool = False,
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
-        self.embedding_batch_size = embedding_batch_size
-        self.config_path = config_path
         self.logger = get_logger()
 
         os.makedirs(self.store_path, exist_ok=True)
@@ -219,9 +217,26 @@ class DeepReadWrapper:
         os.makedirs(sample_dir, exist_ok=True)
 
         merged_md_path = os.path.join(sample_dir, f"{sample_id}.md")
+        corpus_path = self._corpus_path(sample_id)
+        emb_path = os.path.join(sample_dir, f"{sample_id}_emb.npy")
+        idmap_path = os.path.join(sample_dir, f"{sample_id}_idmap.json")
 
-        #  ---Step 1: PDF -> Markdown ---
-        if self.use_pymupdf:
+        if os.path.exists(sample_dir) and all(
+            os.path.exists(path)
+            for path in (merged_md_path, corpus_path, emb_path, idmap_path)
+        ):
+            self.logger.info(
+                f"[{sample_id}] Sample already ingested; skipping because {sample_dir} contains all required files."
+            )
+            return
+
+        #  ---Step 1: PDF -> Markdown (or Markdown directly) ---
+        ext = os.path.splitext(sample.doc_path)[1].lower()
+        if ext in [".md", ".markdown"]:
+            import shutil
+            shutil.copy2(sample.doc_path, merged_md_path)
+            self.logger.info(f"[{sample_id}] Copied existing Markdown {merged_md_path}")
+        elif self.use_pymupdf:
             self._pdf_to_markdown_pymupdf(sample.doc_path, merged_md_path, sample_id)
         else:
             merged_json_path = os.path.join(sample_dir, f"{sample_id}.json")
@@ -289,11 +304,10 @@ class DeepReadWrapper:
                 id_map.append({"node_id": nid, "paragraph_index": pi})
 
         if texts:
-            emb_list: List[List[float]] = [embedder.embed(text=t) for t in texts]
+            emb_list: List[List[float]] = [
+                embedder.embed(text=t) 
+                for t in tqdm(texts, desc=f"[{sample_id}] Embedding", unit="chunk", leave=False)]
             arr = np.asarray(emb_list, dtype=np.float16)
-
-            emb_path = os.path.join(sample_dir, f"{sample_id}_emb.npy")
-            idmap_path = os.path.join(sample_dir, f"{sample_id}_idmap.json")
 
             np.save(emb_path, arr)
             with open(idmap_path, "w", encoding="utf-8") as f:
@@ -309,7 +323,6 @@ class DeepReadWrapper:
             }
 
         # --- Step 4: save corpus JSON ---
-        corpus_path = self._corpus_path(sample_id)
         with open(corpus_path, "w", encoding="utf-8") as f:
             json.dump(corpus, f, indent=2, ensure_ascii=False)
         self.logger.info(f"[{sample_id}] Corpus saved to {corpus_path}")
@@ -332,7 +345,7 @@ class DeepReadWrapper:
             return DeepReadResult()
         
         try:
-            self.doc_index = load_corpus([corpus_path], neighbor_window=self.neighbor_window)
+            doc_index = load_corpus([corpus_path], neighbor_window=self.neighbor_window)
         except Exception as e:
             self.logger.error(f"Failed to load corpus for '{sample_id}': {e}")
             return DeepReadResult()

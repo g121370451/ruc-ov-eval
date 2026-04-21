@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "kohaku-rag",
     "langchain-core>=1.2.16",
     "langchain-openai>=1.1.10",
     "numpy>=2.4.2",
@@ -19,8 +20,10 @@ dependencies = [
 
 [tool.uv.workspace]
 members = [
-    "OpenViking"
+    "OpenViking",
+    "KohakuRAG",
 ]
 
 [tool.uv.sources]
 openviking = { workspace = true }
+kohaku-rag = { workspace = true, editable = true }

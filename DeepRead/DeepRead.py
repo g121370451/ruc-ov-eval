@@ -1522,7 +1522,7 @@ def run_agent(
     doc_index: DocIndex,
     user_question: str,
     logger: JsonlLogger,
-    max_rounds: int = 12,
+    max_rounds: int = 50,
     temperature: float = 0.0,
     api_key: Optional[str] = None,
     default_headers: Optional[Dict[str, str]] = None,

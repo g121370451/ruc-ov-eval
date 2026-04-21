@@ -179,20 +179,14 @@ class VolcengineEmbedder():
 
         def _call() -> List[List[float]]:
             if self.input_type == "multimodal":
-                multimodal_inputs = [{"type": "text", "text": text} for text in texts]
-                response = self.client.multimodal_embeddings.create(
-                    input=multimodal_inputs, model=self.model_name
-                )
-                self._update_telemetry_token_usage(response)
-                data = response.data
+                return [self.embed(text=t) for t in texts]
             else:
                 response = self.client.embeddings.create(input=texts, model=self.model_name)
                 self._update_telemetry_token_usage(response)
-                data = response.data
 
             return [
                 truncate_and_normalize(item.embedding, self.dimension)
-                for item in data
+                for item in response.data
             ]
 
         try:
@@ -225,7 +219,7 @@ def main():
     print(arr1)
     print(len(arr1[0]))
 
-    texts = [test_text, test_text2]
+    texts = [test_text, test_text2, "doc 3", "doc 4", "doc 5"]
     result2 = embedder.embed_batch(texts=texts)
     arr2 = np.asarray(result2, dtype=np.float16)
     print(arr2)
