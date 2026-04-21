@@ -2,7 +2,6 @@ import asyncio
 import contextvars
 import hashlib
 import os
-import shutil
 import sys
 import threading
 import time
@@ -301,6 +300,9 @@ class LightRAGStoreWrapper:
         self._rerank_warning_emitted = False
 
         self.LightRAG, self.QueryParam, self.EmbeddingFunc = _ensure_vendored_lightrag()
+        from lightrag.base import DocStatus  # type: ignore
+
+        self.DocStatus = DocStatus
         self.RerankClient = _ensure_vendored_openviking_cli()
 
         try:
@@ -936,41 +938,39 @@ class LightRAGStoreWrapper:
                 context_blocks.append(resource.content[:2000])
         return retrieved_texts, context_blocks, retrieved_uris
 
-    async def _clear_async(self) -> None:
-        rag = self._rag
-        if rag is not None:
-            storages = [
-                rag.full_docs,
-                rag.text_chunks,
-                rag.full_entities,
-                rag.full_relations,
-                rag.entity_chunks,
-                rag.relation_chunks,
-                rag.entities_vdb,
-                rag.relationships_vdb,
-                rag.chunks_vdb,
-                rag.chunk_entity_relation_graph,
-                rag.llm_response_cache,
-                rag.doc_status,
-            ]
-            for storage in storages:
-                if storage is None:
-                    continue
-                try:
-                    await storage.drop()
-                except Exception as e:
-                    self.logger.warning(
-                        f"LightRAG storage drop failed for {type(storage).__name__}: {e}"
-                    )
-            try:
-                await rag.finalize_storages()
-            except Exception as e:
-                self.logger.warning(f"LightRAG finalize failed: {e}")
+    async def _list_all_doc_ids_async(self) -> List[str]:
+        rag = await self._ensure_rag_async()
+        statuses = [
+            self.DocStatus.PENDING,
+            self.DocStatus.PROCESSING,
+            self.DocStatus.PREPROCESSED,
+            self.DocStatus.PROCESSED,
+            self.DocStatus.FAILED,
+        ]
+        doc_ids: List[str] = []
+        seen: set[str] = set()
+        for status in statuses:
+            docs = await rag.get_docs_by_status(status)
+            for doc_id in docs.keys():
+                if doc_id not in seen:
+                    seen.add(doc_id)
+                    doc_ids.append(doc_id)
+        return doc_ids
 
-        self._rag = None
-        if os.path.exists(self.store_path):
-            shutil.rmtree(self.store_path)
-        os.makedirs(self.store_path, exist_ok=True)
+    async def _clear_async(self) -> None:
+        rag = await self._ensure_rag_async()
+        doc_ids = await self._list_all_doc_ids_async()
+        for doc_id in doc_ids:
+            result = await rag.adelete_by_doc_id(doc_id)
+            if getattr(result, "status", None) not in {"success", "not_found"}:
+                raise RuntimeError(
+                    f"LightRAG delete_by_doc_id failed for {doc_id}: "
+                    f"{getattr(result, 'message', 'unknown error')}"
+                )
+        try:
+            await rag.aclear_cache()
+        except Exception as e:
+            self.logger.warning(f"LightRAG clear_cache failed: {e}")
 
     def clear(self) -> None:
         with self._operation_lock:
