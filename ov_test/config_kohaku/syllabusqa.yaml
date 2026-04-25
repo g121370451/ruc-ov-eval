@@ -22,12 +22,12 @@ execution:
   skip_ingestion: false  # set true after first run to reuse existing DBs
 # ================================
 paths:
-  raw_data: "ruc-ov-eval/Data/{dataset_name}"
+  raw_data: "Data/{dataset_name}"
   # use test.csv for test split
-  doc_output_dir: "ruc-ov-eval/Data/{dataset_name}/KohakuRAG/processed_docs"
-  vector_store: "ruc-ov-eval/Data/{dataset_name}/KohakuRAG/store"
-  output_dir: "ruc-ov-eval/Output/{dataset_name}/kohaku_experiment_1"
-  log_file: "ruc-ov-eval/Output/{dataset_name}/kohaku_experiment_1/benchmark.log"
+  doc_output_dir: "Data/{dataset_name}/KohakuRAG/processed_docs"
+  vector_store: "Data/{dataset_name}/KohakuRAG/store"
+  output_dir: "Output/{dataset_name}/kohaku_experiment_1"
+  log_file: "Output/{dataset_name}/kohaku_experiment_1/benchmark.log"
 llm:
   model: "doubao-seed-1-8-251228"
   temperature: 0
