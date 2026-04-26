@@ -4,6 +4,7 @@ import json
 import time
 import random
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
@@ -22,7 +23,8 @@ class BenchmarkPipeline:
         self.llm = llm
         self.logger = get_logger()
         self.monitor = BenchmarkMonitor()
-        
+        self.store_type = config.get('store', {}).get('type', 'viking')
+
         # 结果文件路径
         self.output_dir = self.config['paths']['output_dir']
         if not os.path.exists(self.output_dir):
@@ -30,12 +32,33 @@ class BenchmarkPipeline:
         self.generated_file = os.path.join(self.output_dir, "generated_answers.json")
         self.eval_file = os.path.join(self.output_dir, "qa_eval_detailed_results.json")
         self.report_file = os.path.join(self.output_dir, "benchmark_metrics_report.json")
-        
+
         # 用于存储各阶段汇总指标
         self.metrics_summary = {
             "insertion": {"time": 0, "input_tokens": 0, "output_tokens": 0},
             "deletion": {"time": 0, "input_tokens": 0, "output_tokens": 0}
         }
+
+        # ---- 断点恢复 records ----
+        self.records_file = os.path.join(self.output_dir, "_pipeline_records.json")
+        self.records = self._load_records()
+        self._records_lock = threading.Lock()
+
+    # ---- 记录持久化 ----
+
+    def _load_records(self) -> dict:
+        if os.path.exists(self.records_file):
+            try:
+                with open(self.records_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        return {"ingested": False, "tasks": {}}
+
+    def _save_records(self):
+        with self._records_lock:
+            with open(self.records_file, 'w', encoding='utf-8') as f:
+                json.dump(self.records, f, indent=2, ensure_ascii=False)
 
     def run_generation(self):
         """Step1 数据预处理"""
@@ -47,26 +70,48 @@ class BenchmarkPipeline:
         try:
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception as e:
-            self.logger.exception(f"data_prepare failed: {e}")
-            exit(1)
+            self.logger.error(f"Data preparation failed: {e}")
+            raise
         skip_ingestion = self.config['execution'].get('skip_ingestion', False)
+
+        # 断点恢复：如果 records 标记已入库完成，跳过入库
+        if self.records.get("ingested"):
+            self.logger.info("Records indicate ingestion already completed, skipping.")
+            skip_ingestion = True
+            ingest_stats = self.records.get("ingest_stats", {"time": 0, "input_tokens": 0, "output_tokens": 0})
+            self.metrics_summary["insertion"] = ingest_stats
 
         if skip_ingestion:
             self.logger.info(f"Skipping Ingestion. Using existing docs at: {doc_dir}")
             if not os.path.exists(doc_dir):
                  self.logger.warning(f"Warning: Doc directory {doc_dir} not found, but ingestion is skipped.")
-            self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
-            
+            if not self.records.get("ingested"):
+                self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
+
         else:  # 正常执行入库
+            import shutil
+            from src.core.backup_utils import backup_store
+            store_path = self.config['paths'].get('vector_store', '')
+            # 清空 store 目录
+            if os.path.isdir(store_path):
+                shutil.rmtree(store_path)
+                os.makedirs(store_path, exist_ok=True)
+                self.logger.info(f"Store directory cleared: {store_path}")
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
             ingest_stats = self.db.ingest(
-                doc_info, 
-                max_workers=ingest_workers, 
+                doc_info,
+                max_workers=ingest_workers,
                 monitor=self.monitor
             )
             self.metrics_summary["insertion"] = ingest_stats
             self.logger.info(f"Insertion finished. Time: {ingest_stats['time']:.2f}s")
 
+            # 标记入库完成
+            with self._records_lock:
+                self.records["ingested"] = True
+                self.records["ingest_stats"] = ingest_stats
+            self._save_records()
+            # 入库完成后备份
             # 将 insertion 效率数据写入报告
             self._update_report({
                 "Insertion Efficiency (Total Dataset)": {
@@ -75,26 +120,45 @@ class BenchmarkPipeline:
                     "Total Output Tokens": self.metrics_summary["insertion"]["output_tokens"]
                 }
             })
+            # backup_store(store_path, self.logger)
         """Step 2 & 3: 数据入库 + 检索生成"""
         # 1. 始终加载数据
         samples = self.adapter.load_and_transform()
         # 2. 准备 QA 任务
         tasks = self._prepare_tasks(samples)
+
+        # 断点恢复：从 records 中加载已完成的 task 结果
+        completed_tasks = self.records.get("tasks", {})
         results_map = {}
+        pending_tasks = []
+        for task in tasks:
+            tid = str(task['id'])
+            if tid in completed_tasks:
+                results_map[task['id']] = completed_tasks[tid]
+            else:
+                pending_tasks.append(task)
+
+        if results_map:
+            self.logger.info(f"Resumed {len(results_map)} completed tasks, {len(pending_tasks)} remaining")
+
         max_workers = self.config['execution']['max_workers']
-        
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(self._process_generation_task, task): task 
-                for task in tasks
+                executor.submit(self._process_generation_task, task): task
+                for task in pending_tasks
             }
-            
-            pbar = tqdm(total=len(tasks), desc="Generating Answers", unit="task")
+
+            pbar = tqdm(total=len(pending_tasks), desc="Generating Answers", unit="task")
             for future in as_completed(future_to_task):
                 task = future_to_task[future]
                 try:
                     res = future.result()
                     results_map[res['_global_index']] = res
+                    # 持久化单个 task 结果
+                    with self._records_lock:
+                        self.records.setdefault("tasks", {})[str(res['_global_index'])] = res
+                    self._save_records()
                 except Exception as e:
                     self.logger.error(f"Generation failed for task {task['id']}: {e}")
                     self.monitor.worker_end(success=False)
@@ -173,22 +237,18 @@ class BenchmarkPipeline:
             })
 
     def run_deletion(self):
-        """Step 5: 数据清理"""
+        """Step 5: 计时删除"""
         self.logger.info(">>> Stage: Deletion")
-        start_time = time.time()
+        t0 = time.time()
         self.db.clear()
-        duration = time.time() - start_time
-        self.metrics_summary["deletion"] = {"time": duration, "input_tokens": 0, "output_tokens": 0}
-        self.logger.info(f"Deletion finished. Time: {duration:.2f}s")
-
-        # 将 deletion 效率数据写入报告
-        self._update_report({
-            "Deletion Efficiency (Total Dataset)": {
-                "Total Deletion Time (s)": duration,
-                "Total Input Tokens": 0,
-                "Total Output Tokens": 0
-            }
-        })
+        elapsed = time.time() - t0
+        self.metrics_summary["deletion"] = {"time": elapsed, "input_tokens": 0, "output_tokens": 0}
+        self.logger.info(f"Deletion finished. Time: {elapsed:.2f}s")
+        # 更新 records
+        with self._records_lock:
+            self.records["deleted"] = True
+            self.records["delete_time"] = elapsed
+        self._save_records()
 
     def _prepare_tasks(self, samples):
         tasks = []
@@ -211,35 +271,45 @@ class BenchmarkPipeline:
 
             # 1. Retrieval
             t0 = time.time()
-            search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
+            if self.store_type == 'sql_agent':
+                search_res = self.db.retrieve(
+                    query=qa.question, topk=self.config['execution']['retrieval_topk'],
+                    sample_id=task['sample_id'], qa_metadata=qa.metadata)
+            else:
+                search_res = self.db.retrieve(query=qa.question, topk=self.config['execution']['retrieval_topk'])
             latency = time.time() - t0
 
             retrieved_texts, context_blocks, retrieved_uris = self.db.process_retrieval_results(search_res)
+
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
-            # 2. Prompting logic (调用 Adapter 动态生成)
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-
-            # 3. Generation
-            ans_raw = self.llm.generate(full_prompt)
-
-            # 4. Post-processing (调用 Adapter 动态解析)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-
-            # 5. Token stats（含检索阶段 token）
+            # 2. 构建 prompt → LLM 生成
             retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
+
+            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+            ans_raw = self.llm.generate(full_prompt)
+            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
             in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
             out_tokens = self.db.count_tokens(ans) + retrieve_out
+
+            # 检查是否需要解释 Not mentioned
+            not_mentioned_reason = ""
+            if self.config.get('execution', {}).get('explain_not_mentioned', False):
+                if MetricsCalculator.check_refusal(ans):
+                    not_mentioned_reason = self.llm.explain_not_mentioned(qa.question, context_blocks)
+
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
-            
+
             self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")
 
             return {
                 "_global_index": task['id'], "sample_id": task['sample_id'], "question": qa.question,
                 "gold_answers": qa.gold_answers, "category": str(qa.category), "evidence": qa.evidence,
-                "retrieval": {"latency_sec": latency, "uris": retrieved_uris},
-                "llm": {"final_answer": ans},
+                "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
+                              "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
+                              "sql_queries": getattr(search_res, 'sql_queries', [])},
+                "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
                 "metrics": {"Recall": recall}, "token_usage": {"total_input_tokens": in_tokens, "llm_output_tokens": out_tokens}
             }
         except Exception as e:
@@ -264,30 +334,26 @@ class BenchmarkPipeline:
         
         dataset_name = self.config.get('dataset_name', 'Unknown_Dataset')
         
-        # 初始化最优评测结果存储字典
+        # 初始化评测结果
         best_eval_record = {
             "score": 0.0,
             "reasoning": "",
             "prompt_type": ""
         }
-        
-        for gt in golds:
-            try:
-                eval_res = llm_grader(
-                    self.llm.llm, 
-                    self.config['llm']['model'], 
-                    item['question'], 
-                    gt,  # 单个 gold answer
-                    ans,
-                    dataset_name=dataset_name
-                )
-                
-                # 如果有多个答案，保留得分最高的那次评测的理由和分数
-                if eval_res["score"] >= best_eval_record["score"]:
-                    best_eval_record = eval_res
-                    
-            except Exception as e:
-                self.logger.error(f"Grader error for gold answer '{gt[:50]}...': {e}")
+
+        try:
+            gold_answer_str = json.dumps(golds, ensure_ascii=False)
+            eval_res = llm_grader(
+                self.llm.llm,
+                self.config['llm']['model'],
+                item['question'],
+                gold_answer_str,
+                ans,
+                dataset_name=dataset_name
+            )
+            best_eval_record = eval_res
+        except Exception as e:
+            self.logger.error(f"Grader error: {e}")
                 
         # 兜底：处理拒绝回答的情况
         if MetricsCalculator.check_refusal(ans) and any(MetricsCalculator.check_refusal(gt) for gt in golds):

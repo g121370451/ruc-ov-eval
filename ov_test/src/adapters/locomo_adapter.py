@@ -1,6 +1,7 @@
 # src/adapters/locomo_adapter.py
 import json
 import os
+import re
 from typing import List, Dict, Any
 
 from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
@@ -40,7 +41,7 @@ class LocomoAdapter(BaseAdapter):
                 doc_path = os.path.join(doc_dir, f"{sample_id}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(sample_id, doc_path))
+                res.append(StandardDoc(sample_id, [doc_path]))
             except Exception as e:
                 self.logger.error(f"[locomo adapter] doc:{sample_id} prepare error {e}")
                 raise e
@@ -62,6 +63,21 @@ class LocomoAdapter(BaseAdapter):
 
         for item in dataset:
             sample_id = item.get("sample_id", "unknown")
+            conv = item.get("conversation", {})
+            speakers = (conv.get("speaker_a", ""), conv.get("speaker_b", ""))
+
+            # 构建 dia_id -> 对话文本 的映射，用于将 evidence 从 ID 解析为原文
+            dia_id_map = {}
+            for sess_idx in range(1, 100):
+                sess_key = f'session_{sess_idx}'
+                if sess_key not in conv or not isinstance(conv[sess_key], list):
+                    continue
+                for turn in conv[sess_key]:
+                    dia_id = turn.get('dia_id', '')
+                    if dia_id:
+                        speaker = turn.get('speaker', '')
+                        txt = turn.get('text', '')
+                        dia_id_map[dia_id] = f"{speaker}: {txt}" if speaker else txt
 
             # 转换 QA 对
             qa_pairs = []
@@ -79,13 +95,26 @@ class LocomoAdapter(BaseAdapter):
                     # 将单值（str, int, float 等）包装在列表中
                     golds = [raw_ans]
 
+                # 将 evidence 中的 dia_id 解析为实际对话文本
+                raw_evidence = q.get("evidence", [])
+                resolved_evidence = []
+                for ev in raw_evidence:
+                    # 处理分号分隔的多 ID 情况，如 "D8:6; D9:17"
+                    parts = re.split(r'\s*;\s*', ev) if ';' in ev else [ev]
+                    for part in parts:
+                        part = part.strip()
+                        if part in dia_id_map:
+                            resolved_evidence.append(dia_id_map[part])
+                        elif part:
+                            resolved_evidence.append(part)
+
                 qa_pairs.append(StandardQA(
                     question=q["question"],
                     # 确保将列表中的每个元素都转为字符串
                     gold_answers=[str(g) for g in golds],
-                    evidence=q.get("evidence", []),
+                    evidence=resolved_evidence,
                     category=q.get("category"),
-                    metadata={"original_id": q.get("id")}
+                    metadata={"original_id": q.get("id"), "speakers": speakers}
                 ))
 
             standard_samples.append(StandardSample(

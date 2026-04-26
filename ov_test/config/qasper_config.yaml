@@ -12,19 +12,18 @@ execution:
   ingest_workers: 5
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: true
 # ==================================  
 
 paths:
   raw_data: "Data/{dataset_name}/qasper-dev-v0.3.json"
-  doc_output_dir: "Data/{dataset_name}/processed_docs"
-  vector_store: "Data/{dataset_name}/viking_store_index"
-  output_dir: "Output/{dataset_name}/experiment_v21"
-  log_file: "Output/{dataset_name}/experiment_v21/benchmark.log"
+  doc_output_dir: "Data/{dataset_name}/openviking/processed_docs"
+  vector_store: "Data/{dataset_name}/openviking/store_index"
+  output_dir: "Output/{dataset_name}/openviking_global/experiment_0001"
+  log_file: "Output/{dataset_name}/openviking_global/experiment_0001/benchmark.log"
 
 
 llm:
-  model: "doubao-seed-1-8-251228"
+  model: "${LLM_MODEL}"
   temperature: 0
-  base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  api_key: "76aab4eb-95e0-453e-b898-7934260ae6a1"
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"
