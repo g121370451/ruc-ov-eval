@@ -75,7 +75,23 @@ class PerQuestionPipeline(BenchmarkPipeline):
     # ---- store 工厂 ----
 
     def _create_store(self, store_path):
-        if self.store_type == 'pageindex':
+        if self.store_type == 'DeepRead':
+            from src.core.deepread_store import DeepReadWrapper
+            return DeepReadWrapper.from_config(
+                store_path=store_path,
+                doc_output_dir=self.config['paths'].get('doc_output_dir', ''),
+                llm_cfg=self.config.get('llm', {}),
+                store_cfg=self.config.get('store', {})
+            )
+        elif self.store_type == 'KohakuRAG':
+            from src.core.kohaku_store import KohakuStoreWrapper
+            return KohakuStoreWrapper.from_config(
+                store_path=store_path,
+                doc_output_dir=self.config['paths'].get('doc_output_dir', ''),
+                llm_cfg=self.config.get('llm', {}),
+                store_cfg=self.config.get('store', {})
+            )
+        elif self.store_type == 'pageindex':
             from src.core.pageindex_store import PageIndexStoreWrapper
             pageindex_conf = self.store_config.get('pageindex_config_path')
             return PageIndexStoreWrapper(
@@ -355,7 +371,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
             self.records[store_key] = {
                 'ingested': True,
                 'doc_paths': doc_paths,
-                'ingest_time': stats.get('insert_time',0),
+                'ingest_time': stats.get('time',0),
                 'ingest_input_tokens': stats.get('input_tokens', 0),
                 'ingest_output_tokens': stats.get('output_tokens', 0),
                 'deleted': False,

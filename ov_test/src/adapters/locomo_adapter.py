@@ -34,7 +34,7 @@ class LocomoAdapter(BaseAdapter):
         for item in dataset:
             sample_id = item.get("sample_id", "unknown")
             # 1. 转换文档内容
-            doc_content = self._convert_conversation_to_markdown(sample_id, item.get("conversation", {}))
+            doc_content = self._convert_conversation_to_markdown(sample_id, item.get("conversation", {}), item.get("session_summary", {}))
 
             # 2. 将文本存储到目标中
             try:
@@ -124,7 +124,7 @@ class LocomoAdapter(BaseAdapter):
 
         return standard_samples
 
-    def _convert_conversation_to_markdown(self, sample_id: str, conv: Dict[str, Any]) -> str:
+    def _convert_conversation_to_markdown(self, sample_id: str, conv: Dict[str, Any], summary: Dict[str, str]) -> str:
         """
         将 LocoMo 的 session 结构转换为扁平的 Markdown 字符串。
        
@@ -146,7 +146,7 @@ class LocomoAdapter(BaseAdapter):
                 md_lines.append(f"DATE: {session_dt}")
 
             # 添加 session 摘要
-            session_sum = conv.get(sum_key)
+            session_sum = summary.get(sum_key)
             if session_sum:
                 md_lines.append(f"SUMMARY: {session_sum}")
 

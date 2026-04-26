@@ -1,12 +1,12 @@
-# config_kohaku > ! financebench_sample20.yaml
+# config_kohaku > ! syllabusqa_sample70.yaml
 project_name: "RAG_Benchmark"
 
 # =========修改配置=========
-dataset_name: "FinanceBench_sample20"
+dataset_name: "SyllabusQA_sample70"
 
 adapter:
-  module: "src.adapters.finance_bench_adapter"
-  class_name: "FinanceBenchAdapter"
+  module: "src.adapters.syllabusqa_adapter"
+  class_name: "SyllabusQAAdapter"
 
 store:
   type: "KohakuRAG"
@@ -25,15 +25,16 @@ execution:
   ingest_workers: 1
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: true  # set true after first run to reuse existing DBs
+  skip_ingestion: false  # set true after first run to reuse existing DBs
 # =========================
 
 paths:
-  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  raw_data: "Data/{dataset_name}"
+  # use test.csv for test split
   doc_output_dir: "Data/{dataset_name}/KohakuRAG/processed_docs"
   vector_store: "Data/{dataset_name}/KohakuRAG/store"
-  output_dir: "Output/{dataset_name}/kohaku_experiment"
-  log_file: "Output/{dataset_name}/kohaku_experiment/benchmark.log"
+  output_dir: "Output/{dataset_name}/kohaku_per_question_experiment"
+  log_file: "Output/{dataset_name}/kohaku_per_question_experiment/benchmark.log"
 
 llm:
   model: "doubao-seed-1-8-251228"

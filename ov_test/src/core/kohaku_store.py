@@ -42,7 +42,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from DeepRead.utils import VolcengineEmbedder, embedding_token_tracker
+from DeepRead.utils import VolcengineEmbedder, embedding_token_tracker, token_tracker
 
 # Query Planner - wraps our LLM client to satisfy KohakuRAG's QueryPlanner protocol
 class LLMQueryPlanner:
@@ -86,6 +86,9 @@ JSON:
                 lambda: self._llm.invoke([HumanMessage(content=prompt)])
             )
             raw = resp.content
+            input_tokens = resp.usage_metadata['input_tokens']
+            output_tokens = resp.usage_metadata['output_tokens']
+            token_tracker.add(input_tokens, output_tokens)
             start = raw.index("{")
             end = raw.rindex("}") + 1
             extracted = raw[start:end]
@@ -238,7 +241,7 @@ class KohakuStoreWrapper:
             self._enc = None
 
     @classmethod
-    def from_config(cls, paths: dict, llm_cfg: dict, store_cfg: dict) -> "KohakuStoreWrapper":
+    def from_config(cls, store_path: str, doc_output_dir: str, llm_cfg: dict, store_cfg: dict) -> "KohakuStoreWrapper":
         planner_max_queries = store_cfg.get("planner_max_queries", 1)
         llm = None
         if planner_max_queries > 1:
@@ -252,8 +255,8 @@ class KohakuStoreWrapper:
                 base_url=llm_cfg.get("base_url", ""),
             )
         return cls(
-            store_path=paths["vector_store"],
-            doc_output_dir=paths.get("doc_output_dir", ""),
+            store_path=store_path,
+            doc_output_dir=doc_output_dir,
             api_key=llm_cfg.get("api_key", ""),
             api_base=llm_cfg.get("base_url", ""),
             embedding_dimension=store_cfg.get("embedding_dimension", 2048),
@@ -263,7 +266,7 @@ class KohakuStoreWrapper:
             deduplicate_retrieval=store_cfg.get("deduplicate_retrieval", True),
             rerank_strategy=store_cfg.get("rerank_strategy", None),
             paragraph_embedding_mode=store_cfg.get("paragraph_embedding_mode", "averaged"),
-            per_sample_db=store_cfg.get("per_sample_db", True),
+            per_sample_db=store_cfg.get("per_sample_db", False),
             planner_max_queries=planner_max_queries,
             llm=llm,
         )
@@ -285,9 +288,10 @@ class KohakuStoreWrapper:
             return 0
         return len(self._enc.encode(str(text)))
 
+    # TODO 无用，注释掉
     def build_uri_map(self, doc_info: List[StandardDoc]) -> Dict[str, list]:
         if self._per_sample_db:
-            return {doc.sample_id: [doc.sample_id] for doc in doc_info}
+            return {doc for doc in doc_info}
         else:
             # 单 DB 模式: 所有文档共享同一检索空间, target_uri 不限定范围
             return {doc.sample_id: [] for doc in doc_info}
@@ -307,15 +311,24 @@ class KohakuStoreWrapper:
             paragraph_embedding_mode=self._paragraph_embedding_mode,
         )
 
-        for sample in tqdm(samples, desc="Ingesting Docs to KohakuRAG"):
+        # 展开 doc_paths 并去重（保持顺序）
+        seen = set()
+        all_paths = []
+        for sample in samples:
+            for p in sample.doc_paths:
+                if p not in seen:
+                    seen.add(p)
+                    all_paths.append(p)
+
+        for path in tqdm(all_paths, desc="Ingesting Docs to KohakuRAG"):
             if monitor:
                 monitor.worker_start()
             try:
-                self._ingest_one(sample, indexer)
+                self._ingest_one(path, indexer)
                 if monitor:
                     monitor.worker_end(success=True)
             except Exception as e:
-                self.logger.error(f"Failed to ingest sample {sample.sample_id}: {e}")
+                self.logger.error(f"Failed to ingest sample {path}: {e}")
                 if monitor:
                     monitor.worker_end(success=False)
                     raise
@@ -327,26 +340,18 @@ class KohakuStoreWrapper:
             "output_tokens": token_usage["output_tokens"],
         }
 
-    def _ingest_one(self, sample: StandardDoc, indexer: DocumentIndexer):
-        sample_id = sample.sample_id
-        db_path = self._db_path(sample_id)
-        table_prefix = self._table_prefix(sample_id)
+    def _ingest_one(self, path: str, indexer: DocumentIndexer):
+        sample_id = os.path.splitext(os.path.basename(path))[0]
+        db_path = os.path.join(self.store_path, "kohaku.db")
+        table_prefix = "kohaku"
 
-        # 多 DB 模式: 整个 DB 文件对应一个 sample, 存在即跳过
-        # 单 DB 模式: 无法按 sample 判断是否已入库, 每次都重新写入
-        if self._per_sample_db and os.path.exists(db_path):
-            self.logger.info(f"[{sample_id}] DB already exists, skipping ingest.")
-            return
-
-        if not sample.doc_path or not os.path.exists(sample.doc_path):
-            raise FileNotFoundError(
-                f"PDF not found for sample '{sample_id}': {sample.doc_path}"
-            )
+        if not path or not os.path.exists(path):
+            raise FileNotFoundError(f"Document path not found for sample '{sample_id}': {path}")
 
         from pathlib import Path
-        ext = os.path.splitext(sample.doc_path)[1].lower()
+        ext = os.path.splitext(path)[1].lower()
         if ext in (".md", ".markdown"):
-            with open(sample.doc_path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 md_text = f.read()
             payload = markdown_to_payload(
                 document_id=sample_id,
@@ -356,7 +361,7 @@ class KohakuStoreWrapper:
             )
         else:
             payload = pdf_to_document_payload(
-                Path(sample.doc_path),
+                Path(path),
                 doc_id=sample_id,
                 title=sample_id,
                 metadata={"sample_id": sample_id},
@@ -392,22 +397,23 @@ class KohakuStoreWrapper:
     ) -> KohakuResult:
         # 单 DB 模式: target_uri 不限定范围, 使用全局唯一 DB
         # 多 DB 模式: target_uri 即 sample_id, 指向对应的独立 DB
-        if self._per_sample_db:
-            sample_id = target_uri
-            if not sample_id:
-                self.logger.error("retrieve() called without target_uri in per_sample_db mode.")
-                return KohakuResult()
-        else:
-            sample_id = target_uri  # 仅用于日志, 可为 None
+        # if self._per_sample_db:
+        #     sample_id = target_uri
+        #     if not sample_id:
+        #         self.logger.error("retrieve() called without target_uri in per_sample_db mode.")
+        #         return KohakuResult()
+        # else:
+        #     sample_id = target_uri  # 仅用于日志, 可为 None
 
-        db_path = self._db_path(sample_id or "")
-        table_prefix = self._table_prefix(sample_id or "")
+        db_path = os.path.join(self.store_path, "kohaku.db")
+        table_prefix = "kohaku"
 
         if not os.path.exists(db_path):
             self.logger.error(f"DB not found: {db_path}")
             return KohakuResult()
 
         embedding_token_tracker.reset()
+        token_tracker.reset()
 
         store = KVaultNodeStore(db_path, table_prefix=table_prefix)  # dimensions auto-inferred from existing DB
         pipeline_kwargs = dict(
@@ -426,15 +432,16 @@ class KohakuStoreWrapper:
         try:
             result = _run_async(pipeline.retrieve(query, top_k=topk))
         except Exception as e:
-            self.logger.error(f"KohakuRAG retrieve failed for '{sample_id}': {e}")
+            self.logger.error(f"KohakuRAG retrieve failed for '{query}': {e}")
             return KohakuResult()
 
-        token_usage = embedding_token_tracker.get()
+        embedding_token_usage = embedding_token_tracker.get()
+        token_usage = token_tracker.get()
 
         retrieved_texts = [s.text for s in result.snippets]
         resources = [
             KohakuResource(
-                uri=f"kohaku://{sample_id}/{s.node_id}",
+                uri=f"kohaku://{s.node_id}",
                 content=s.text,
                 score=s.score,
             )
@@ -443,8 +450,8 @@ class KohakuStoreWrapper:
 
         return KohakuResult(
             resources=resources,
-            retrieve_input_tokens=token_usage["input_tokens"],
-            retrieve_output_tokens=token_usage["output_tokens"],
+            retrieve_input_tokens=embedding_token_usage["input_tokens"] + token_usage["input_tokens"],
+            retrieve_output_tokens=embedding_token_usage["output_tokens"] + token_usage["output_tokens"],
             retrieved_texts=retrieved_texts,
         )
 

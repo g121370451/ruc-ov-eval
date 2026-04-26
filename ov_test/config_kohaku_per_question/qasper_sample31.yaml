@@ -1,0 +1,39 @@
+project_name: "RAG_Benchmark"
+
+# ===========修改配置===========
+dataset_name: "Qasper_sample31"
+
+adapter:
+  module: "src.adapters.qasper_adapter"
+  class_name: "QasperAdapter"
+
+store:
+  type: "KohakuRAG"
+  embedding_dimension: 2048
+  parent_depth: 1
+  child_depth: 0
+  deduplicate_retrieval: true
+  rerank_strategy: null  # null | "frequency" | "score" | "combined"
+  paragraph_embedding_mode: "averaged"
+  planner_max_queries: 3
+
+execution:
+  max_workers: 1
+  ingest_workers: 1
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: false  # set true after first run to reuse existing DBs
+# ==========================
+
+paths:
+  raw_data: "Data/{dataset_name}"
+  doc_output_dir: "Data/{dataset_name}/KohakuRAG/processed_docs"
+  vector_store: "Data/{dataset_name}/KohakuRAG/store"
+  output_dir: "Output/{dataset_name}/kohaku_per_question_experiment"
+  log_file: "Output/{dataset_name}/kohaku_per_question_experiment/benchmark.log"
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "68e15b71-7673-4734-bf7a-01bb80a127ea"

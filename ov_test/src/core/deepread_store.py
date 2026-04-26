@@ -105,12 +105,12 @@ class DeepReadWrapper:
             self.enc = None
 
     @classmethod
-    def from_config(cls, paths: dict, llm_cfg: dict, store_cfg: dict) -> "DeepReadWrapper":
+    def from_config(cls, store_path: str, doc_output_dir: str, llm_cfg: dict, store_cfg: dict) -> "DeepReadWrapper":
         """从 config.yaml 的三个子块构造实例，供 run.py 调用。"""
         neighbor_window = store_cfg.get("neighbor_window", "1,-1")
         return cls(
-            store_path=paths["vector_store"],
-            doc_output_dir=paths.get("doc_output_dir", ""),
+            store_path=store_path,
+            doc_output_dir=doc_output_dir,
             model=llm_cfg.get("model", ""),
             base_url=llm_cfg.get("base_url", ""),
             api_key=llm_cfg.get("api_key", ""),

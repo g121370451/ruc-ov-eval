@@ -73,16 +73,17 @@ def resolve_auto_output_dir(config):
     """自动递增实验输出目录编号，基于已解析的 output_dir 的父目录扫描"""
     output_dir = config['paths']['output_dir']
     output_base = os.path.dirname(output_dir)  # e.g. .../Output/Locomo/openviking_global
+    output_dir_name = os.path.basename(output_dir)  # e.g. openviking_global
 
     max_num = 0
     if os.path.exists(output_base):
         for name in os.listdir(output_base):
-            m = re.match(r'experiment_(\d+)', name)
+            m = re.match(rf'{output_dir_name}_(\d+)', name)
             if m:
                 max_num = max(max_num, int(m.group(1)))
 
     next_num = max_num + 1
-    experiment_dir = os.path.join(output_base, f"experiment_{next_num:04d}")
+    experiment_dir = os.path.join(output_base, f"{output_dir_name}_{next_num:04d}")
     config['paths']['output_dir'] = experiment_dir
     config['paths']['log_file'] = os.path.join(experiment_dir, "benchmark.log")
     print(f"[Init] Auto output dir: {experiment_dir}")
@@ -169,14 +170,16 @@ def main():
         if store_type == 'DeepRead':
             from src.core.deepread_store import DeepReadWrapper
             vector_store = DeepReadWrapper.from_config(
-                paths=config['paths'],
+                store_path=config['paths']['vector_store'],
+                doc_output_dir=config['paths']['doc_output_dir'],
                 llm_cfg=config.get('llm', {}),
                 store_cfg=store_cfg
             )
         elif store_type == 'KohakuRAG':
             from src.core.kohaku_store import KohakuStoreWrapper
             vector_store = KohakuStoreWrapper.from_config(
-                paths=config['paths'],
+                store_path=config['paths']['vector_store'],
+                doc_output_dir=config['paths']['doc_output_dir'],
                 llm_cfg=config.get('llm', {}),
                 store_cfg=store_cfg
             )
