@@ -12,7 +12,6 @@ store:
   deduplicate_retrieval: true
   rerank_strategy: null  # null | "frequency" | "score" | "combined"
   paragraph_embedding_mode: "averaged"
-  per_sample_db: false  # run.py 全局检索模式
   planner_max_queries: 3
 execution:
   max_workers: 1
@@ -26,8 +25,8 @@ paths:
   # use test.csv for test split
   doc_output_dir: "Data/{dataset_name}/KohakuRAG/processed_docs"
   vector_store: "Data/{dataset_name}/KohakuRAG/store"
-  output_dir: "Output/{dataset_name}/kohaku_experiment_1"
-  log_file: "Output/{dataset_name}/kohaku_experiment_1/benchmark.log"
+  output_dir: "Output/{dataset_name}/kohaku_experiment"
+  log_file: "Output/{dataset_name}/kohaku_experiment/benchmark.log"
 llm:
   model: "doubao-seed-1-8-251228"
   temperature: 0

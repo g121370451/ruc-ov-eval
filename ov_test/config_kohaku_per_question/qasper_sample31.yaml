@@ -28,7 +28,7 @@ execution:
 paths:
   raw_data: "Data/{dataset_name}"
   doc_output_dir: "Data/{dataset_name}/KohakuRAG/processed_docs"
-  vector_store: "Data/{dataset_name}/KohakuRAG/store"
+  vector_store: "Data/{dataset_name}/KohakuRAG/per_question/store"
   output_dir: "Output/{dataset_name}/kohaku_per_question_experiment"
   log_file: "Output/{dataset_name}/kohaku_per_question_experiment/benchmark.log"
 

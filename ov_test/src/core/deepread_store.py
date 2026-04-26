@@ -51,9 +51,6 @@ class DeepReadWrapper:
     调用 run_agent 返回最终答案字符串。
     """
 
-    # pipeline 检测此属性决定是否跳过 build_prompt + llm.generate
-    is_agent_mode: bool = True
-
     def __init__(
         self,
         store_path: str,
