@@ -20,7 +20,7 @@ execution:
   ingest_workers: 1
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: true
+  skip_ingestion: false
 # ==================================
 paths:
   raw_data: "Data/{dataset_name}"
