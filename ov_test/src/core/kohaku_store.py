@@ -472,20 +472,11 @@ class KohakuStoreWrapper:
         """Delete SQLite database(s)."""
         if not os.path.exists(self.store_path):
             return
-        if self._per_sample_db:
-            for fname in os.listdir(self.store_path):
-                if fname.endswith(".db"):
-                    fpath = os.path.join(self.store_path, fname)
-                    try:
-                        os.remove(fpath)
-                        self.logger.info(f"Removed DB: {fpath}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to remove {fpath}: {e}")
-        else:
-            fpath = self._db_path("")
-            if os.path.exists(fpath):
-                try:
-                    os.remove(fpath)
-                    self.logger.info(f"Removed DB: {fpath}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to remove {fpath}: {e}")
+        
+        db_path = os.path.join(self.store_path, "kohaku.db")
+        if os.path.exists(db_path):
+            try:
+                os.remove(db_path)
+                self.logger.info(f"Removed DB: {db_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to remove {db_path}: {e}")

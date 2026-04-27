@@ -411,10 +411,10 @@ class DeepReadWrapper:
 
     def clear(self):
         """清空所有 sample 的 corpus 目录。"""
-        if os.path.exists(self.doc_output_dir):
+        if os.path.exists(self.store_path):
             import shutil
-            for entry in os.listdir(self.doc_output_dir):
-                entry_path = os.path.join(self.doc_output_dir, entry)
+            for entry in os.listdir(self.store_path):
+                entry_path = os.path.join(self.store_path, entry)
                 if os.path.isdir(entry_path):
                     shutil.rmtree(entry_path)
                     self.logger.info(f"Removed sample dir: {entry_path}")

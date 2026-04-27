@@ -428,12 +428,6 @@ class PerQuestionPipeline(BenchmarkPipeline):
             retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(res, 'retrieve_output_tokens', 0)
 
-            # if self.store_type == 'DeepRead':
-            #     class _TempResult:
-            #         def __init__(self, resources):
-            #             self.resources = resources
-            #     retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(_TempResult(res))
-            # else:
             retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
