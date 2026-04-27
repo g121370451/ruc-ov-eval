@@ -2,6 +2,8 @@ import os
 import json
 import time
 import numpy as np
+import re
+import hashlib
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from tqdm import tqdm
@@ -208,121 +210,119 @@ class DeepReadWrapper:
         }
     
     def _ingest_one(self, sample: StandardDoc, ocr_pipeline, embedder: VolcengineEmbedder):
-        """处理单个 PDF：（OCR 或 pymupdf） -> Markdown -> corpus JSON + embedding。"""
-        sample_id = sample.sample_id
-        sample_dir = self._sample_dir(sample_id)
-        os.makedirs(sample_dir, exist_ok=True)
+        doc_paths = sample.doc_paths
 
-        merged_md_path = os.path.join(sample_dir, f"{sample_id}.md")
-        corpus_path = self._corpus_path(sample_id)
-        emb_path = os.path.join(sample_dir, f"{sample_id}_emb.npy")
-        idmap_path = os.path.join(sample_dir, f"{sample_id}_idmap.json")
+        for path in doc_paths:
+            if not os.path.exists(path):
+                self.logger.warning(f"Document path does not exist: {path}")
+                return
+            name = os.path.splitext(os.path.basename(path))[0]
+            name = re.sub(r'[\\/*?:"<>|]', '_', name)[:120]
+            name = name if name else hashlib.sha1(path.encode('utf-8')).hexdigest()[:16]
 
-        if os.path.exists(sample_dir) and all(
-            os.path.exists(path)
-            for path in (merged_md_path, corpus_path, emb_path, idmap_path)
-        ):
-            self.logger.info(
-                f"[{sample_id}] Sample already ingested; skipping because {sample_dir} contains all required files."
-            )
-            return
+            merged_md_path = os.path.join(self.store_path, f"{name}.md")
+            corpus_path = os.path.join(self.store_path, f"{name}_corpus.json")
+            emb_path = os.path.join(self.store_path, f"{name}_emb.npy")
+            idmap_path = os.path.join(self.store_path, f"{name}_idmap.json")
 
-        #  ---Step 1: PDF -> Markdown (or Markdown directly) ---
-        ext = os.path.splitext(sample.doc_path)[1].lower()
-        if ext in [".md", ".markdown"]:
-            import shutil
-            shutil.copy2(sample.doc_path, merged_md_path)
-            self.logger.info(f"[{sample_id}] Copied existing Markdown {merged_md_path}")
-        elif self.use_pymupdf:
-            self._pdf_to_markdown_pymupdf(sample.doc_path, merged_md_path, sample_id)
-        else:
-            merged_json_path = os.path.join(sample_dir, f"{sample_id}.json")
-            temp_json_path = os.path.join(sample_dir, "_temp_page.json")
-            temp_md_path = os.path.join(sample_dir, "_temp_page.md")
-            
-            output = ocr_pipeline.predict(sample.doc_path)
-            all_json_data = []
+            #  ---Step 1: PDF -> Markdown (or Markdown directly) ---
+            ext = os.path.splitext(path)[1].lower()
+            if ext in [".md", ".markdown"]:
+                import shutil
+                shutil.copy2(path, merged_md_path)
+                self.logger.info(f"[{path}] Copied existing Markdown {merged_md_path}")
+            elif self.use_pymupdf:
+                self._pdf_to_markdown_pymupdf(path, merged_md_path, name)
+            else:
+                # TODO 没有经过验证，暂时忽略
+                merged_json_path = os.path.join(self.store_path, f"{name}.json")
+                temp_json_path = os.path.join(self.store_path, f"{name}_temp_page.json")
+                temp_md_path = os.path.join(self.store_path, f"{name}_temp_page.md")
+                
+                output = ocr_pipeline.predict(path)
+                all_json_data = []
 
-            with open(merged_md_path, "w", encoding="utf-8"):
-                pass
+                with open(merged_md_path, "w", encoding="utf-8"):
+                    pass
 
-            for i, res in enumerate(output):
-                try:
-                    res.save_to_json(save_path=temp_json_path)
-                    with open(temp_json_path, "r", encoding="utf-8") as f:
-                        all_json_data.append(json.load(f))
-                except Exception as e:
-                    self.logger.warning(f"[{sample_id}] JSON page {i+1} error: {e}")
-
-                try:
-                    res.save_to_markdown(save_path=temp_md_path)
-                    with open(temp_md_path, "r", encoding="utf-8") as f:
-                        page_content = f.read()
-                    with open(merged_md_path, "a", encoding="utf-8") as f:
-                        f.write(page_content)
-                        if i < len(output) - 1:
-                            f.write("\n\n")
-                except Exception as e:
-                    self.logger.warning(f"[{sample_id}] Markdown page {i+1} error: {e}")
-
-            try:
-                with open(merged_json_path, "w", encoding="utf-8") as f:
-                    json.dump(all_json_data, f, indent=2, ensure_ascii=False)
-            except Exception as e:
-                self.logger.warning(f"[{sample_id}] Save merged JSON error: {e}")
-
-            for p in (temp_json_path, temp_md_path):
-                if os.path.exists(p):
+                for i, res in enumerate(output):
                     try:
-                        os.remove(p)
-                    except Exception:
-                        pass
+                        res.save_to_json(save_path=temp_json_path)
+                        with open(temp_json_path, "r", encoding="utf-8") as f:
+                            all_json_data.append(json.load(f))
+                    except Exception as e:
+                        self.logger.warning(f"[{name}] JSON page {i+1} error: {e}")
 
-        # --- Step 2: Markdown -> corpus ---
-        corpus = parse_markdown_to_corpus(merged_md_path)
+                    try:
+                        res.save_to_markdown(save_path=temp_md_path)
+                        with open(temp_md_path, "r", encoding="utf-8") as f:
+                            page_content = f.read()
+                        with open(merged_md_path, "a", encoding="utf-8") as f:
+                            f.write(page_content)
+                            if i < len(output) - 1:
+                                f.write("\n\n")
+                    except Exception as e:
+                        self.logger.warning(f"[{name}] Markdown page {i+1} error: {e}")
 
-        # --- Step 3: Embedding ---
-        texts: List[str] = []
-        id_map: List[Dict[str, Any]] = []
+                try:
+                    with open(merged_json_path, "w", encoding="utf-8") as f:
+                        json.dump(all_json_data, f, indent=2, ensure_ascii=False)
+                except Exception as e:
+                    self.logger.warning(f"[{name}] Save merged JSON error: {e}")
 
-        for n in corpus.get("nodes", []):
-            nid = n.get("id")
-            for pi, p in enumerate(n.get("paragraphs", [])):
-                if isinstance(p, str):
-                    t = p.strip()
-                elif isinstance(p, dict):
-                    t = str(p.get("content", "")).strip()
-                else:
-                    t = str(p).strip()
+                for p in (temp_json_path, temp_md_path):
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
 
-                if not t:
-                    continue
-                texts.append(t)
-                id_map.append({"node_id": nid, "paragraph_index": pi})
+            # --- Step 2: Markdown -> corpus ---
+            corpus = parse_markdown_to_corpus(merged_md_path)
 
-        if texts:
-            emb_list: List[List[float]] = [
-                embedder.embed(text=t) 
-                for t in tqdm(texts, desc=f"[{sample_id}] Embedding", unit="chunk", leave=False)]
-            arr = np.asarray(emb_list, dtype=np.float16)
+            # --- Step 3: Embedding ---
+            texts: List[str] = []
+            id_map: List[Dict[str, Any]] = []
 
-            np.save(emb_path, arr)
-            with open(idmap_path, "w", encoding="utf-8") as f:
-                json.dump(id_map, f, ensure_ascii=False)
+            for n in corpus.get("nodes", []):
+                nid = n.get("id")
+                for pi, p in enumerate(n.get("paragraphs", [])):
+                    if isinstance(p, str):
+                        t = p.strip()
+                    elif isinstance(p, dict):
+                        t = str(p.get("content", "")).strip()
+                    else:
+                        t = str(p).strip()
 
-            corpus["vector_store"] = {
-                "matrix_path": emb_path,
-                "id_map_path": idmap_path,
-                "model_name": "doubao-embedding-vision-250615",
-                "normalized": True,
-                "dtype": "float16",
-                "embed_base_url": self.base_url,
-            }
+                    if not t:
+                        continue
+                    texts.append(t)
+                    id_map.append({"node_id": nid, "paragraph_index": pi})
 
-        # --- Step 4: save corpus JSON ---
-        with open(corpus_path, "w", encoding="utf-8") as f:
-            json.dump(corpus, f, indent=2, ensure_ascii=False)
-        self.logger.info(f"[{sample_id}] Corpus saved to {corpus_path}")
+            if texts:
+                emb_list: List[List[float]] = [
+                    embedder.embed(text=t) 
+                    for t in tqdm(texts, desc=f"[{name}] Embedding", unit="chunk", leave=False)]
+                arr = np.asarray(emb_list, dtype=np.float16)
+
+                np.save(emb_path, arr)
+                with open(idmap_path, "w", encoding="utf-8") as f:
+                    json.dump(id_map, f, ensure_ascii=False)
+
+                corpus["vector_store"] = {
+                    "matrix_path": emb_path,
+                    "id_map_path": idmap_path,
+                    "model_name": "doubao-embedding-vision-250615",
+                    "normalized": True,
+                    "dtype": "float16",
+                    "embed_base_url": self.base_url,
+                }
+
+            # --- Step 4: save corpus JSON ---
+            with open(corpus_path, "w", encoding="utf-8") as f:
+                json.dump(corpus, f, indent=2, ensure_ascii=False)
+            self.logger.info(f"[{name}] Corpus saved to {corpus_path}")
+
                 
     def retrieve(self, query: str, topk: int = 5, target_uri: str = None) -> DeepReadResult:
         """
@@ -331,20 +331,15 @@ class DeepReadWrapper:
         target_uri: sample_id，用于定位该 sample 的 corpus 目录。
         返回值中 resources[0].content 即为 agent 的最终答案字符串。
         """
-        sample_id = target_uri
-        if not sample_id:
-            self.logger.error("retrieve() called without target_uri (sample_id).")
-            return DeepReadResult()
-        
-        corpus_path = self._corpus_path(sample_id)
-        if not os.path.exists(corpus_path):
-            self.logger.error(f"Corpus not found for sample '{sample_id}': {corpus_path}")
-            return DeepReadResult()
+        # 找到store_path下所有_corpus.json文件
+        corpus_paths = [os.path.join(self.store_path, f) 
+                        for f in os.listdir(self.store_path) 
+                        if f.endswith('_corpus.json')]
         
         try:
-            doc_index = load_corpus([corpus_path], neighbor_window=self.neighbor_window)
+            doc_index = load_corpus(corpus_paths, neighbor_window=self.neighbor_window)
         except Exception as e:
-            self.logger.error(f"Failed to load corpus for '{sample_id}': {e}")
+            self.logger.error(f"Failed to load corpus for '{self.store_path}': {e}")
             return DeepReadResult()
 
         jsonl_logger = JsonlLogger(self.log_path)
@@ -380,13 +375,13 @@ class DeepReadWrapper:
                 collected_texts=collected_texts,
             )
         except Exception as e:
-            self.logger.error(f"run_agent failed for '{sample_id}': {e}")
+            self.logger.error(f"run_agent failed for '{self.store_path}': {e}")
             answer = f"[Error] {str(e)}"
 
         usage = token_tracker.get()
         return DeepReadResult(
             resources=[DeepReadResource(
-                uri=f"deepread://{sample_id}",
+                uri=f"deepread://{self.store_path}",
                 content=answer,
                 score=1.0,
             )],
@@ -423,3 +418,16 @@ class DeepReadWrapper:
                 if os.path.isdir(entry_path):
                     shutil.rmtree(entry_path)
                     self.logger.info(f"Removed sample dir: {entry_path}")
+
+def main():
+    # 简单测试
+    from paddleocr import PaddleOCRVL
+    ocr_pipeline = PaddleOCRVL(
+        vl_rec_backend="vllm-server",
+        vl_rec_server_url="http://10.77.110.187:8956/v1",
+    )
+    output = ocr_pipeline.predict("/Users/zhangqianyi/Desktop/ruc-ov/Data/FinanceBench/pdfs/3M_2015_10K.pdf")
+    a = 1
+
+if __name__ == "__main__":
+    main()

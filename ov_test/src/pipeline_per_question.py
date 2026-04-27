@@ -428,15 +428,27 @@ class PerQuestionPipeline(BenchmarkPipeline):
             retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(res, 'retrieve_output_tokens', 0)
 
-            retrieved_texts, context_blocks, retrieved_uris = \
-                store.process_retrieval_results(res)
+            # if self.store_type == 'DeepRead':
+            #     class _TempResult:
+            #         def __init__(self, resources):
+            #             self.resources = resources
+            #     retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(_TempResult(res))
+            # else:
+            retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            ans_raw = self.llm.generate(full_prompt)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-            in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
-            out_tok = store.count_tokens(ans) + retrieve_out
+            if self.store_type == 'DeepRead':
+                 # DeepRead 直接返回最终答案，无需再调用 LLM 生成
+                ans = context_blocks[0] if context_blocks else ""
+                in_tok = retrieve_in
+                out_tok = retrieve_out
+            else:
+                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                ans_raw = self.llm.generate(full_prompt)
+                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+
+                in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
+                out_tok = store.count_tokens(ans) + retrieve_out
 
             # 检查是否需要解释 Not mentioned
             not_mentioned_reason = ""

@@ -1,11 +1,11 @@
 project_name: "RAG_Benchmark"
 
-# ===========修改配置================
-dataset_name: "FinanceBench_sample20"
+# ===========修改配置===========
+dataset_name: "Locomo"
 
 adapter:
-  module: "src.adapters.finance_bench_adapter"
-  class_name: "FinanceBenchAdapter"
+  module: "src.adapters.locomo_adapter"
+  class_name: "LocomoAdapter"
 
 store:
   type: "DeepRead"
@@ -23,16 +23,15 @@ execution:
   ingest_workers: 1
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: false
+  skip_ingestion: true
 # ==================================
 
 paths:
-  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  raw_data: "Data/{dataset_name}/locomo10.json"
   doc_output_dir: "Data/{dataset_name}/DeepRead/processed_docs"
   vector_store: "Data/{dataset_name}/DeepRead/store_index"
   output_dir: "Output/{dataset_name}/deepread_experiment"
   log_file: "Output/{dataset_name}/deepread_experiment/benchmark.log"
-
 
 llm:
   model: "doubao-seed-1-8-251228"

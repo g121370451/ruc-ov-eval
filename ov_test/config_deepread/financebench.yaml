@@ -27,11 +27,11 @@ execution:
 # ==================================
 
 paths:
-  raw_data: "Data/{dataset_name}/financebench_open_source.jsonl"
+  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
   doc_output_dir: "Data/{dataset_name}/DeepRead/processed_docs"
   vector_store: "Data/{dataset_name}/DeepRead/store_index"
-  output_dir: "Output/{dataset_name}/experiment_1"
-  log_file: "Output/{dataset_name}/experiment_1/benchmark.log"
+  output_dir: "Output/{dataset_name}/deepread_experiment"
+  log_file: "Output/{dataset_name}/deepread_experiment/benchmark.log"
 
 
 llm:
