@@ -283,14 +283,6 @@ class KohakuStoreWrapper:
             return 0
         return len(self._enc.encode(str(text)))
 
-    # TODO 无用，注释掉
-    def build_uri_map(self, doc_info: List[StandardDoc]) -> Dict[str, list]:
-        if self._per_sample_db:
-            return {doc for doc in doc_info}
-        else:
-            # 单 DB 模式: 所有文档共享同一检索空间, target_uri 不限定范围
-            return {doc.sample_id: [] for doc in doc_info}
-
     # Ingest
     def ingest(
         self,
