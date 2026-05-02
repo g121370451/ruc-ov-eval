@@ -11,21 +11,20 @@ from tqdm import tqdm
 from src.adapters.base import StandardDoc
 from src.core.monitor import BenchmarkMonitor
 from src.core.logger import get_logger
+from src.core.doubao_embedding_util import VolcengineEmbedder, embedding_token_tracker
+from src.core.token_tracer_util import token_tracker
 
 import sys
 DEEPREAD_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "DeepRead")
 sys.path.insert(0, DEEPREAD_PATH)
 
 from DeepRead.DeepRead import (
-    DocIndex,
     load_corpus,
     run_agent,
     JsonlLogger,
     _normalize_neighbor_window,
 )
 from DeepRead.parser_pdf import parse_markdown_to_corpus
-from DeepRead.utils import VolcengineEmbedder, embedding_token_tracker
-import utils as _deepread_utils
 
 
 @dataclass
@@ -346,7 +345,6 @@ class DeepReadWrapper:
 
         # reset 追踪器，确保只统计本次 run_agent 的 token 消耗
         # 必须用 utils（非 DeepRead.utils），与 DeepRead.py 内部的 _token_tracker 是同一实例
-        token_tracker = _deepread_utils.token_tracker
         token_tracker.reset()
 
         collected_texts: List[str] = []

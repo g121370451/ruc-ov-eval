@@ -11,18 +11,11 @@ import math
 import mimetypes
 import os
 import re
-import sys
 import time
 import uuid
 
 # Token tracker (imported lazily to avoid hard dependency when used standalone)
-try: 
-    _DEEPREAD_DIR = os.path.dirname(os.path.abspath(__file__))
-    if _DEEPREAD_DIR not in sys.path:
-        sys.path.insert(0, _DEEPREAD_DIR)
-    from utils import token_tracker as _token_tracker
-except Exception:
-    _token_tracker = None
+from src.core.token_tracer_util import token_tracker as _token_tracker
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent

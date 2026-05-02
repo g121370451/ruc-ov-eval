@@ -28,6 +28,8 @@ from tqdm import tqdm
 from src.adapters.base import StandardDoc
 from src.core.logger import get_logger
 from src.core.monitor import BenchmarkMonitor
+from src.core.token_tracer_util import token_tracker
+from src.core.doubao_embedding_util import VolcengineEmbedder, embedding_token_tracker
 
 # KohakuRAG imports (installed as editable package via `uv add --editable ./KohakuRAG`)
 from kohakurag.datastore import KVaultNodeStore
@@ -36,13 +38,6 @@ from kohakurag.parsers import markdown_to_payload, payload_to_dict
 from kohakurag.pdf_utils import pdf_to_document_payload
 from kohakurag.pipeline import RAGPipeline
 from kohakurag.types import NodeKind
-
-# DeepRead imports (DeepRead/ lives directly under REPO_ROOT; add to path if needed)
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
-from DeepRead.utils import VolcengineEmbedder, embedding_token_tracker, token_tracker
 
 # Query Planner - wraps our LLM client to satisfy KohakuRAG's QueryPlanner protocol
 class LLMQueryPlanner:
