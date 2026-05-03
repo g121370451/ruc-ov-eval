@@ -14,15 +14,13 @@ from src.core.logger import get_logger
 from src.core.doubao_embedding_util import VolcengineEmbedder, embedding_token_tracker
 from src.core.token_tracer_util import token_tracker
 
-from DeepRead.tool import (
-    load_corpus,
-    _normalize_neighbor_window,
-)
+from DeepRead.tool import load_corpus
+from DeepRead.tool.utils import _normalize_neighbor_window
+from DeepRead.index import parse_markdown_to_corpus
 from DeepRead.agent import (
     run_agent,
     JsonlLogger,
 )
-from DeepRead.index import parse_markdown_to_corpus
 
 
 @dataclass
