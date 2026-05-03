@@ -11,7 +11,7 @@ Retrieval:
     KVaultNodeStore.search -> ContextSnippets -> retrieved_texts + context_blocks
 
 Embedding:
-    Volcengine doubao API (same as DeepRead), implements KohakuRAG's EmbeddingModel protocol.
+    Volcengine doubao API, implements KohakuRAG's EmbeddingModel protocol.
 """
 
 import asyncio

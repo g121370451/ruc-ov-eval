@@ -14,17 +14,15 @@ from src.core.logger import get_logger
 from src.core.doubao_embedding_util import VolcengineEmbedder, embedding_token_tracker
 from src.core.token_tracer_util import token_tracker
 
-import sys
-DEEPREAD_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "DeepRead")
-sys.path.insert(0, DEEPREAD_PATH)
-
-from DeepRead.DeepRead import (
+from DeepRead.tool import (
     load_corpus,
-    run_agent,
-    JsonlLogger,
     _normalize_neighbor_window,
 )
-from DeepRead.parser_pdf import parse_markdown_to_corpus
+from DeepRead.agent import (
+    run_agent,
+    JsonlLogger,
+)
+from DeepRead.index import parse_markdown_to_corpus
 
 
 @dataclass
