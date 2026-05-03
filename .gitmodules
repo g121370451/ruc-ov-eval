@@ -5,3 +5,6 @@
 [submodule "KohakuRAG"]
 	path = KohakuRAG
 	url = https://github.com/Kohaku-Lab/KohakuRAG.git
+[submodule "DeepRead"]
+	path = DeepRead
+	url = git@github.com:zhangqianyizhn/DeepRead.git
