@@ -80,6 +80,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
             return DeepReadWrapper.from_config(
                 store_path=store_path,
                 doc_output_dir=self.config['paths'].get('doc_output_dir', ''),
+                output_dir=self.output_dir,
                 llm_cfg=self.config.get('llm', {}),
                 store_cfg=self.config.get('store', {})
             )

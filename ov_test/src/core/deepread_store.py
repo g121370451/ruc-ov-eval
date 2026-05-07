@@ -52,6 +52,7 @@ class DeepReadWrapper:
         self,
         store_path: str,
         doc_output_dir: str,
+        output_dir: str,
         model: str,
         base_url: str,
         api_key: str,
@@ -65,6 +66,7 @@ class DeepReadWrapper:
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
+        self.output_dir = output_dir
         self.logger = get_logger()
 
         os.makedirs(self.store_path, exist_ok=True)
@@ -89,7 +91,7 @@ class DeepReadWrapper:
         except Exception:
             self.neighbor_window = None
 
-        self.log_path = os.path.join(self.store_path, "deepread_run.log")
+        self.log_path = os.path.join(self.output_dir, "deepread_run.log")
 
         try:
             import tiktoken
@@ -99,12 +101,13 @@ class DeepReadWrapper:
             self.enc = None
 
     @classmethod
-    def from_config(cls, store_path: str, doc_output_dir: str, llm_cfg: dict, store_cfg: dict) -> "DeepReadWrapper":
+    def from_config(cls, store_path: str, doc_output_dir: str, output_dir: str, llm_cfg: dict, store_cfg: dict) -> "DeepReadWrapper":
         """从 config.yaml 的三个子块构造实例，供 run.py 调用。"""
         neighbor_window = store_cfg.get("neighbor_window", "1,-1")
         return cls(
             store_path=store_path,
             doc_output_dir=doc_output_dir,
+            output_dir = output_dir,
             model=llm_cfg.get("model", ""),
             base_url=llm_cfg.get("base_url", ""),
             api_key=llm_cfg.get("api_key", ""),
@@ -361,6 +364,9 @@ class DeepReadWrapper:
                 disable_bm25=False,
                 disable_regex=False,
                 disable_read=False,
+                embed_api_key=self.api_key,
+                embed_base_url="https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal",
+                embedding_model="doubao-embedding-vision-250615",
                 neighbor_window=self.neighbor_window,
                 vector_topk=1,
                 hybrid_topk=1,
