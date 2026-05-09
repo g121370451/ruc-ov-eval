@@ -287,11 +287,17 @@ class BenchmarkPipeline:
             retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
 
-            full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
-            ans_raw = self.llm.generate(full_prompt)
-            ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-            in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
-            out_tokens = self.db.count_tokens(ans) + retrieve_out
+            if self.store_type == 'DeepRead':
+                # DeepRead 直接返回最终答案，无需再调用 LLM 生成
+                ans = context_blocks[0] if context_blocks else ""
+                in_tokens = retrieve_in
+                out_tokens = retrieve_out
+            else:
+                full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
+                ans_raw = self.llm.generate(full_prompt)
+                ans = self.adapter.post_process_answer(qa, ans_raw, meta)
+                in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
+                out_tokens = self.db.count_tokens(ans) + retrieve_out
 
             # 检查是否需要解释 Not mentioned
             not_mentioned_reason = ""

@@ -172,6 +172,7 @@ def main():
             vector_store = DeepReadWrapper.from_config(
                 store_path=config['paths']['vector_store'],
                 doc_output_dir=config['paths']['doc_output_dir'],
+                output_dir=config['paths']['output_dir'],
                 llm_cfg=config.get('llm', {}),
                 store_cfg=store_cfg
             )
