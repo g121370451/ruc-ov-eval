@@ -203,6 +203,12 @@ class PerQuestionPipeline(BenchmarkPipeline):
             if max_queries is not None and global_idx >= max_queries:
                 break
 
+        worker_id = self.config['execution'].get('worker_id')
+        num_workers = self.config['execution'].get('num_workers')
+        if worker_id is not None and num_workers is not None:
+            group_tasks = group_tasks[worker_id::num_workers]
+            self.logger.info(f"Shard {worker_id}/{num_workers}: {len(group_tasks)} tasks")
+            
         ingest_workers = self.config['execution'].get('ingest_workers', 4)
 
         # ---- Phase 1: 并行入库 ----

@@ -1,12 +1,9 @@
 project_name: "RAG_Benchmark"
-
-# ===========修改配置===========
-dataset_name: "Locomo"
-
+# =============修改配置=============
+dataset_name: "SyllabusQA"
 adapter:
-  module: "src.adapters.locomo_adapter"
-  class_name: "LocomoAdapter"
-
+  module: "src.adapters.syllabusqa_adapter"
+  class_name: "SyllabusQAAdapter"
 store:
   type: "DeepRead"
   enable_vector: true
@@ -24,13 +21,15 @@ execution:
   retrieval_topk: 5
   max_queries: null
   skip_ingestion: true
+  worker_id: 3
+  num_workers: 7
 # ==================================
-
 paths:
-  raw_data: "Data/{dataset_name}/locomo10.json"
-  doc_output_dir: "Data/{dataset_name}/DeepRead/processed_docs"
-  vector_store: "Data/{dataset_name}/DeepRead/store_index"
-  output_dir: "Output/{dataset_name}/deepread_experiment"
+  raw_data: "Data/{dataset_name}"
+  # use test.csv for test split
+  doc_output_dir: "Data/{dataset_name}/DeepRead/global/processed_docs"
+  vector_store: "Data/{dataset_name}/DeepRead/global/store_index"
+  output_dir: "Output/{dataset_name}/deepread_global_experiment_part3"
   
 llm:
   model: "doubao-seed-1-8-251228"

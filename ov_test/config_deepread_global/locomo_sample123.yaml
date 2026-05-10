@@ -30,8 +30,7 @@ paths:
   doc_output_dir: "Data/{dataset_name}/DeepRead/global/processed_docs"
   vector_store: "Data/{dataset_name}/DeepRead/global/store_index"
   output_dir: "Output/{dataset_name}/deepread_global_experiment"
-  log_file: "Output/{dataset_name}/deepread_global_experiment/benchmark.log"
-
+  
 llm:
   model: "doubao-seed-1-8-251228"
   temperature: 0

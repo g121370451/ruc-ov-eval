@@ -124,7 +124,7 @@ def main():
     print(f"[Init] Resolving paths relative to Project Root: {PROJECT_ROOT}")
     dataset_name = config.get('dataset_name', 'UnknownDataset')
 
-    path_keys = ['raw_data', 'output_dir', 'vector_store', 'log_file', 'doc_output_dir']
+    path_keys = ['raw_data', 'output_dir', 'vector_store', 'doc_output_dir']
     for key in path_keys:
         if key in config.get('paths', {}):
             original = config['paths'][key]

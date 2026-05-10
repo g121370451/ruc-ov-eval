@@ -262,6 +262,13 @@ class BenchmarkPipeline:
                 global_idx += 1
             if max_queries is not None and global_idx >= max_queries:
                 break
+
+        worker_id = self.config['execution'].get('worker_id')
+        num_workers = self.config['execution'].get('num_workers')
+        if worker_id is not None and num_workers is not None:
+            tasks = tasks[worker_id::num_workers]
+            self.logger.info(f"Shard {worker_id}/{num_workers}: {len(tasks)} tasks"
+                             f"(indices {[t['id'] for t in tasks[:3]]}...)")
         return tasks
 
     def _process_generation_task(self, task):
