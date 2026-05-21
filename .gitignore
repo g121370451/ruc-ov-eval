@@ -8,3 +8,5 @@ pageindex.conf
 .venv/
 **/.env
 LangChain-SQL-Agent-master/
+.codex
+*.log
