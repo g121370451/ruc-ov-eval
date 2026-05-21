@@ -37,7 +37,7 @@ class FinanceBenchAdapter(BaseAdapter):
 
     def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
         """
-        准备入库文档列表。优先使用 markdown/ 下已转换的 .md，否则使用 pdfs/ 下的 .pdf。
+        准备入库文档列表。使用 pdfs/ 下的 .pdf。
         """
         if not os.path.exists(self.pdf_dir):
             raise FileNotFoundError(f"PDF directory not found: {self.pdf_dir}")
