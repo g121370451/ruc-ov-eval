@@ -208,7 +208,7 @@ class HippoRAG:
 
         assert False, logger.info('Done with OpenIE, run online indexing for future retrieval.')
 
-    def index(self, docs: List[str]):
+    def index(self, docs: List[str], max_workers: int = None):
         """
         Indexes the given documents based on the HippoRAG 2 framework which generates an OpenIE knowledge graph
         based on the given documents and encodes passages, entities and facts separately for later retrieval.
@@ -216,6 +216,8 @@ class HippoRAG:
         Parameters:
             docs : List[str]
                 A list of documents to be indexed.
+            max_workers : int, optional
+                Maximum number of threads for parallel OpenIE extraction.
         """
 
         logger.info(f"Indexing Documents")
@@ -232,7 +234,7 @@ class HippoRAG:
         new_openie_rows = {k : chunk_to_rows[k] for k in chunk_keys_to_process}
 
         if len(chunk_keys_to_process) > 0:
-            new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows)
+            new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows, max_workers=max_workers)
             self.merge_openie_results(all_openie_info, new_openie_rows, new_ner_results_dict, new_triple_results_dict)
 
         ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info)
