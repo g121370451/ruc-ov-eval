@@ -1,6 +1,8 @@
 import os
 import time
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -56,16 +58,9 @@ class HippoRAGStoreWrapper:
 
         # 延迟初始化 HippoRAG 实例（首次 ingest/retrieve 时创建）
         self._hippo = None
+        self._hippo_lock = threading.Lock()
 
-        # 文本分片器
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=len,
-            separators=["\n\n", "\n", "。", ".", " ", ""],
-        )
-        self.logger.info(f"HippoRAG text splitter: chunk_size={chunk_size}, overlap={chunk_overlap}")
-
+        # 初始化 tiktoken 编码器（必须在 text_splitter 之前，供 _token_length 使用）
         try:
             import tiktoken
             self.enc = tiktoken.get_encoding("cl100k_base")
@@ -73,16 +68,33 @@ class HippoRAGStoreWrapper:
             self.logger.warning(f"tiktoken init failed: {e}")
             self.enc = None
 
+        # 文本分片器（token 级别）
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=self._token_length,
+            separators=["\n\n", "\n", "。", ".", " ", ""],
+        )
+        self.logger.info(f"HippoRAG text splitter: chunk_size={chunk_size} tokens, overlap={chunk_overlap} tokens")
+
     def _ensure_hippo(self):
         if self._hippo is None:
-            from hipporag import HippoRAG
-            self._hippo = HippoRAG(global_config=self.hippo_config)
+            with self._hippo_lock:
+                if self._hippo is None:
+                    from hipporag import HippoRAG
+                    self._hippo = HippoRAG(global_config=self.hippo_config)
         return self._hippo
 
     def count_tokens(self, text: str) -> int:
         if not text or not self.enc:
             return 0
         return len(self.enc.encode(str(text)))
+
+    def _token_length(self, text: str) -> int:
+        """token 级别长度计数，供 text_splitter 使用。编码器不可用时 fallback 到字符计数。"""
+        if self.enc is None:
+            return len(text)
+        return len(self.enc.encode(text))
 
     def _read_document(self, doc_path: str) -> str:
         """读取文档内容，支持 txt/md/pdf 格式"""
@@ -98,37 +110,68 @@ class HippoRAGStoreWrapper:
         return content
 
     def ingest(self, samples: List[StandardDoc], max_workers: int = 4, monitor=None) -> dict:
-        """入库：读取文档内容，调用 HippoRAG.index()"""
+        """入库：并行读取文档，串行分片，串行调用 HippoRAG.index()"""
         start_time = time.time()
         hippo = self._ensure_hippo()
 
-        # 入库前重置 token 计数
         llm = hippo.llm_model
         if hasattr(llm, 'reset_token_usage'):
             llm.reset_token_usage()
 
-        # 收集所有文档内容
-        raw_docs = []
+        # 1. 收集所有文档路径
+        all_doc_paths = []
         for sample in samples:
             for doc_path in sample.doc_paths:
+                all_doc_paths.append(doc_path)
+
+        if not all_doc_paths:
+            return {
+                "time": time.time() - start_time,
+                "input_tokens": 0,
+                "output_tokens": 0,
+            }
+
+        # 2. 并行读取文档（I/O 密集型，线程安全）
+        raw_docs = []
+        actual_workers = max(1, min(int(max_workers), len(all_doc_paths)))
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            future_to_path = {
+                executor.submit(self._read_document, dp): dp
+                for dp in all_doc_paths
+            }
+            for future in as_completed(future_to_path):
+                dp = future_to_path[future]
                 try:
-                    content = self._read_document(doc_path)
+                    content = future.result()
                     if content:
                         raw_docs.append(content)
                 except Exception as e:
-                    self.logger.error(f"Failed to read {doc_path}: {e}")
+                    self.logger.error(f"Failed to read {dp}: {e}")
 
-        # 分片
+        if not raw_docs:
+            self.logger.warning("No documents successfully read, skipping index")
+            return {
+                "time": time.time() - start_time,
+                "input_tokens": 0,
+                "output_tokens": 0,
+            }
+
+        self.logger.info(f"Read {len(raw_docs)} documents using {actual_workers} workers")
+
+        # 3. 串行分片（CPU 密集，GIL 下多线程无益）
         docs = []
         for doc in raw_docs:
-            chunks = self.text_splitter.split_text(doc)
-            docs.extend(chunks)
+            try:
+                chunks = self.text_splitter.split_text(doc)
+                docs.extend(chunks)
+            except Exception as e:
+                self.logger.error(f"Failed to chunk document: {e}")
         self.logger.info(f"Split {len(raw_docs)} docs into {len(docs)} chunks")
 
+        # 4. 索引（OpenIE 抽取并行受 max_workers 控制，EmbeddingStore/Graph 写文件串行）
         if docs:
-            hippo.index(docs)
+            hippo.index(docs, max_workers=actual_workers)
 
-        # 读取 token 消耗
         input_tokens = 0
         output_tokens = 0
         if hasattr(llm, 'get_token_usage'):
@@ -187,7 +230,8 @@ class HippoRAGStoreWrapper:
             hippo.delete(all_chunks)
         else:
             self.logger.info("No chunks to delete")
-        self._hippo = None
+        with self._hippo_lock:
+            self._hippo = None
 
     def close(self):
         """释放资源"""
