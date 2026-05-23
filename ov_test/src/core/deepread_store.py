@@ -4,6 +4,7 @@ import time
 import numpy as np
 import re
 import hashlib
+import threading
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from tqdm import tqdm
@@ -91,7 +92,13 @@ class DeepReadWrapper:
         except Exception:
             self.neighbor_window = None
 
-        self.log_path = os.path.join(self.output_dir, "deepread_run.log")
+        log_path = os.path.join(self.output_dir, "deepread_run.log")
+        self.jsonl_logger = JsonlLogger(log_path)
+
+        # DocIndex 缓存： ingest完成后首次retrieve时构建，之后所有线程复用
+        # _cache_lock 仅保护首次构建（double-checked locking), 构建完成后走无锁快路径
+        self._doc_index_cacahe = None
+        self._cache_lock = threading.Lock()
 
         try:
             import tiktoken
@@ -199,6 +206,8 @@ class DeepReadWrapper:
                 if monitor:
                     monitor.worker_end(success=False)
                 raise e
+            
+        self.invalidate_doc_index_cache()
 
         token_usage = embedding_token_tracker.get()
         return {
@@ -321,7 +330,32 @@ class DeepReadWrapper:
                 json.dump(corpus, f, indent=2, ensure_ascii=False)
             self.logger.info(f"[{name}] Corpus saved to {corpus_path}")
 
-                
+    def _get_doc_index(self):
+        """
+        懒加载并缓存DocIndex
+
+        首次调用时从store_path扫描 *_corpus.json 并构建索引
+        之后所有线程直接复用同一实例（只读，线程安全）
+        double-checked locking 确保构建过程只执行一次
+        """
+        if self._doc_index_cacahe is not None:
+            return self._doc_index_cacahe
+        with self._cache_lock:
+            if self._doc_index_cacahe is None:
+                corpus_paths = [
+                    os.path.join(self.store_path, f) 
+                    for f in os.listdir(self.store_path) 
+                    if f.endswith('_corpus.json')
+                ]
+                self._doc_index_cacahe = load_corpus(corpus_paths, neighbor_window=self.neighbor_window)
+                self.logger.info(f"DocIndex built and cached from {len(corpus_paths)} corpus file(s) in '{self.store_path}'")
+        return self._doc_index_cacahe
+    
+    def invalidate_doc_index_cache(self):
+        "ingest执行后调用"
+        with self._cache_lock:
+            self._doc_index_cacahe = None
+
     def retrieve(self, query: str, topk: int = 5, target_uri: str = None) -> DeepReadResult:
         """
         使用 run_agent 对指定 sample 执行多轮检索并返回最终答案。
@@ -329,18 +363,12 @@ class DeepReadWrapper:
         target_uri: sample_id，用于定位该 sample 的 corpus 目录。
         返回值中 resources[0].content 即为 agent 的最终答案字符串。
         """
-        # 找到store_path下所有_corpus.json文件
-        corpus_paths = [os.path.join(self.store_path, f) 
-                        for f in os.listdir(self.store_path) 
-                        if f.endswith('_corpus.json')]
         
         try:
-            doc_index = load_corpus(corpus_paths, neighbor_window=self.neighbor_window)
+            doc_index = self._get_doc_index()
         except Exception as e:
             self.logger.error(f"Failed to load corpus for '{self.store_path}': {e}")
             return DeepReadResult()
-
-        jsonl_logger = JsonlLogger(self.log_path)
 
         # reset 追踪器，确保只统计本次 run_agent 的 token 消耗
         # 必须用 utils（非 DeepRead.utils），与 DeepRead.py 内部的 _token_tracker 是同一实例
@@ -354,7 +382,7 @@ class DeepReadWrapper:
                 base_url=self.base_url,
                 doc_index=doc_index,
                 user_question=query,
-                logger=jsonl_logger,
+                logger=self.jsonl_logger,
                 max_rounds=self.max_rounds,
                 temperature=self.temperature,
                 api_key=self.api_key,
