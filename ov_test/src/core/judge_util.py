@@ -66,6 +66,41 @@ First, provide a short (one sentence) explanation of your reasoning.
 Respond with JSON only: {{"score": 4 or 0, "reasoning": "your explanation"}}
 """
 
+    elif "loong" in dataset_name_lower:
+        prompt_type = "Loong_Structured_0-4"
+
+        system_prompt = "You are an expert evaluator scoring structured answers from multi-document reasoning tasks."
+
+        ACCURACY_PROMPT = f"""
+Score the Generated Answer against the Gold Answer (0-4).
+
+Task context:
+- The model is given several academic papers and must answer a structured question about citation relationships.
+- Level 3: Identify Reference/Citation relationships for a target paper (answer format: JSON dict with "Reference" and "Citation" keys).
+- Level 4: Construct the longest citation chain from the provided papers (answer format: ordered list of paper titles).
+
+Gold Answer is provided as a JSON array representing the complete set of acceptable answers.
+
+Scoring Rubric:
+4: Perfect match. All citation relationships or the full citation chain are correctly identified. Minor formatting differences (e.g. extra whitespace, missing '#' prefix) are acceptable if the semantic content is correct.
+3: Mostly correct. The core relationships are captured but with minor errors (e.g. missing one reference, one title slightly wrong, or extra incorrect entries that don't contradict the core answer).
+2: Partially correct. Some valid relationships are identified, but significant ones are missing or wrong.
+1: Barely relevant. The answer touches on the topic but contains major factual errors in citation relationships.
+0: Completely wrong, hallucinated paper titles, or empty/invalid JSON.
+
+Important:
+- Paper titles may appear with or without a leading "#" in the generated answer; this should NOT be penalized.
+- The order of papers in a citation chain matters for Level 4; an incorrect order should reduce the score.
+- For Level 3, both Reference and Citation lists must be evaluated together.
+
+Question: {question}
+Gold Answer: {gold_answer}
+Generated Answer: {response}
+
+First, write a 1-sentence reasoning. Then output the integer score.
+Respond ONLY with a JSON object: {{"score": 0 to 4, "reasoning": "string"}}
+"""
+
     else:
         prompt_type = "Generic_0-4"
         system_prompt = "You are an expert evaluator scoring how well an AI-generated answer matches a gold standard."
