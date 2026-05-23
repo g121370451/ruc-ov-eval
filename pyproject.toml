@@ -30,6 +30,7 @@ dependencies = [
     "transformers>=5.3.0",
     "docling>=2.90.0",
     "pypdf>=6.10.2",
+    "pdfplumber>=0.11.9",
 ]
 
 [tool.uv.workspace]
