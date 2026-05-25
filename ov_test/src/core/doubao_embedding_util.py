@@ -40,6 +40,7 @@ class VolcengineEmbedder():
         api_base: Optional[str] = None,
         dimension: Optional[int] = None,
         input_type: str = "text",
+        tracker=None,
     ):
         """Initialize Volcengine Embedder
 
@@ -60,6 +61,7 @@ class VolcengineEmbedder():
         self.api_base = api_base or "https://ark.cn-beijing.volces.com/api/v3"
         self.dimension = dimension
         self.input_type = input_type
+        self.tracker = tracker if tracker is not None else embedding_token_tracker
 
         if not self.api_key:
             raise ValueError("api_key is required")
@@ -97,7 +99,7 @@ class VolcengineEmbedder():
         total_tokens = _usage_value("total_tokens", prompt_tokens)
         completion_tokens = max(total_tokens - prompt_tokens, 0)
 
-        embedding_token_tracker.add(prompt_tokens, completion_tokens)
+        self.tracker.add(prompt_tokens, completion_tokens)
         # print("prompt_tokens", prompt_tokens)
         # print("total_tokens", total_tokens)
         # print("completion_tokens", completion_tokens)

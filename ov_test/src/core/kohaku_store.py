@@ -218,6 +218,8 @@ class KohakuStoreWrapper:
             api_base=api_base,
             dimension=embedding_dimension,
         )
+        # 用于 ingestion 阶段跨线程汇总 token 的局部 tracker
+        self._ingest_tracker = None
         self._parent_depth = parent_depth
         self._child_depth = child_depth
         self._deduplicate = deduplicate_retrieval
@@ -311,8 +313,13 @@ class KohakuStoreWrapper:
         max_workers: int = 1,
         monitor: Optional[BenchmarkMonitor] = None,
     ) -> dict:
+        from src.core.token_tracer_util import SimpleTokenTracker
+
         start_time = time.time()
-        embedding_token_tracker.reset()
+        self._ingest_tracker = SimpleTokenTracker()
+        # 临时替换底层 embedder 的 tracker，使 run_in_executor 中的线程也能汇总到同一计数器
+        original_tracker = getattr(self._embedder._embedder, "tracker", None)
+        self._embedder._embedder.tracker = self._ingest_tracker
 
         indexer = DocumentIndexer(
             embedding_model=self._embedder,
@@ -328,22 +335,26 @@ class KohakuStoreWrapper:
                     seen.add(p)
                     all_paths.append(p)
 
-        for path in tqdm(all_paths, desc="Ingesting Docs to KohakuRAG"):
-            if monitor:
-                monitor.worker_start()
-            try:
-                self._ingest_one(path, indexer)
+        try:
+            for path in tqdm(all_paths, desc="Ingesting Docs to KohakuRAG"):
                 if monitor:
-                    monitor.worker_end(success=True)
-            except Exception as e:
-                self.logger.error(f"Failed to ingest sample {path}: {e}")
-                if monitor:
-                    monitor.worker_end(success=False)
-                    raise
+                    monitor.worker_start()
+                try:
+                    self._ingest_one(path, indexer)
+                    if monitor:
+                        monitor.worker_end(success=True)
+                except Exception as e:
+                    self.logger.error(f"Failed to ingest sample {path}: {e}")
+                    if monitor:
+                        monitor.worker_end(success=False)
+                        raise
+        finally:
+            self._embedder._embedder.tracker = original_tracker
 
         self.invalidate_kv_store_cache()
 
-        token_usage = embedding_token_tracker.get()
+        token_usage = self._ingest_tracker.get()
+        self._ingest_tracker = None
         return {
             "time": time.time() - start_time,
             "input_tokens": token_usage["input_tokens"],
