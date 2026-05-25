@@ -1,10 +1,10 @@
 from typing import List, Optional
 
 import volcenginesdkarkruntime
-from src.core.token_tracer_util import TokenTracker
+from src.core.token_tracer_util import ThreadLocalTokenTracker
 
 # embedding token追踪器实例
-embedding_token_tracker = TokenTracker()
+embedding_token_tracker = ThreadLocalTokenTracker()
 
 def truncate_and_normalize(embedding: List[float], dimension: Optional[int]) -> List[float]:
     """Truncate and L2 normalize embedding vector

@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
@@ -235,6 +236,9 @@ class KohakuStoreWrapper:
             self.logger.warning(f"tiktoken init failed: {e}")
             self._enc = None
 
+        self._kv_store_cache: Optional[KVaultNodeStore] = None
+        self._kv_store_lock = threading.Lock()
+
     @classmethod
     def from_config(cls, store_path: str, doc_output_dir: str, llm_cfg: dict, store_cfg: dict) -> "KohakuStoreWrapper":
         planner_max_queries = store_cfg.get("planner_max_queries", 1)
@@ -278,6 +282,23 @@ class KohakuStoreWrapper:
         else:
             return "kohaku"
 
+    def _get_kv_store(self) -> KVaultNodeStore:
+        if self._kv_store_cache is not None:
+            return self._kv_store_cache
+        with self._kv_store_lock:
+            if self._kv_store_cache is None:
+                db_path = os.path.join(self.store_path, "kohaku.db")
+                self._kv_store_cache = KVaultNodeStore(
+                    db_path,
+                    table_prefix="kohaku",
+                )
+                self.logger.info(f"KVaultNodeStore opened and cached: {db_path}")
+        return self._kv_store_cache
+    
+    def invalidate_kv_store_cache(self):
+        with self._kv_store_lock:
+            self._kv_store_cache = None
+    
     def count_tokens(self, text: str) -> int:
         if not text or not self._enc:
             return 0
@@ -319,6 +340,8 @@ class KohakuStoreWrapper:
                 if monitor:
                     monitor.worker_end(success=False)
                     raise
+
+        self.invalidate_kv_store_cache()
 
         token_usage = embedding_token_tracker.get()
         return {
@@ -393,7 +416,6 @@ class KohakuStoreWrapper:
         #     sample_id = target_uri  # 仅用于日志, 可为 None
 
         db_path = os.path.join(self.store_path, "kohaku.db")
-        table_prefix = "kohaku"
 
         if not os.path.exists(db_path):
             self.logger.error(f"DB not found: {db_path}")
@@ -402,7 +424,7 @@ class KohakuStoreWrapper:
         embedding_token_tracker.reset()
         token_tracker.reset()
 
-        store = KVaultNodeStore(db_path, table_prefix=table_prefix)  # dimensions auto-inferred from existing DB
+        store = self._get_kv_store()
         pipeline_kwargs = dict(
             store=store,
             embedder=self._embedder,
