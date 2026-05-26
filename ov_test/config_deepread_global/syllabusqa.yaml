@@ -16,11 +16,11 @@ store:
   use_pymupdf: true
 
 execution:
-  max_workers: 1
+  max_workers: 9
   ingest_workers: 1
-  retrieval_topk: 5
+  retrieval_topk: 2
   max_queries: null
-  skip_ingestion: false
+  skip_ingestion: true
 # ==================================
 paths:
   raw_data: "Data/{dataset_name}"
