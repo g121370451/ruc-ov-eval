@@ -342,13 +342,19 @@ class DeepReadWrapper:
             return self._doc_index_cacahe
         with self._cache_lock:
             if self._doc_index_cacahe is None:
-                corpus_paths = [
-                    os.path.join(self.store_path, f) 
-                    for f in os.listdir(self.store_path) 
+                corpus_paths = sorted([
+                    os.path.join(self.store_path, f)
+                    for f in os.listdir(self.store_path)
                     if f.endswith('_corpus.json')
-                ]
+                ])
                 self._doc_index_cacahe = load_corpus(corpus_paths, neighbor_window=self.neighbor_window)
                 self.logger.info(f"DocIndex built and cached from {len(corpus_paths)} corpus file(s) in '{self.store_path}'")
+                # 输出 doc_id -> 文档名映射，方便人工查阅
+                if getattr(self._doc_index_cacahe, 'doc_id_map', None):
+                    map_path = os.path.join(self.store_path, "deepread_doc_map.json")
+                    with open(map_path, "w", encoding="utf-8") as f:
+                        json.dump(self._doc_index_cacahe.doc_id_map, f, indent=2, ensure_ascii=False)
+                    self.logger.info(f"Doc id map saved to {map_path}")
         return self._doc_index_cacahe
     
     def invalidate_doc_index_cache(self):

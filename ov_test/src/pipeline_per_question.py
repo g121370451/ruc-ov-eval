@@ -336,6 +336,26 @@ class PerQuestionPipeline(BenchmarkPipeline):
         with open(self.generated_file, "w", encoding="utf-8") as f:
             json.dump(save_data, f, indent=2, ensure_ascii=False)
 
+        # DeepRead 迭代轮次统计（如有日志则自动解析并追加到报告）
+        if self.store_type == 'DeepRead':
+            log_path = os.path.join(self.output_dir, "deepread_run.log")
+            if os.path.exists(log_path):
+                try:
+                    from scripts.analyze_deepread_log import analyze
+                    iter_stats = analyze(log_path)
+                    if iter_stats:
+                        self._update_report({
+                            "DeepRead Agent Iterations": {
+                                "Average Rounds": iter_stats.get("average_rounds", 0),
+                                "Median Rounds": iter_stats.get("median_rounds", 0),
+                                "Max Rounds": iter_stats.get("max_rounds", 0),
+                                "Min Rounds": iter_stats.get("min_rounds", 0),
+                                "Distribution": iter_stats.get("distribution", {})
+                            }
+                        })
+                except Exception as e:
+                    self.logger.warning(f"Failed to analyze deepread_run.log: {e}")
+
     # ---- 入库（单组）----
 
     def _ingest_group(self, store_key, group):
