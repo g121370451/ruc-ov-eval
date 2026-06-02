@@ -1,0 +1,29 @@
+project_name: "RAG_Benchmark"
+
+# ===========修改配置================
+dataset_name: "LoongLegal"
+
+adapter:
+  module: "src.adapters.loong_legal_adapter"
+  class_name: "LoongLegalAdapter"
+
+execution:
+  max_workers: 5         # LLM 生成任务的并发数
+  ingest_workers: 1      # 数据入库任务的并发数
+  retrieval_topk: 10     # 检索 Top-K（Legal 任务需多文档理解，适当放大）
+  max_queries: null      # 最大查询数，null 表示全部查询
+# ==================================
+
+paths:
+  raw_data: "Data/Loong/loong.jsonl"
+  doc_output_dir: "Data/Loong/legal_processed_docs"
+  vector_store: "Data/Loong/legal_viking_store"
+  output_dir: "Output/LoongLegal/experiment_0001"
+  log_file: "Output/LoongLegal/experiment_0001/benchmark.log"
+
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"
