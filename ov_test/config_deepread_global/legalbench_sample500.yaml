@@ -21,7 +21,7 @@ store:
 execution:
   max_workers: 10
   ingest_workers: 1
-  retrieval_topk: 5
+  retrieval_topk: 2
   max_queries: 500
   skip_ingestion: false
 # ==================================
