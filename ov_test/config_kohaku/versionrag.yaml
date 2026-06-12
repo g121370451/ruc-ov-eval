@@ -1,0 +1,35 @@
+project_name: "RAG_Benchmark"
+dataset_name: "VersionRAG"
+
+adapter:
+  module: "src.adapters.versionrag_adapter"
+  class_name: "VersionRAGAdapter"
+
+store:
+  type: "KohakuRAG"
+  embedding_dimension: 2048
+  parent_depth: 1
+  child_depth: 0
+  deduplicate_retrieval: true
+  rerank_strategy: null
+  paragraph_embedding_mode: "averaged"
+  planner_max_queries: 3
+
+execution:
+  max_workers: 6
+  ingest_workers: 6
+  retrieval_topk: 5
+  max_queries: null
+
+paths:
+  raw_data: "Data/{dataset_name}/data/test/evaluation_set.csv"
+  doc_output_dir: "Data/{dataset_name}/KohakuRAG/processed_docs"
+  vector_store: "Data/{dataset_name}/KohakuRAG/store_index"
+  output_dir: "Output/{dataset_name}/kohaku_experiment"
+  log_file: "Output/{dataset_name}/kohaku_experiment/benchmark.log"
+
+llm:
+  model: "doubao-seed-2-0-pro-260215"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: ""
