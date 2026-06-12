@@ -1,0 +1,44 @@
+project_name: "RAG_Benchmark"
+
+# ===========Modify Configuration================
+dataset_name: "FinanceBench" 
+
+adapter:
+  module: "src.adapters.financebench_adapter"  
+  class_name: "FinanceBenchAdapter"     
+
+execution:
+  max_workers: 10
+  ingest_workers: 10
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: true
+  ingest_mode: "directory"
+  retrieval_instruction: ""  
+# ==================================  
+
+paths:
+  dataset_path: "datasets/{dataset_name}/financebench_open_source.jsonl"
+  doc_output_dir: "naive_storage/{dataset_name}/{dataset_name}_processed_docs"
+  vector_store: "naive_storage/{dataset_name}/{dataset_name}_naive_store_index"
+  output_dir: "Output_naive/{dataset_name}/experiment_test_top_{retrieval_topk}_naive"
+  log_file: "Output_naive/{dataset_name}/experiment_test_top_{retrieval_topk}_naive/benchmark.log"
+
+
+llm:
+  model: "doubao-seed-2-0-pro-260215"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: ""
+
+# ===========Naive RAG Configuration============
+naive_rag:
+  chunk_size: 256
+  chunk_overlap: 0
+  # From ov.conf: embedding.dense.model
+  embedding_model: "doubao-embedding-vision-250615"
+  api_base: "https://ark.cn-beijing.volces.com/api/v3"
+  dimension: 1024
+  input_type: "multimodal"
+  batch_size: 8
+  max_concurrent: 10
