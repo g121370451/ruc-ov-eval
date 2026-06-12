@@ -1,0 +1,50 @@
+project_name: "RAG_Benchmark"
+dataset_name: "VersionRAG"
+
+adapter:
+  module: "src.adapters.versionrag_adapter"
+  class_name: "VersionRAGAdapter"
+
+store:
+  type: "lightrag"
+  lightrag_config:
+    llm_model: "ep-20260611111022-tfvss"
+    llm_base_url: "${LLM_BASE_URL}"
+    llm_api_key: ""
+    embedding_model_name: "${EMBEDDING_MODEL_NAME}"
+    embedding_base_url: "${EMBEDDING_BASE_URL}"
+    embedding_api_key: "${EMBEDDING_API_KEY}"
+    enable_rerank: false
+    rerank_ak_env: "RERANK_AK"
+    rerank_sk_env: "RERANK_SK"
+    rerank_host: "api-vikingdb.vikingdb.cn-beijing.volces.com"
+    rerank_model_name: "doubao-seed-rerank"
+    rerank_model_version: "251028"
+    rerank_threshold: 0.1
+    use_native_answer_generation: false
+    max_parallel_insert: 3
+    llm_model_max_async: 3
+    embedding_func_max_async: 3
+    default_llm_timeout: 900
+    llm_model_kwargs:
+      temperature: 0
+      max_tokens: 32768
+      timeout: 900
+
+execution:
+  query_group_workers: 4
+  max_queries: null
+
+  max_workers: 4
+paths:
+  raw_data: "Data/{dataset_name}/data/test/evaluation_set.csv"
+  doc_output_dir: "Data/{dataset_name}/lightrag_global/processed_docs"
+  vector_store: "Data/{dataset_name}/lightrag_global/store_index"
+  output_dir: "Output/{dataset_name}/lightrag_global/experiment_0001"
+  log_file: "Output/{dataset_name}/lightrag_global/experiment_0001/benchmark.log"
+
+llm:
+  model: "ep-20260611111022-tfvss"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: ""
