@@ -1,0 +1,798 @@
+# Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+"""Session management for OpenViking.
+
+Session as Context: Sessions integrated into L0/L1/L2 system.
+"""
+
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from uuid import uuid4
+
+from openviking.message import Message, Part
+from openviking.server.identity import RequestContext, Role
+from openviking.telemetry import get_current_telemetry
+from openviking.utils.time_utils import get_current_timestamp
+from openviking_cli.session.user_id import UserIdentifier
+from openviking_cli.utils import get_logger, run_async
+from openviking_cli.utils.config import get_openviking_config
+
+if TYPE_CHECKING:
+    from openviking.session.compressor import SessionCompressor
+    from openviking.storage import VikingDBManager
+    from openviking.storage.viking_fs import VikingFS
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class SessionCompression:
+    """Session compression information."""
+
+    summary: str = ""
+    original_count: int = 0
+    compressed_count: int = 0
+    compression_index: int = 0
+
+
+@dataclass
+class SessionStats:
+    """Session statistics information."""
+
+    total_turns: int = 0
+    total_tokens: int = 0
+    compression_count: int = 0
+    contexts_used: int = 0
+    skills_used: int = 0
+    memories_extracted: int = 0
+
+
+@dataclass
+class Usage:
+    """Usage record."""
+
+    uri: str
+    type: str  # "context" | "skill"
+    contribution: float = 0.0
+    input: str = ""
+    output: str = ""
+    success: bool = True
+    timestamp: str = field(default_factory=get_current_timestamp)
+
+
+class Session:
+    """Session management class - Message = role + parts."""
+
+    def __init__(
+        self,
+        viking_fs: "VikingFS",
+        vikingdb_manager: Optional["VikingDBManager"] = None,
+        session_compressor: Optional["SessionCompressor"] = None,
+        user: Optional["UserIdentifier"] = None,
+        ctx: Optional[RequestContext] = None,
+        session_id: Optional[str] = None,
+        auto_commit_threshold: int = 8000,
+    ):
+        self._viking_fs = viking_fs
+        self._vikingdb_manager = vikingdb_manager
+        self._session_compressor = session_compressor
+        self.user = user or UserIdentifier.the_default_user()
+        self.ctx = ctx or RequestContext(user=self.user, role=Role.ROOT)
+        self.session_id = session_id or str(uuid4())
+        self.created_at = datetime.now()
+        self._auto_commit_threshold = auto_commit_threshold
+        self._session_uri = f"viking://session/{self.user.user_space_name()}/{self.session_id}"
+
+        self._messages: List[Message] = []
+        self._usage_records: List[Usage] = []
+        self._compression: SessionCompression = SessionCompression()
+        self._stats: SessionStats = SessionStats()
+        self._loaded = False
+
+        logger.info(f"Session created: {self.session_id} for user {self.user}")
+
+    async def load(self):
+        """Load session data from storage."""
+        if self._loaded:
+            return
+
+        try:
+            content = await self._viking_fs.read_file(
+                f"{self._session_uri}/messages.jsonl", ctx=self.ctx
+            )
+            self._messages = [
+                Message.from_dict(json.loads(line))
+                for line in content.strip().split("\n")
+                if line.strip()
+            ]
+            logger.info(f"Session loaded: {self.session_id} ({len(self._messages)} messages)")
+        except (FileNotFoundError, Exception):
+            logger.debug(f"Session {self.session_id} not found, starting fresh")
+
+        # Restore compression_index (scan history directory)
+        try:
+            history_items = await self._viking_fs.ls(f"{self._session_uri}/history", ctx=self.ctx)
+            archives = [
+                item["name"] for item in history_items if item["name"].startswith("archive_")
+            ]
+            if archives:
+                max_index = max(int(a.split("_")[1]) for a in archives)
+                self._compression.compression_index = max_index
+                self._stats.compression_count = len(archives)
+                logger.debug(f"Restored compression_index: {max_index}")
+        except Exception:
+            pass
+
+        self._loaded = True
+
+    async def exists(self) -> bool:
+        """Check whether this session already exists in storage."""
+        try:
+            await self._viking_fs.stat(self._session_uri, ctx=self.ctx)
+            return True
+        except Exception:
+            return False
+
+    async def ensure_exists(self) -> None:
+        """Materialize session root and messages file if missing."""
+        if await self.exists():
+            return
+        await self._viking_fs.mkdir(self._session_uri, exist_ok=True, ctx=self.ctx)
+        await self._viking_fs.write_file(f"{self._session_uri}/messages.jsonl", "", ctx=self.ctx)
+
+    @property
+    def messages(self) -> List[Message]:
+        """Get message list."""
+        return self._messages
+
+    # ============= Core methods =============
+
+    def used(
+        self,
+        contexts: Optional[List[str]] = None,
+        skill: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record actually used contexts and skills."""
+        if contexts:
+            for uri in contexts:
+                usage = Usage(uri=uri, type="context")
+                self._usage_records.append(usage)
+                self._stats.contexts_used += 1
+                logger.debug(f"Tracked context usage: {uri}")
+
+        if skill:
+            usage = Usage(
+                uri=skill.get("uri", ""),
+                type="skill",
+                input=skill.get("input", ""),
+                output=skill.get("output", ""),
+                success=skill.get("success", True),
+            )
+            self._usage_records.append(usage)
+            self._stats.skills_used += 1
+            logger.debug(f"Tracked skill usage: {skill.get('uri')}")
+
+    def add_message(
+        self,
+        role: str,
+        parts: List[Part],
+    ) -> Message:
+        """Add a message."""
+        msg = Message(
+            id=f"msg_{uuid4().hex}",
+            role=role,
+            parts=parts,
+            created_at=datetime.now(),
+        )
+        self._messages.append(msg)
+
+        # Update statistics
+        if role == "user":
+            self._stats.total_turns += 1
+        self._stats.total_tokens += len(msg.content) // 4
+
+        self._append_to_jsonl(msg)
+        return msg
+
+    def update_tool_part(
+        self,
+        message_id: str,
+        tool_id: str,
+        output: str,
+        status: str = "completed",
+    ) -> None:
+        """Update tool status."""
+        msg = next((m for m in self._messages if m.id == message_id), None)
+        if not msg:
+            return
+
+        tool_part = msg.find_tool_part(tool_id)
+        if not tool_part:
+            return
+
+        tool_part.tool_output = output
+        tool_part.tool_status = status
+
+        self._save_tool_result(tool_id, msg, output, status)
+        self._update_message_in_jsonl()
+
+    def commit(self) -> Dict[str, Any]:
+        """Sync wrapper for commit_async()."""
+        return run_async(self.commit_async())
+
+    async def commit_async(self) -> Dict[str, Any]:
+        """Async commit session: two-phase approach.
+
+        Phase 1 (Archive prep, PathLock-protected): Copy messages, clear live
+        session, increment compression index. Uses a distributed filesystem lock
+        (PathLock) so this works across workers and processes.
+        Phase 2 (Memory, redo-log protected): Extract memories, write, enqueue.
+        """
+        import uuid
+
+        from openviking.storage.transaction import LockContext, get_lock_manager
+
+        result = {
+            "session_id": self.session_id,
+            "status": "committed",
+            "memories_extracted": 0,
+            "active_count_updated": 0,
+            "archived": False,
+            "stats": None,
+        }
+
+        # ===== Phase 1: Snapshot + clear (PathLock-protected) =====
+        # Fast pre-check: skip lock entirely if no messages (common case avoids
+        # unnecessary filesystem lock acquisition).
+        if not self._messages:
+            get_current_telemetry().set("memory.extracted", 0)
+            return result
+
+        # Use filesystem-based distributed lock so this works across workers/processes.
+        session_path = self._viking_fs._uri_to_path(self._session_uri, ctx=self.ctx)
+        async with LockContext(get_lock_manager(), [session_path], lock_mode="point"):
+            # Authoritative check under lock: handles the race where two concurrent
+            # callers both passed the pre-check but only the first should archive.
+            if not self._messages:
+                get_current_telemetry().set("memory.extracted", 0)
+                return result
+
+            self._compression.compression_index += 1
+            messages_to_archive = self._messages.copy()
+            self._messages.clear()
+
+            try:
+                await self._write_to_agfs_async(messages=[])
+            except Exception:
+                # Rollback: restore messages so they aren't lost
+                self._messages.extend(messages_to_archive)
+                self._compression.compression_index -= 1
+                raise
+        # Lock released — live session is now clean.
+        # Any add_message() from here appends to the fresh empty list.
+
+        # ===== Phase 1 continued: Archive write (no lock needed) =====
+        summary = await self._generate_archive_summary_async(messages_to_archive)
+        archive_abstract = self._extract_abstract_from_summary(summary)
+        archive_overview = summary
+
+        archive_uri = (
+            f"{self._session_uri}/history/archive_{self._compression.compression_index:03d}"
+        )
+        await self._write_archive_async(
+            index=self._compression.compression_index,
+            messages=messages_to_archive,
+            abstract=archive_abstract,
+            overview=archive_overview,
+        )
+
+        self._compression.original_count += len(messages_to_archive)
+        result["archived"] = True
+        logger.info(
+            f"Archived: {len(messages_to_archive)} messages → "
+            f"history/archive_{self._compression.compression_index:03d}/"
+        )
+
+        # ===== Phase 2: Memory extraction + write (redo-log protected) =====
+        redo_log = get_lock_manager().redo_log
+        task_id = str(uuid.uuid4())
+        redo_log.write_pending(
+            task_id,
+            {
+                "archive_uri": archive_uri,
+                "session_uri": self._session_uri,
+                "account_id": self.ctx.account_id,
+                "user_id": self.ctx.user.user_id,
+                "agent_id": self.ctx.user.agent_id,
+                "role": self.ctx.role.value,
+            },
+        )
+
+        if self._session_compressor:
+            logger.info(
+                f"Starting memory extraction from {len(messages_to_archive)} archived messages"
+            )
+            memories = await self._session_compressor.extract_long_term_memories(
+                messages=messages_to_archive,
+                user=self.user,
+                session_id=self.session_id,
+                ctx=self.ctx,
+            )
+            logger.info(f"Extracted {len(memories)} memories")
+            result["memories_extracted"] = len(memories)
+            self._stats.memories_extracted += len(memories)
+            get_current_telemetry().set("memory.extracted", len(memories))
+
+        await self._write_to_agfs_async(self._messages)
+        await self._write_relations_async()
+
+        # Enqueue semantic processing directly
+        from openviking.storage.queuefs import get_queue_manager
+        from openviking.storage.queuefs.semantic_msg import SemanticMsg
+
+        queue_manager = get_queue_manager()
+        if queue_manager:
+            msg = SemanticMsg(
+                uri=self._session_uri,
+                context_type="memory",
+                account_id=self.ctx.account_id,
+                user_id=self.ctx.user.user_id,
+                agent_id=self.ctx.user.agent_id,
+                role=self.ctx.role.value,
+            )
+            semantic_queue = queue_manager.get_queue(queue_manager.SEMANTIC)
+            await semantic_queue.enqueue(msg)
+
+        redo_log.mark_done(task_id)
+
+        # Update active_count
+        active_count_updated = await self._update_active_counts_async()
+        result["active_count_updated"] = active_count_updated
+
+        # Update statistics
+        self._stats.compression_count = self._compression.compression_index
+        result["stats"] = {
+            "total_turns": self._stats.total_turns,
+            "contexts_used": self._stats.contexts_used,
+            "skills_used": self._stats.skills_used,
+            "memories_extracted": self._stats.memories_extracted,
+        }
+
+        self._stats.total_tokens = 0
+        logger.info(f"Session {self.session_id} committed (async)")
+        return result
+
+    def _update_active_counts(self) -> int:
+        """Update active_count for used contexts/skills."""
+        if not self._vikingdb_manager:
+            return 0
+
+        uris = [usage.uri for usage in self._usage_records if usage.uri]
+        try:
+            updated = run_async(self._vikingdb_manager.increment_active_count(self.ctx, uris))
+        except Exception as e:
+            logger.debug(f"Could not update active_count for usage URIs: {e}")
+            updated = 0
+
+        if updated > 0:
+            logger.info(f"Updated active_count for {updated} contexts/skills")
+        return updated
+
+    async def _update_active_counts_async(self) -> int:
+        """Async update active_count for used contexts/skills."""
+        if not self._vikingdb_manager:
+            return 0
+
+        uris = [usage.uri for usage in self._usage_records if usage.uri]
+        try:
+            updated = await self._vikingdb_manager.increment_active_count(self.ctx, uris)
+        except Exception as e:
+            logger.debug(f"Could not update active_count for usage URIs: {e}")
+            updated = 0
+
+        if updated > 0:
+            logger.info(f"Updated active_count for {updated} contexts/skills")
+        return updated
+
+    async def get_context_for_search(
+        self, query: str, max_archives: int = 3, max_messages: int = 20
+    ) -> Dict[str, Any]:
+        """Get session context for intent analysis.
+
+        Args:
+            query: Query string for matching relevant archives
+            max_archives: Maximum number of archives to retrieve (default 3)
+            max_messages: Maximum number of messages to retrieve (default 20)
+
+        Returns:
+            - summaries: Most relevant and recent archive overview list (List[str])
+            - recent_messages: Recent message list (List[Message])
+        """
+        # 1. Recent messages
+        recent_messages = list(self._messages[-max_messages:]) if self._messages else []
+
+        # 2. Find most relevant and recent archives using query
+        summaries = []
+        if self.compression.compression_index > 0:
+            try:
+                history_items = await self._viking_fs.ls(
+                    f"{self._session_uri}/history", ctx=self.ctx
+                )
+                query_lower = query.lower()
+
+                # Collect all archives with relevance scores
+                scored_archives = []
+                for item in history_items:
+                    name = item.get("name") if isinstance(item, dict) else item
+                    if name and name.startswith("archive_"):
+                        overview_uri = f"{self._session_uri}/history/{name}/.overview.md"
+                        try:
+                            overview = await self._viking_fs.read_file(overview_uri, ctx=self.ctx)
+                            # Calculate relevance by keyword matching
+                            score = 0
+                            if query_lower in overview.lower():
+                                score = overview.lower().count(query_lower)
+                            # Infer time from name (higher archive_NNN = newer)
+                            archive_num = int(name.split("_")[1]) if "_" in name else 0
+                            scored_archives.append((score, archive_num, overview))
+                        except Exception:
+                            pass
+
+                # Sort: relevance first, then time, take top N
+                scored_archives.sort(key=lambda x: (x[0], x[1]), reverse=True)
+                summaries = [overview for _, _, overview in scored_archives[:max_archives]]
+
+            except Exception:
+                pass
+
+        return {
+            "summaries": summaries,
+            "recent_messages": recent_messages,
+        }
+
+    # ============= Internal methods =============
+
+    def _extract_abstract_from_summary(self, summary: str) -> str:
+        """Extract one-sentence overview from structured summary."""
+        if not summary:
+            return ""
+
+        match = re.search(r"^\*\*[^*]+\*\*:\s*(.+)$", summary, re.MULTILINE)
+        if match:
+            return match.group(1).strip()
+
+        first_line = summary.split("\n")[0].strip()
+        return first_line if first_line else ""
+
+    def _generate_archive_summary(self, messages: List[Message]) -> str:
+        """Generate structured summary for archive."""
+        if not messages:
+            return ""
+
+        formatted = "\n".join([f"[{m.role}]: {m.content}" for m in messages])
+
+        vlm = get_openviking_config().vlm
+        if vlm and vlm.is_available():
+            try:
+                from openviking.prompts import render_prompt
+
+                prompt = render_prompt(
+                    "compression.structured_summary",
+                    {"messages": formatted},
+                )
+                return run_async(vlm.get_completion_async(prompt))
+            except Exception as e:
+                logger.warning(f"LLM summary failed: {e}")
+
+        turn_count = len([m for m in messages if m.role == "user"])
+        return f"# Session Summary\n\n**Overview**: {turn_count} turns, {len(messages)} messages"
+
+    async def _generate_archive_summary_async(self, messages: List[Message]) -> str:
+        """Generate structured summary for archive (async)."""
+        if not messages:
+            return ""
+
+        formatted = "\n".join([f"[{m.role}]: {m.content}" for m in messages])
+
+        vlm = get_openviking_config().vlm
+        if vlm and vlm.is_available():
+            try:
+                from openviking.prompts import render_prompt
+
+                prompt = render_prompt(
+                    "compression.structured_summary",
+                    {"messages": formatted},
+                )
+                return await vlm.get_completion_async(prompt)
+            except Exception as e:
+                logger.warning(f"LLM summary failed: {e}")
+
+        turn_count = len([m for m in messages if m.role == "user"])
+        return f"# Session Summary\n\n**Overview**: {turn_count} turns, {len(messages)} messages"
+
+    def _write_archive(
+        self,
+        index: int,
+        messages: List[Message],
+        abstract: str,
+        overview: str,
+    ) -> None:
+        """Write archive to history/archive_N/."""
+        if not self._viking_fs:
+            return
+
+        viking_fs = self._viking_fs
+        archive_uri = f"{self._session_uri}/history/archive_{index:03d}"
+
+        # Write messages.jsonl
+        lines = [m.to_jsonl() for m in messages]
+        run_async(
+            viking_fs.write_file(
+                uri=f"{archive_uri}/messages.jsonl",
+                content="\n".join(lines) + "\n",
+                ctx=self.ctx,
+            )
+        )
+
+        run_async(
+            viking_fs.write_file(uri=f"{archive_uri}/.abstract.md", content=abstract, ctx=self.ctx)
+        )
+        run_async(
+            viking_fs.write_file(uri=f"{archive_uri}/.overview.md", content=overview, ctx=self.ctx)
+        )
+
+        logger.debug(f"Written archive: {archive_uri}")
+
+    async def _write_archive_async(
+        self,
+        index: int,
+        messages: List[Message],
+        abstract: str,
+        overview: str,
+    ) -> None:
+        """Write archive to history/archive_N/ (async)."""
+        if not self._viking_fs:
+            return
+
+        viking_fs = self._viking_fs
+        archive_uri = f"{self._session_uri}/history/archive_{index:03d}"
+
+        lines = [m.to_jsonl() for m in messages]
+        await viking_fs.write_file(
+            uri=f"{archive_uri}/messages.jsonl",
+            content="\n".join(lines) + "\n",
+            ctx=self.ctx,
+        )
+        await viking_fs.write_file(
+            uri=f"{archive_uri}/.abstract.md",
+            content=abstract,
+            ctx=self.ctx,
+        )
+        await viking_fs.write_file(
+            uri=f"{archive_uri}/.overview.md",
+            content=overview,
+            ctx=self.ctx,
+        )
+
+        logger.debug(f"Written archive: {archive_uri}")
+
+    def _write_to_agfs(self, messages: List[Message]) -> None:
+        """Write messages.jsonl to AGFS."""
+        if not self._viking_fs:
+            return
+
+        viking_fs = self._viking_fs
+        turn_count = len([m for m in messages if m.role == "user"])
+
+        abstract = self._generate_abstract()
+        overview = self._generate_overview(turn_count)
+
+        lines = [m.to_jsonl() for m in messages]
+        content = "\n".join(lines) + "\n" if lines else ""
+
+        run_async(
+            viking_fs.write_file(
+                uri=f"{self._session_uri}/messages.jsonl",
+                content=content,
+                ctx=self.ctx,
+            )
+        )
+
+        # Update L0/L1
+        run_async(
+            viking_fs.write_file(
+                uri=f"{self._session_uri}/.abstract.md",
+                content=abstract,
+                ctx=self.ctx,
+            )
+        )
+        run_async(
+            viking_fs.write_file(
+                uri=f"{self._session_uri}/.overview.md",
+                content=overview,
+                ctx=self.ctx,
+            )
+        )
+
+    async def _write_to_agfs_async(self, messages: List[Message]) -> None:
+        """Write messages.jsonl to AGFS (async)."""
+        if not self._viking_fs:
+            return
+
+        viking_fs = self._viking_fs
+        turn_count = len([m for m in messages if m.role == "user"])
+
+        abstract = self._generate_abstract()
+        overview = self._generate_overview(turn_count)
+
+        lines = [m.to_jsonl() for m in messages]
+        content = "\n".join(lines) + "\n" if lines else ""
+
+        await viking_fs.write_file(
+            uri=f"{self._session_uri}/messages.jsonl",
+            content=content,
+            ctx=self.ctx,
+        )
+        await viking_fs.write_file(
+            uri=f"{self._session_uri}/.abstract.md",
+            content=abstract,
+            ctx=self.ctx,
+        )
+        await viking_fs.write_file(
+            uri=f"{self._session_uri}/.overview.md",
+            content=overview,
+            ctx=self.ctx,
+        )
+
+    def _append_to_jsonl(self, msg: Message) -> None:
+        """Append to messages.jsonl."""
+        if not self._viking_fs:
+            return
+        run_async(
+            self._viking_fs.append_file(
+                f"{self._session_uri}/messages.jsonl",
+                msg.to_jsonl() + "\n",
+                ctx=self.ctx,
+            )
+        )
+
+    def _update_message_in_jsonl(self) -> None:
+        """Update message in messages.jsonl."""
+        if not self._viking_fs:
+            return
+
+        lines = [m.to_jsonl() for m in self._messages]
+        content = "\n".join(lines) + "\n"
+        run_async(
+            self._viking_fs.write_file(
+                f"{self._session_uri}/messages.jsonl",
+                content,
+                ctx=self.ctx,
+            )
+        )
+
+    def _save_tool_result(
+        self,
+        tool_id: str,
+        msg: Message,
+        output: str,
+        status: str,
+    ) -> None:
+        """Save tool result to tools/{tool_id}/tool.json."""
+        if not self._viking_fs:
+            return
+
+        tool_part = msg.find_tool_part(tool_id)
+        if not tool_part:
+            return
+
+        tool_data = {
+            "tool_id": tool_id,
+            "tool_name": tool_part.tool_name,
+            "session_id": self.session_id,
+            "input": tool_part.tool_input,
+            "output": output,
+            "status": status,
+            "time": {"created": get_current_timestamp()},
+            "duration_ms": tool_part.duration_ms,
+            "prompt_tokens": tool_part.prompt_tokens,
+            "completion_tokens": tool_part.completion_tokens,
+        }
+        run_async(
+            self._viking_fs.write_file(
+                f"{self._session_uri}/tools/{tool_id}/tool.json",
+                json.dumps(tool_data, ensure_ascii=False),
+                ctx=self.ctx,
+            )
+        )
+
+    def _generate_abstract(self) -> str:
+        """Generate one-sentence summary for session."""
+        if not self._messages:
+            return ""
+
+        first = self._messages[0].content
+        turn_count = self._stats.total_turns
+        return f"{turn_count} turns, starting from '{first[:50]}...'"
+
+    def _generate_overview(self, turn_count: int) -> str:
+        """Generate session directory structure description."""
+        parts = [
+            "# Session Directory Structure",
+            "",
+            "## File Description",
+            f"- `messages.jsonl` - Current messages ({turn_count} turns)",
+        ]
+        if self._compression.compression_index > 0:
+            parts.append(
+                f"- `history/` - Historical archives ({self._compression.compression_index} total)"
+            )
+        parts.extend(
+            [
+                "",
+                "## Access Methods",
+                f"- Full conversation: `{self._session_uri}`",
+            ]
+        )
+        if self._compression.compression_index > 0:
+            parts.append(f"- Historical archives: `{self._session_uri}/history/`")
+        return "\n".join(parts)
+
+    def _write_relations(self) -> None:
+        """Create relations to used contexts/tools."""
+        if not self._viking_fs:
+            return
+
+        viking_fs = self._viking_fs
+        for usage in self._usage_records:
+            try:
+                run_async(viking_fs.link(self._session_uri, usage.uri, ctx=self.ctx))
+                logger.debug(f"Created relation: {self._session_uri} -> {usage.uri}")
+            except Exception as e:
+                logger.warning(f"Failed to create relation to {usage.uri}: {e}")
+
+    async def _write_relations_async(self) -> None:
+        """Create relations to used contexts/tools (async)."""
+        if not self._viking_fs:
+            return
+
+        viking_fs = self._viking_fs
+        for usage in self._usage_records:
+            try:
+                await viking_fs.link(self._session_uri, usage.uri, ctx=self.ctx)
+                logger.debug(f"Created relation: {self._session_uri} -> {usage.uri}")
+            except Exception as e:
+                logger.warning(f"Failed to create relation to {usage.uri}: {e}")
+
+    # ============= Properties =============
+
+    @property
+    def uri(self) -> str:
+        """Session's Viking URI."""
+        return self._session_uri
+
+    @property
+    def summary(self) -> str:
+        """Compression summary."""
+        return self._compression.summary
+
+    @property
+    def compression(self) -> SessionCompression:
+        """Get compression information."""
+        return self._compression
+
+    @property
+    def usage_records(self) -> List[Usage]:
+        """Get usage records."""
+        return self._usage_records
+
+    @property
+    def stats(self) -> SessionStats:
+        """Get session statistics."""
+        return self._stats
+
+    def __repr__(self) -> str:
+        return f"Session(user={self.user}, id={self.session_id})"
