@@ -131,8 +131,8 @@ class DeepReadWrapper:
         embedding_base_url = os.environ.get("EMBEDDING_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
         embedding_model = os.environ.get("EMBEDDING_MODEL_NAME", "doubao-embedding-vision-250615")
 
-        get_logger().info(f"[DeepRead] LLM: model={llm_model}, base_url={llm_base_url}")
-        get_logger().info(f"[DeepRead] Embedding: model={embedding_model}, base_url={embedding_base_url}")
+        get_logger().info(f"[DeepRead] LLM: model={llm_model}, base_url={llm_base_url}, api_key={llm_api_key[:8]}***")
+        get_logger().info(f"[DeepRead] Embedding: model={embedding_model}, base_url={embedding_base_url}, api_key={embedding_api_key[:8]}***")
 
         return cls(
             store_path=store_path,

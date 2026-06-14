@@ -229,7 +229,7 @@ def main():
         judge_llm_cfg['base_url'] = judge_base_url
         judge_llm_cfg['model'] = judge_model
 
-        logger.info(f"[Judge] model={judge_model}, base_url={judge_base_url}")
+        logger.info(f"[Judge] model={judge_model}, base_url={judge_base_url}, api_key={judge_api_key[:8]}***")
 
         llm_client = LLMClientWrapper(config=judge_llm_cfg, api_key=judge_api_key)
 
