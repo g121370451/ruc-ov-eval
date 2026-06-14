@@ -64,6 +64,10 @@ class DeepReadWrapper:
         neighbor_window: str = "1,-1",
         max_rounds: int = 50,
         use_pymupdf: bool = False,
+        # 新增：独立的 embedding 配置
+        embedding_api_key: str = "",
+        embedding_base_url: str = "",
+        embedding_model: str = "",
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
@@ -81,6 +85,11 @@ class DeepReadWrapper:
         self.enable_semantic = enable_semantic
         self.max_rounds = max_rounds
         self.use_pymupdf = use_pymupdf
+
+        # Embedding 独立配置
+        self.embedding_api_key = embedding_api_key
+        self.embedding_base_url = embedding_base_url
+        self.embedding_model = embedding_model
 
         # Neighbor window
         try:
@@ -111,13 +120,27 @@ class DeepReadWrapper:
     def from_config(cls, store_path: str, doc_output_dir: str, output_dir: str, llm_cfg: dict, store_cfg: dict) -> "DeepReadWrapper":
         """从 config.yaml 的三个子块构造实例，供 run.py 调用。"""
         neighbor_window = store_cfg.get("neighbor_window", "1,-1")
+
+        # LLM (DeepRead Agent) - 从环境变量读取，YAML 作为 fallback
+        llm_api_key = os.environ.get("LLM_API_KEY", llm_cfg.get("api_key", ""))
+        llm_base_url = os.environ.get("LLM_BASE_URL", llm_cfg.get("base_url", ""))
+        llm_model = os.environ.get("LLM_MODEL", llm_cfg.get("model", ""))
+
+        # Embedding - 从环境变量读取
+        embedding_api_key = os.environ.get("EMBEDDING_API_KEY", "")
+        embedding_base_url = os.environ.get("EMBEDDING_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+        embedding_model = os.environ.get("EMBEDDING_MODEL_NAME", "doubao-embedding-vision-250615")
+
+        get_logger().info(f"[DeepRead] LLM: model={llm_model}, base_url={llm_base_url}")
+        get_logger().info(f"[DeepRead] Embedding: model={embedding_model}, base_url={embedding_base_url}")
+
         return cls(
             store_path=store_path,
             doc_output_dir=doc_output_dir,
-            output_dir = output_dir,
-            model=llm_cfg.get("model", ""),
-            base_url=llm_cfg.get("base_url", ""),
-            api_key=llm_cfg.get("api_key", ""),
+            output_dir=output_dir,
+            model=llm_model,
+            base_url=llm_base_url,
+            api_key=llm_api_key,
             temperature=llm_cfg.get("temperature", 0.0),
             enable_vector=store_cfg.get("enable_vector", True),
             enable_hybrid=store_cfg.get("enable_hybrid", False),
@@ -125,6 +148,9 @@ class DeepReadWrapper:
             neighbor_window=str(neighbor_window),
             max_rounds=store_cfg.get("max_rounds", 12),
             use_pymupdf=store_cfg.get("use_pymupdf", False),
+            embedding_api_key=embedding_api_key,
+            embedding_base_url=embedding_base_url,
+            embedding_model=embedding_model,
         )
     
     def _pdf_to_markdown_pymupdf(self, pdf_path: str, md_path: str, sample_id: str):
@@ -184,9 +210,9 @@ class DeepReadWrapper:
             )
 
         embedder = VolcengineEmbedder(
-            model_name="doubao-embedding-vision-250615",
-            api_key=self.api_key,
-            api_base=self.base_url,
+            model_name=self.embedding_model,
+            api_key=self.embedding_api_key,
+            api_base=self.embedding_base_url,
             input_type="multimodal",
             dimension=2048,
         )
@@ -414,9 +440,9 @@ class DeepReadWrapper:
                 disable_bm25=False,
                 disable_regex=False,
                 disable_read=False,
-                embed_api_key=self.api_key,
-                embed_base_url="https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal",
-                embedding_model="doubao-embedding-vision-250615",
+                embed_api_key=self.embedding_api_key,
+                embed_base_url=self.embedding_base_url + "/embeddings/multimodal",
+                embedding_model=self.embedding_model,
                 neighbor_window=self.neighbor_window,
                 bm25_topk=topk,
                 regex_topk=topk,

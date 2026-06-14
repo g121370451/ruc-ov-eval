@@ -214,15 +214,24 @@ def main():
             from src.core.vector_store import VikingStoreWrapper
             vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
         
-        # 3. LLM Client
-        api_key = os.environ.get(
-            config['llm'].get('api_key_env_var', ''), 
-            config['llm'].get('api_key')
-        )
-        if not api_key:
-            logger.warning("No API Key found in config or environment variables!")
-            
-        llm_client = LLMClientWrapper(config=config['llm'], api_key=api_key)
+        # 3. LLM Client (用于 Judge)
+        # 优先从环境变量 JUDGE_API_KEY 读取，fallback 到 LLM_API_KEY
+        judge_api_key = os.environ.get("JUDGE_API_KEY", os.environ.get("LLM_API_KEY", ""))
+        judge_base_url = os.environ.get("JUDGE_BASE_URL", os.environ.get("LLM_BASE_URL", config['llm'].get('base_url', '')))
+        judge_model = os.environ.get("JUDGE_MODEL", os.environ.get("LLM_MODEL", config['llm'].get('model', '')))
+
+        if not judge_api_key:
+            logger.warning("No Judge API Key found in environment variables!")
+
+        # 覆盖 config 中的 llm 配置给 Judge 用
+        judge_llm_cfg = config['llm'].copy()
+        judge_llm_cfg['api_key'] = judge_api_key
+        judge_llm_cfg['base_url'] = judge_base_url
+        judge_llm_cfg['model'] = judge_model
+
+        logger.info(f"[Judge] model={judge_model}, base_url={judge_base_url}")
+
+        llm_client = LLMClientWrapper(config=judge_llm_cfg, api_key=judge_api_key)
 
         # 4. Pipeline
         pipeline = BenchmarkPipeline(
