@@ -139,9 +139,9 @@ class VolcengineEmbeddingModel:
     embed(texts) -> np.ndarray of shape (len(texts), dimension)
     """
 
-    def __init__(self, api_key: str, api_base: str, dimension: int = 2048):
+    def __init__(self, api_key: str, api_base: str, dimension: int = 2048, model_name: str = "doubao-embedding-vision-250615"):
         self._embedder = VolcengineEmbedder(
-            model_name="doubao-embedding-vision-250615",
+            model_name=model_name,
             api_key=api_key,
             api_base=api_base,
             input_type="multimodal",
@@ -223,6 +223,7 @@ class KohakuStoreWrapper:
         per_sample_db: bool = True,
         planner_max_queries: int = 1,
         llm=None,
+        embedding_model: str = "doubao-embedding-vision-250615",
     ):
         _debug_report("kohaku.init.start", hypothesisId="H2", store_path=store_path, doc_output_dir=doc_output_dir, per_sample_db=per_sample_db)
         self.store_path = store_path
@@ -237,6 +238,7 @@ class KohakuStoreWrapper:
             api_key=api_key,
             api_base=api_base,
             dimension=embedding_dimension,
+            model_name=embedding_model,
         )
         # 用于 ingestion 阶段跨线程汇总 token 的局部 tracker
         self._ingest_tracker = None
@@ -264,29 +266,43 @@ class KohakuStoreWrapper:
 
     @classmethod
     def from_config(cls, store_path: str, doc_output_dir: str, llm_cfg: dict, store_cfg: dict) -> "KohakuStoreWrapper":
+        import os as _os
+
         planner_max_queries = store_cfg.get("planner_max_queries", 1)
         llm = None
+
+        # LLM (Query Planner) - 从环境变量读取，YAML 作为 fallback
+        llm_api_key = _os.environ.get("LLM_API_KEY", llm_cfg.get("api_key", ""))
+        llm_base_url = _os.environ.get("LLM_BASE_URL", llm_cfg.get("base_url", ""))
+        llm_model = _os.environ.get("LLM_MODEL", llm_cfg.get("model", ""))
+
+        # Embedding - 从环境变量读取
+        embedding_api_key = _os.environ.get("EMBEDDING_API_KEY", "")
+        embedding_base_url = _os.environ.get("EMBEDDING_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+        embedding_model = _os.environ.get("EMBEDDING_MODEL_NAME", "doubao-embedding-vision-250615")
+
+        get_logger().info(f"[Kohaku] LLM: model={llm_model}, base_url={llm_base_url}, api_key={llm_api_key[:8] if llm_api_key else ''}***")
+        get_logger().info(f"[Kohaku] Embedding: model={embedding_model}, base_url={embedding_base_url}, api_key={embedding_api_key[:8] if embedding_api_key else ''}***")
+
         _debug_report("kohaku.from_config.start", hypothesisId="H2", store_path=store_path, planner_max_queries=planner_max_queries)
         if planner_max_queries > 1:
             _debug_report("kohaku.from_config.chatopenai_import.before", hypothesisId="H2", store_path=store_path)
             from langchain_openai import ChatOpenAI
-            import os as _os
             _debug_report("kohaku.from_config.chatopenai_import.after", hypothesisId="H2", store_path=store_path)
-            api_key = _os.environ.get(llm_cfg.get("api_key_env_var", ""), llm_cfg.get("api_key", ""))
-            _debug_report("kohaku.from_config.chatopenai_create.before", hypothesisId="H2", store_path=store_path, model=llm_cfg.get("model", ""))
+            _debug_report("kohaku.from_config.chatopenai_create.before", hypothesisId="H2", store_path=store_path, model=llm_model)
             llm = ChatOpenAI(
-                model=llm_cfg.get("model", ""),
+                model=llm_model,
                 temperature=llm_cfg.get("temperature", 0.0),
-                api_key=api_key,
-                base_url=llm_cfg.get("base_url", ""),
+                api_key=llm_api_key,
+                base_url=llm_base_url,
             )
             _debug_report("kohaku.from_config.chatopenai_create.after", hypothesisId="H2", store_path=store_path)
         _debug_report("kohaku.from_config.init.before", hypothesisId="H2", store_path=store_path)
         return cls(
             store_path=store_path,
             doc_output_dir=doc_output_dir,
-            api_key=llm_cfg.get("api_key", ""),
-            api_base=llm_cfg.get("base_url", ""),
+            api_key=embedding_api_key,
+            api_base=embedding_base_url,
             embedding_dimension=store_cfg.get("embedding_dimension", 2048),
             top_k=store_cfg.get("retrieval_topk", 5),
             parent_depth=store_cfg.get("parent_depth", 1),
@@ -297,6 +313,7 @@ class KohakuStoreWrapper:
             per_sample_db=store_cfg.get("per_sample_db", False),
             planner_max_queries=planner_max_queries,
             llm=llm,
+            embedding_model=embedding_model,
         )
 
     def _db_path(self, sample_id: str) -> str:
