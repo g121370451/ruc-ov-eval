@@ -41,7 +41,10 @@ class PageIndexConfig:
     
     def get_model_name(self):
         """获取模型名称"""
-        return self.config.get('model', 'doubao-seed-2-0-pro-260215')
+        model = os.environ.get("VLM_MODEL", "").strip()
+        if not model:
+            raise ValueError("环境变量 VLM_MODEL 未设置或为空")
+        return model
     
     def create_api_client(self):
         """
@@ -53,8 +56,10 @@ class PageIndexConfig:
         vlm_config = self.get_vlm_config()
         model_name = self.get_model_name()
         
-        api_key = vlm_config.get('api_key', '')
-        api_base = vlm_config.get('api_base', 'https://ark.cn-beijing.volces.com/api/v3')
+        api_key = os.environ.get("VLM_API_KEY", "").strip()
+        api_base = os.environ.get("VLM_BASE_URL", "").strip()
+        if not api_key or not api_base:
+            raise ValueError("环境变量 VLM_API_KEY/VLM_BASE_URL 未设置或为空")
         
         return ChatOpenAI(
             model=model_name,

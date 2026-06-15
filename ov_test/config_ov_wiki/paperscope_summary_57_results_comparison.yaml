@@ -1,0 +1,24 @@
+project_name: "RAG_Benchmark"
+dataset_name: "paperscope_summary_57_results_comparison"
+adapter:
+  module: "src.adapters.paperscope_summary_adapter"
+  class_name: "PaperScopeSummaryAdapter"
+store:
+  type: "viking"
+execution:
+  max_workers: 4
+  ingest_workers: 4
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: false
+paths:
+  raw_data: "Data/OVWikiBenchmark/datasets/PaperScopeSummary57/summary_results_comparison.jsonl"
+  doc_output_dir: "Data/OVWikiBenchmark/runtime/paperscope_summary_57/processed_docs"
+  vector_store: "Data/OVWikiBenchmark/runtime/paperscope_summary_57/viking_store"
+  output_dir: "Output/OVWikiBenchmark/{dataset_name}/viking_global"
+  log_file: "Output/OVWikiBenchmark/{dataset_name}/viking_global/benchmark.log"
+llm:
+  model: "${VLM_MODEL}"
+  temperature: 0
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"

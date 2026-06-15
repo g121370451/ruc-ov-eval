@@ -23,6 +23,7 @@ dependencies = [
     "pypdf2>=3.0.1",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.3",
+    "requests>=2.31,<3",
     "setuptools>=82.0.1",
     "sqlalchemy>=2.0.47",
     "tiktoken>=0.12.0",

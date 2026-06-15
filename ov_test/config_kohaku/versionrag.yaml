@@ -7,7 +7,7 @@ adapter:
 
 store:
   type: "KohakuRAG"
-  embedding_dimension: 2048
+  embedding_dimension: "${EMBEDDING_DIMENSION}"
   parent_depth: 1
   child_depth: 0
   deduplicate_retrieval: true
@@ -29,7 +29,7 @@ paths:
   log_file: "Output/{dataset_name}/kohaku_experiment/benchmark.log"
 
 llm:
-  model: "doubao-seed-2-0-pro-260215"
+  model: "${VLM_MODEL}"
   temperature: 0
-  base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  api_key: ""
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"

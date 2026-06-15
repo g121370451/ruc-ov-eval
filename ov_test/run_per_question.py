@@ -1,6 +1,5 @@
 import os
 import sys
-import re
 import yaml
 import importlib
 from argparse import ArgumentParser
@@ -15,11 +14,19 @@ sys.path.append(REPO_ROOT)
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
 
+from src.core.env_config import prepare_openviking_config, resolve_env_vars
+
+load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
+
 # 设置 OpenViking 配置文件路径（必须在 import openviking 之前）
 ov_config_path = os.path.join(SCRIPT_DIR, "ov.conf")
 if os.path.exists(ov_config_path):
-    os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
-    print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
+    runtime_ov_config = prepare_openviking_config(
+        ov_config_path,
+        os.path.join(SCRIPT_DIR, ".temp", "ov_runtime.conf"),
+    )
+    os.environ["OPENVIKING_CONFIG_FILE"] = runtime_ov_config
+    print(f"[Init] Loaded OpenViking config from environment: {ov_config_path}")
 
 # 导入模块
 try:
@@ -52,22 +59,6 @@ def resolve_path(path_str, base_path):
         return path_str
     # 规范化路径 (处理 ../ 等符号)
     return os.path.normpath(os.path.join(base_path, path_str))
-
-def resolve_env_vars(obj):
-    """递归替换配置中的 ${VAR} 引用为环境变量值"""
-    if isinstance(obj, str):
-        def _replace(match):
-            var_name = match.group(1)
-            value = os.environ.get(var_name)
-            if value is None:
-                raise ValueError(f"环境变量 {var_name} 未设置，请检查 .env 文件")
-            return value
-        return re.sub(r'\$\{(\w+)\}', _replace, obj)
-    elif isinstance(obj, dict):
-        return {k: resolve_env_vars(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [resolve_env_vars(item) for item in obj]
-    return obj
 
 def resolve_auto_output_dir(config):
     """直接使用配置文件中的 output_dir，不再自动添加编号后缀"""
@@ -102,7 +93,6 @@ def main():
         return
 
     # --- B2. 加载 .env 并解析环境变量引用 ---
-    load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
     config = resolve_env_vars(config)
 
     # --- C. 路径修正 ---

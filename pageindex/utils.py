@@ -469,8 +469,12 @@ def add_preface_if_needed(data):
 
 
 
-def get_page_tokens(pdf_path, model="gpt-4o-2024-11-20", pdf_parser="PyPDF2"):
-    enc = tiktoken.encoding_for_model(model)
+def get_page_tokens(pdf_path, model=None, pdf_parser="PyPDF2"):
+    model = model or os.environ.get("VLM_MODEL", "")
+    try:
+        enc = tiktoken.encoding_for_model(model)
+    except KeyError:
+        enc = tiktoken.get_encoding("cl100k_base")
     if pdf_parser == "PyPDF2":
         pdf_reader = PyPDF2.PdfReader(pdf_path)
         page_list = []
@@ -747,7 +751,12 @@ class ConfigLoader:
     @staticmethod
     def _load_yaml(path):
         with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+            data = yaml.safe_load(f) or {}
+        model = os.environ.get("VLM_MODEL", "").strip()
+        if not model:
+            raise ValueError("环境变量 VLM_MODEL 未设置或为空")
+        data["model"] = model
+        return data
 
     def _validate_keys(self, user_dict):
         unknown_keys = set(user_dict) - set(self._default_dict)

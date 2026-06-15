@@ -29,6 +29,7 @@ from tqdm import tqdm
 
 from src.adapters.base import StandardDoc
 from src.core.logger import get_logger
+from src.core.env_config import required_env
 from src.core.monitor import BenchmarkMonitor
 from src.core.token_tracer_util import token_tracker
 from src.core.doubao_embedding_util import VolcengineEmbedder, embedding_token_tracker
@@ -139,7 +140,14 @@ class VolcengineEmbeddingModel:
     embed(texts) -> np.ndarray of shape (len(texts), dimension)
     """
 
-    def __init__(self, api_key: str, api_base: str, dimension: int = 2048, model_name: str = "doubao-embedding-vision-250615"):
+    def __init__(
+        self,
+        api_key: str,
+        api_base: str,
+        dimension: int = 2048,
+        model_name: Optional[str] = None,
+    ):
+        model_name = model_name or required_env("EMBEDDING_MODEL")
         self._embedder = VolcengineEmbedder(
             model_name=model_name,
             api_key=api_key,
@@ -223,7 +231,7 @@ class KohakuStoreWrapper:
         per_sample_db: bool = True,
         planner_max_queries: int = 1,
         llm=None,
-        embedding_model: str = "doubao-embedding-vision-250615",
+        embedding_model: Optional[str] = None,
     ):
         _debug_report("kohaku.init.start", hypothesisId="H2", store_path=store_path, doc_output_dir=doc_output_dir, per_sample_db=per_sample_db)
         self.store_path = store_path
@@ -234,6 +242,7 @@ class KohakuStoreWrapper:
 
         os.makedirs(self.store_path, exist_ok=True)
 
+        embedding_model = embedding_model or required_env("EMBEDDING_MODEL")
         self._embedder = VolcengineEmbeddingModel(
             api_key=api_key,
             api_base=api_base,
@@ -266,23 +275,28 @@ class KohakuStoreWrapper:
 
     @classmethod
     def from_config(cls, store_path: str, doc_output_dir: str, llm_cfg: dict, store_cfg: dict) -> "KohakuStoreWrapper":
-        import os as _os
-
         planner_max_queries = store_cfg.get("planner_max_queries", 1)
         llm = None
 
-        # LLM (Query Planner) - 从环境变量读取，YAML 作为 fallback
-        llm_api_key = _os.environ.get("LLM_API_KEY", llm_cfg.get("api_key", ""))
-        llm_base_url = _os.environ.get("LLM_BASE_URL", llm_cfg.get("base_url", ""))
-        llm_model = _os.environ.get("LLM_MODEL", llm_cfg.get("model", ""))
+        # LLM (Query Planner) - 统一从环境变量读取
+        llm_api_key = required_env("VLM_API_KEY")
+        llm_base_url = required_env("VLM_BASE_URL")
+        llm_model = required_env("VLM_MODEL")
 
         # Embedding - 从环境变量读取
-        embedding_api_key = _os.environ.get("EMBEDDING_API_KEY", "")
-        embedding_base_url = _os.environ.get("EMBEDDING_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
-        embedding_model = _os.environ.get("EMBEDDING_MODEL_NAME", "doubao-embedding-vision-250615")
+        embedding_api_key = required_env("EMBEDDING_API_KEY")
+        embedding_base_url = required_env("EMBEDDING_BASE_URL")
+        embedding_model = required_env("EMBEDDING_MODEL")
+        embedding_dimension = int(required_env("EMBEDDING_DIMENSION"))
 
-        get_logger().info(f"[Kohaku] LLM: model={llm_model}, base_url={llm_base_url}, api_key={llm_api_key[:8] if llm_api_key else ''}***")
-        get_logger().info(f"[Kohaku] Embedding: model={embedding_model}, base_url={embedding_base_url}, api_key={embedding_api_key[:8] if embedding_api_key else ''}***")
+        get_logger().info(
+            f"[Kohaku] LLM: model={llm_model}, base_url={llm_base_url}, "
+            "api_key_configured=True"
+        )
+        get_logger().info(
+            f"[Kohaku] Embedding: model={embedding_model}, "
+            f"base_url={embedding_base_url}, api_key_configured=True"
+        )
 
         _debug_report("kohaku.from_config.start", hypothesisId="H2", store_path=store_path, planner_max_queries=planner_max_queries)
         if planner_max_queries > 1:
@@ -303,7 +317,7 @@ class KohakuStoreWrapper:
             doc_output_dir=doc_output_dir,
             api_key=embedding_api_key,
             api_base=embedding_base_url,
-            embedding_dimension=store_cfg.get("embedding_dimension", 2048),
+            embedding_dimension=embedding_dimension,
             top_k=store_cfg.get("retrieval_topk", 5),
             parent_depth=store_cfg.get("parent_depth", 1),
             child_depth=store_cfg.get("child_depth", 0),

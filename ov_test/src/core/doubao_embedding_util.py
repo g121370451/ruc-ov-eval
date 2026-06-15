@@ -1,5 +1,6 @@
 from typing import List, Optional
 
+import os
 import time
 import volcenginesdkarkruntime
 from src.core.token_tracer_util import ThreadLocalTokenTracker
@@ -229,10 +230,18 @@ class VolcengineEmbedder():
 def main():
     test_text = "let's test VolcengineEmbedder!"
     test_text2 = "let's test VolcengineEmbedder!"
+    api_key = os.environ.get("EMBEDDING_API_KEY", "").strip()
+    api_base = os.environ.get("EMBEDDING_BASE_URL", "").strip()
+    model_name = os.environ.get("EMBEDDING_MODEL", "").strip()
+    if not api_key or not api_base or not model_name:
+        raise ValueError(
+            "EMBEDDING_API_KEY/EMBEDDING_BASE_URL/EMBEDDING_MODEL "
+            "must be configured in ov_test/.env"
+        )
     embedder = VolcengineEmbedder(
-            model_name="doubao-embedding-vision-250615",
-            api_key="68e15b71-7673-4734-bf7a-01bb80a127ea",
-            api_base="https://ark.cn-beijing.volces.com/api/v3",
+            model_name=model_name,
+            api_key=api_key,
+            api_base=api_base,
             input_type="multimodal",
             dimension=2048,
         )
@@ -250,49 +259,6 @@ def main():
     arr2 = np.asarray(result2, dtype=np.float16)
     print(arr2)
     print(len(arr2[0]))
-
-    return
-    bs = 1
-    emb_list: List[List[float]] = []
-
-    embed_api_key = "68e15b71-7673-4734-bf7a-01bb80a127ea"
-    embed_base_url = "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal"
-
-    def _http_embed(model: str, inputs: List[str]) -> List[List[float]]:
-        import requests
-
-        url = embed_base_url
-        headers = {"Content-Type": "application/json"}
-        if embed_api_key:
-            headers["Authorization"] = f"Bearer {embed_api_key}"
-        payload = {"model": model, "input": [{"type":"text", "text": t} for t in inputs]}
-        resp = requests.post(url, headers=headers, json=payload, timeout=120)
-        resp.raise_for_status()
-        data = resp.json()
-        # print(data)
-        return [data.get("data").get("embedding")]
-
-    for j in range(0, len(texts), bs):
-        batch = texts[j : j + bs]
-        outs = _http_embed("doubao-embedding-vision-250615", batch)  # raw text
-        emb_list.extend(outs)
-
-    arr = np.asarray(emb_list, dtype=np.float32)
-    norm = np.linalg.norm(arr, axis=1, keepdims=True)
-    arr = arr / (norm + 1e-12)
-
-    print(arr.astype(np.float16))
-    print(len(arr[0]))
-    
-test_config = """{
-        "model": "doubao-embedding-vision-250615",
-        "api_key": "your_api_key_here",
-        "api_base": "https://ark.cn-beijing.volces.com/api/v3",
-        "dimension": 1024,
-        "provider": "volcengine",
-        "input": "multimodal",
-        "batch_size": 8
-    }"""
 
 if __name__ == "__main__":
     main()

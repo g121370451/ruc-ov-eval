@@ -1,6 +1,5 @@
 import os
 import sys
-import re
 import yaml
 import importlib
 from argparse import ArgumentParser
@@ -15,11 +14,19 @@ sys.path.append(REPO_ROOT)
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
 
+from src.core.env_config import prepare_openviking_config, resolve_env_vars
+
+load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
+
 # 设置 OpenViking 配置文件路径（必须在 import openviking 之前）
 ov_config_path = os.path.join(SCRIPT_DIR, "ov.conf")
 if os.path.exists(ov_config_path):
-    os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
-    print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
+    runtime_ov_config = prepare_openviking_config(
+        ov_config_path,
+        os.path.join(SCRIPT_DIR, ".temp", "ov_runtime.conf"),
+    )
+    os.environ["OPENVIKING_CONFIG_FILE"] = runtime_ov_config
+    print(f"[Init] Loaded OpenViking config from environment: {ov_config_path}")
 
 # 导入模块
 try:
@@ -52,22 +59,6 @@ def resolve_path(path_str, base_path):
         return path_str
     # 规范化路径 (处理 ../ 等符号)
     return os.path.normpath(os.path.join(base_path, path_str))
-
-def resolve_env_vars(obj):
-    """递归替换配置中的 ${VAR} 引用为环境变量值"""
-    if isinstance(obj, str):
-        def _replace(match):
-            var_name = match.group(1)
-            value = os.environ.get(var_name)
-            if value is None:
-                raise ValueError(f"环境变量 {var_name} 未设置，请检查 .env 文件")
-            return value
-        return re.sub(r'\$\{(\w+)\}', _replace, obj)
-    elif isinstance(obj, dict):
-        return {k: resolve_env_vars(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [resolve_env_vars(item) for item in obj]
-    return obj
 
 def resolve_auto_output_dir(config):
     """直接使用配置文件中的 output_dir，不再自动添加编号后缀"""
@@ -114,7 +105,6 @@ def main():
         return
 
     # --- B2. 加载 .env 并解析环境变量引用 ---
-    load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
     config = resolve_env_vars(config)
 
     # --- C. 路径修正 ---
@@ -215,10 +205,10 @@ def main():
             vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
         
         # 3. LLM Client (用于 Judge)
-        # 优先从环境变量 JUDGE_API_KEY 读取，fallback 到 LLM_API_KEY
-        judge_api_key = os.environ.get("JUDGE_API_KEY", os.environ.get("LLM_API_KEY", ""))
-        judge_base_url = os.environ.get("JUDGE_BASE_URL", os.environ.get("LLM_BASE_URL", config['llm'].get('base_url', '')))
-        judge_model = os.environ.get("JUDGE_MODEL", os.environ.get("LLM_MODEL", config['llm'].get('model', '')))
+        # 优先读取独立 Judge 配置，未设置时复用 VLM 配置
+        judge_api_key = os.environ.get("JUDGE_API_KEY", os.environ.get("VLM_API_KEY", ""))
+        judge_base_url = os.environ.get("JUDGE_BASE_URL", os.environ.get("VLM_BASE_URL", config['llm'].get('base_url', '')))
+        judge_model = os.environ.get("JUDGE_MODEL", os.environ.get("VLM_MODEL", config['llm'].get('model', '')))
 
         if not judge_api_key:
             logger.warning("No Judge API Key found in environment variables!")
@@ -229,7 +219,10 @@ def main():
         judge_llm_cfg['base_url'] = judge_base_url
         judge_llm_cfg['model'] = judge_model
 
-        logger.info(f"[Judge] model={judge_model}, base_url={judge_base_url}, api_key={judge_api_key[:8]}***")
+        logger.info(
+            f"[Judge] model={judge_model}, base_url={judge_base_url}, "
+            f"api_key_configured={bool(judge_api_key)}"
+        )
 
         llm_client = LLMClientWrapper(config=judge_llm_cfg, api_key=judge_api_key)
 

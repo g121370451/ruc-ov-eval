@@ -1,0 +1,24 @@
+project_name: "RAG_Benchmark"
+dataset_name: "wildgraphbench_summary_health"
+adapter:
+  module: "src.adapters.wildgraphbench_summary_adapter"
+  class_name: "WildGraphBenchSummaryAdapter"
+store:
+  type: "viking"
+execution:
+  max_workers: 4
+  ingest_workers: 4
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: false
+paths:
+  raw_data: "Data/OVWikiBenchmark/datasets/WildGraphBenchSummaryHealth/summary_questions.jsonl"
+  doc_output_dir: "Data/OVWikiBenchmark/runtime/wildgraphbench_summary_health/processed_docs"
+  vector_store: "Data/OVWikiBenchmark/runtime/wildgraphbench_summary_health/viking_store"
+  output_dir: "Output/OVWikiBenchmark/{dataset_name}/viking_global"
+  log_file: "Output/OVWikiBenchmark/{dataset_name}/viking_global/benchmark.log"
+llm:
+  model: "${VLM_MODEL}"
+  temperature: 0
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"

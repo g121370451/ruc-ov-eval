@@ -33,7 +33,7 @@ paths:
   output_dir: "Output/{dataset_name}/deepread_global_experiment_topk_2"
   
 llm:
-  model: "doubao-seed-2-0-pro-260215"
+  model: "${VLM_MODEL}"
   temperature: 0
-  base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  api_key: ""
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"

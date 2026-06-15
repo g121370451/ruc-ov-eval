@@ -12,6 +12,7 @@ from tqdm import tqdm
 from src.adapters.base import StandardDoc
 from src.core.monitor import BenchmarkMonitor
 from src.core.logger import get_logger
+from src.core.env_config import required_env
 from src.core.doubao_embedding_util import VolcengineEmbedder, embedding_token_tracker
 from src.core.token_tracer_util import token_tracker
 
@@ -68,6 +69,7 @@ class DeepReadWrapper:
         embedding_api_key: str = "",
         embedding_base_url: str = "",
         embedding_model: str = "",
+        embedding_dimension: int = 2048,
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
@@ -90,6 +92,7 @@ class DeepReadWrapper:
         self.embedding_api_key = embedding_api_key
         self.embedding_base_url = embedding_base_url
         self.embedding_model = embedding_model
+        self.embedding_dimension = embedding_dimension
 
         # Neighbor window
         try:
@@ -121,18 +124,25 @@ class DeepReadWrapper:
         """从 config.yaml 的三个子块构造实例，供 run.py 调用。"""
         neighbor_window = store_cfg.get("neighbor_window", "1,-1")
 
-        # LLM (DeepRead Agent) - 从环境变量读取，YAML 作为 fallback
-        llm_api_key = os.environ.get("LLM_API_KEY", llm_cfg.get("api_key", ""))
-        llm_base_url = os.environ.get("LLM_BASE_URL", llm_cfg.get("base_url", ""))
-        llm_model = os.environ.get("LLM_MODEL", llm_cfg.get("model", ""))
+        # LLM (DeepRead Agent) - 统一从环境变量读取
+        llm_api_key = required_env("VLM_API_KEY")
+        llm_base_url = required_env("VLM_BASE_URL")
+        llm_model = required_env("VLM_MODEL")
 
         # Embedding - 从环境变量读取
-        embedding_api_key = os.environ.get("EMBEDDING_API_KEY", "")
-        embedding_base_url = os.environ.get("EMBEDDING_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
-        embedding_model = os.environ.get("EMBEDDING_MODEL_NAME", "doubao-embedding-vision-250615")
+        embedding_api_key = required_env("EMBEDDING_API_KEY")
+        embedding_base_url = required_env("EMBEDDING_BASE_URL")
+        embedding_model = required_env("EMBEDDING_MODEL")
+        embedding_dimension = int(required_env("EMBEDDING_DIMENSION"))
 
-        get_logger().info(f"[DeepRead] LLM: model={llm_model}, base_url={llm_base_url}, api_key={llm_api_key[:8]}***")
-        get_logger().info(f"[DeepRead] Embedding: model={embedding_model}, base_url={embedding_base_url}, api_key={embedding_api_key[:8]}***")
+        get_logger().info(
+            f"[DeepRead] LLM: model={llm_model}, base_url={llm_base_url}, "
+            "api_key_configured=True"
+        )
+        get_logger().info(
+            f"[DeepRead] Embedding: model={embedding_model}, "
+            f"base_url={embedding_base_url}, api_key_configured=True"
+        )
 
         return cls(
             store_path=store_path,
@@ -151,6 +161,7 @@ class DeepReadWrapper:
             embedding_api_key=embedding_api_key,
             embedding_base_url=embedding_base_url,
             embedding_model=embedding_model,
+            embedding_dimension=embedding_dimension,
         )
     
     def _pdf_to_markdown_pymupdf(self, pdf_path: str, md_path: str, sample_id: str):
@@ -214,7 +225,7 @@ class DeepReadWrapper:
             api_key=self.embedding_api_key,
             api_base=self.embedding_base_url,
             input_type="multimodal",
-            dimension=2048,
+            dimension=self.embedding_dimension,
         )
 
         for sample in tqdm(samples, desc="Ingesting Docs to DeepRead"):
@@ -361,10 +372,10 @@ class DeepReadWrapper:
                 corpus["vector_store"] = {
                     "matrix_path": emb_path,
                     "id_map_path": idmap_path,
-                    "model_name": "doubao-embedding-vision-250615",
+                    "model_name": self.embedding_model,
                     "normalized": True,
                     "dtype": "float16",
-                    "embed_base_url": self.base_url,
+                    "embed_base_url": self.embedding_base_url,
                 }
 
             # --- Step 4: save corpus JSON ---
