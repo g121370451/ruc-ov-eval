@@ -199,6 +199,14 @@ def main():
                 store_path=config['paths']['vector_store'],
                 sql_agent_config=sql_agent_conf
             )
+        elif store_type == 'mc_indexing':
+            from src.core.mc_indexing_store import MCIndexingStoreWrapper
+            mc_indexing_conf = store_cfg.get('mc_indexing_config', {})
+            vector_store = MCIndexingStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                doc_output_dir=config['paths'].get('doc_output_dir', ''),
+                mc_indexing_config=mc_indexing_conf
+            )
         else:
             from src.core.vector_store import VikingStoreWrapper
             vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
