@@ -9,4 +9,5 @@ pageindex.conf
 **/.env
 LangChain-SQL-Agent-master/
 .codex
+.trae/
 *.log
