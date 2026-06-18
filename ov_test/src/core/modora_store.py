@@ -181,6 +181,8 @@ class ModoraStoreWrapper:
             "remote_llm_base_delay_s",
             "remote_llm_max_delay_s",
             "query_trace_logging",
+            "disable_visual_llm",
+            "strip_llm_images",
             "ocr_model",
             "ocr_device",
             "ocr_lang",

@@ -15,12 +15,6 @@ sys.path.append(REPO_ROOT)
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
 
-# 设置 OpenViking 配置文件路径（必须在 import openviking 之前）
-ov_config_path = os.path.join(SCRIPT_DIR, "ov.conf")
-if os.path.exists(ov_config_path):
-    os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
-    print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
-
 # 导入模块
 try:
     from src.pipeline_per_question import PerQuestionPipeline
@@ -72,7 +66,7 @@ def resolve_env_vars(obj):
 def resolve_auto_output_dir(config):
     """自动递增实验输出目录编号，基于已解析的 output_dir 的父目录扫描"""
     output_dir = config['paths']['output_dir']
-    output_base = os.path.dirname(output_dir)  # e.g. .../Output/Locomo/openviking_global
+    output_base = os.path.dirname(output_dir)  # e.g. .../Output/Locomo/modora_per_question
 
     max_num = 0
     if os.path.exists(output_base):
@@ -87,13 +81,19 @@ def resolve_auto_output_dir(config):
     config['paths']['log_file'] = os.path.join(experiment_dir, "benchmark.log")
     print(f"[Init] Auto output dir: {experiment_dir}")
 
+def should_use_auto_output_dir(config, args):
+    """默认尊重 YAML 中的 paths.output_dir，只有显式开启时才自动递增。"""
+    if args.auto_output_dir:
+        return True
+    return bool(config.get('execution', {}).get('auto_output_dir', False))
+
 # ==========================================
 # 3. 主程序
 # ==========================================
 
 def main():
-    parser = ArgumentParser(description="Run RAG Benchmark (Per-Question Strategy)")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_per_question_sql_agent/hotpot_config.yaml")
+    parser = ArgumentParser(description="Run MoDora RAG Benchmark (Per-Question Strategy)")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_modora/hotpot_config.yaml")
 
     parser.add_argument("--config", default=default_config_path,
                         help=f"Path to config file. Default: {default_config_path}")
@@ -104,6 +104,8 @@ def main():
                         help="Skip document ingestion, reuse existing store")
     parser.add_argument("--max-queries", "--max_queries", dest="max_queries", type=int, default=None,
                         help="Override execution.max_queries for quick smoke tests")
+    parser.add_argument("--auto-output-dir", action="store_true", default=False,
+                        help="Auto-increment paths.output_dir to the next experiment_NNNN directory")
 
     args = parser.parse_args()
 
@@ -141,8 +143,11 @@ def main():
                 rendered_path = str(store_cfg[key]).format(dataset_name=dataset_name)
                 store_cfg[key] = rendered_path
 
-    # --- C2. 自增输出目录 + CLI skip_ingest ---
-    resolve_auto_output_dir(config)
+    # --- C2. 可选自增输出目录 + CLI skip_ingest ---
+    if should_use_auto_output_dir(config, args):
+        resolve_auto_output_dir(config)
+    else:
+        print(f"[Init] Using configured output dir: {config['paths']['output_dir']}")
     if args.skip_ingest:
         config['execution']['skip_ingestion'] = True
     if args.max_queries is not None:
@@ -172,12 +177,13 @@ def main():
             logger.error(f"Class '{class_name}' not found in module '{module_path}'. Please check your config 'adapter.class_name'. Error: {e}")
             raise e
 
-        # 2. Vector Store — per_question 模式由 pipeline 内部管理 per-doc stores
-        #    这里只需解析 pageindex_config_path 的绝对路径
-        store_cfg = config.get('store', {})
-        pageindex_conf = store_cfg.get('pageindex_config_path')
-        if pageindex_conf:
-            store_cfg['pageindex_config_path'] = resolve_path(pageindex_conf, PROJECT_ROOT)
+        # 2. Store — per_question 模式由 pipeline 内部管理 per-doc stores。
+        store_type = config.get('store', {}).get('type', 'viking')
+        if store_type != 'modora':
+            raise ValueError(
+                f"Unsupported store.type={store_type!r}. This branch is trimmed for MoDora testing; "
+                "use store.type: modora."
+            )
 
         # 3. LLM Client
         api_key = os.environ.get(

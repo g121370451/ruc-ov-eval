@@ -1,8 +1,6 @@
 import json
 import re
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 
 def llm_grader(
     llm_client,
@@ -92,8 +90,8 @@ Respond ONLY with a JSON object: {{"score": 0 to 4, "reasoning": "string"}}
 """
 
     messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=ACCURACY_PROMPT),
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": ACCURACY_PROMPT},
     ]
 
     # -------------------------

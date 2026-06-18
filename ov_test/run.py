@@ -15,12 +15,6 @@ sys.path.append(REPO_ROOT)
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
 
-# 设置 OpenViking 配置文件路径（必须在 import openviking 之前）
-ov_config_path = os.path.join(SCRIPT_DIR, "ov.conf")
-if os.path.exists(ov_config_path):
-    os.environ["OPENVIKING_CONFIG_FILE"] = ov_config_path
-    print(f"[Init] Auto-detected OpenViking config: {ov_config_path}")
-
 # 导入模块
 try:
     from src.pipeline import BenchmarkPipeline
@@ -72,7 +66,7 @@ def resolve_env_vars(obj):
 def resolve_auto_output_dir(config):
     """自动递增实验输出目录编号，基于已解析的 output_dir 的父目录扫描"""
     output_dir = config['paths']['output_dir']
-    output_base = os.path.dirname(output_dir)  # e.g. .../Output/Locomo/openviking_global
+    output_base = os.path.dirname(output_dir)  # e.g. .../Output/Locomo/modora_global
 
     max_num = 0
     if os.path.exists(output_base):
@@ -87,14 +81,19 @@ def resolve_auto_output_dir(config):
     config['paths']['log_file'] = os.path.join(experiment_dir, "benchmark.log")
     print(f"[Init] Auto output dir: {experiment_dir}")
 
+def should_use_auto_output_dir(config, args):
+    """默认尊重 YAML 中的 paths.output_dir，只有显式开启时才自动递增。"""
+    if args.auto_output_dir:
+        return True
+    return bool(config.get('execution', {}).get('auto_output_dir', False))
+
 # ==========================================
 # 3. 主程序
 # ==========================================
 
 def main():
-    parser = ArgumentParser(description="Run RAG Benchmark (Smart Path Handling)")
-    # default_config_path = os.path.join(SCRIPT_DIR, "config/config.yaml")
-    default_config_path = os.path.join(SCRIPT_DIR, "config_sql_agent/finance_config.yaml")
+    parser = ArgumentParser(description="Run MoDora RAG Benchmark")
+    default_config_path = os.path.join(SCRIPT_DIR, "config_modora/finance_config.yaml")
     
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
@@ -105,6 +104,8 @@ def main():
                         help="Skip document ingestion, reuse existing store")
     parser.add_argument("--max-queries", "--max_queries", dest="max_queries", type=int, default=None,
                         help="Override execution.max_queries for quick smoke tests")
+    parser.add_argument("--auto-output-dir", action="store_true", default=False,
+                        help="Auto-increment paths.output_dir to the next experiment_NNNN directory")
 
     args = parser.parse_args()
 
@@ -142,8 +143,11 @@ def main():
                 rendered_path = str(store_cfg[key]).format(dataset_name=dataset_name)
                 store_cfg[key] = rendered_path
 
-    # --- C2. 自增输出目录 + CLI skip_ingest ---
-    resolve_auto_output_dir(config)
+    # --- C2. 可选自增输出目录 + CLI skip_ingest ---
+    if should_use_auto_output_dir(config, args):
+        resolve_auto_output_dir(config)
+    else:
+        print(f"[Init] Using configured output dir: {config['paths']['output_dir']}")
     if args.skip_ingest:
         config['execution']['skip_ingestion'] = True
     if args.max_queries is not None:
@@ -173,52 +177,21 @@ def main():
             logger.error(f"Class '{class_name}' not found in module '{module_path}'. Please check your config 'adapter.class_name'. Error: {e}")
             raise e
         
-        # 2. Vector Store（根据配置选择）
+        # 2. Store（MoDora-only test branch）
         store_cfg = config.get('store', {})
         store_type = store_cfg.get('type', 'viking')
 
-        if store_type == 'pageindex':
-            from src.core.pageindex_store import PageIndexStoreWrapper
-            pageindex_conf = store_cfg.get('pageindex_config_path')
-            if pageindex_conf:
-                pageindex_conf = resolve_path(pageindex_conf, PROJECT_ROOT)
-            vector_store = PageIndexStoreWrapper(
-                store_path=config['paths']['vector_store'],
-                doc_output_dir=config['paths'].get('doc_output_dir', ''),
-                config_path=pageindex_conf
-            )
-        elif store_type == 'hipporag':
-            from src.core.hipporag_store import HippoRAGStoreWrapper
-            hipporag_conf = store_cfg.get('hipporag_config', {})
-            vector_store = HippoRAGStoreWrapper(
-                store_path=config['paths']['vector_store'],
-                hipporag_config=hipporag_conf
-            )
-        elif store_type == 'lightrag':
-            from src.core.lightrag_store import LightRAGStoreWrapper
-            lightrag_conf = store_cfg.get('lightrag_config', {})
-            vector_store = LightRAGStoreWrapper(
-                store_path=config['paths']['vector_store'],
-                lightrag_config=lightrag_conf
-            )
-        elif store_type == 'sql_agent':
-            from src.core.sql_agent_store import SQLAgentStoreWrapper
-            sql_agent_conf = store_cfg.get('sql_agent_config', {})
-            sql_agent_conf['dataset_name'] = config.get('dataset_name', '')
-            sql_agent_conf['raw_data_path'] = config['paths'].get('raw_data', '')
-            vector_store = SQLAgentStoreWrapper(
-                store_path=config['paths']['vector_store'],
-                sql_agent_config=sql_agent_conf
-            )
-        elif store_type == 'modora':
+        if store_type == 'modora':
             from src.core.modora_store import ModoraStoreWrapper
             vector_store = ModoraStoreWrapper(
                 store_path=config['paths']['vector_store'],
                 modora_config=store_cfg,
             )
         else:
-            from src.core.vector_store import VikingStoreWrapper
-            vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
+            raise ValueError(
+                f"Unsupported store.type={store_type!r}. This branch is trimmed for MoDora testing; "
+                "use store.type: modora."
+            )
         
         # 3. LLM Client
         api_key = os.environ.get(

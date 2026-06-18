@@ -6,8 +6,8 @@ VersionRAG 是一个面向版本化文档集合的检索增强问答数据集。
 原始文档混合了 Markdown 与 PDF 两种格式（Node.js / Bootstrap 为 Markdown，
 Apache Spark 为 PDF），QA 数据以 CSV 形式存储，无显式文档-问题映射。
 
-本适配器在 data_prepare 阶段会提前将所有 PDF 转换为 Markdown，
-以确保下游各 Store Wrapper（尤其是 OpenViking / PageIndex）获得最佳解析效果。
+本适配器在 data_prepare 阶段按目标 store 准备文档；MoDora 路径会保留
+Markdown/PDF 原始输入，统一交给 MoDora store 物化为 PDF。
 """
 
 import csv
@@ -48,9 +48,8 @@ class VersionRAGAdapter(BaseAdapter):
 
         处理策略：
         1. 扫描 data/raw/ 下的所有文件；
-        2. OpenViking/PageIndex: Markdown 直接复制，PDF 转 Markdown；
-        3. MoDora: Markdown/PDF 原样复制，统一由 MoDora store 物化为 PDF；
-        4. 返回所有文档路径列表。
+        2. MoDora: Markdown/PDF 原样复制，统一由 MoDora store 物化为 PDF；
+        3. 返回所有文档路径列表。
         """
         if not os.path.exists(self.raw_doc_dir):
             raise FileNotFoundError(f"Raw document directory not found: {self.raw_doc_dir}")

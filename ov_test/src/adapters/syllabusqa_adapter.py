@@ -114,7 +114,7 @@ class SyllabusQAAdapter(BaseAdapter):
     
     def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
         """
-        Load raw docx files and convert to OpenViking-friendly format.
+        Load raw docx files and convert to store-friendly text files.
         
         Only process syllabus documents mentioned in CSV, avoid processing irrelevant documents.
         Requires python-docx library to parse docx files.

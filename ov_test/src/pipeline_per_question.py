@@ -13,14 +13,12 @@ import os
 import json
 import hashlib
 import importlib
-import asyncio
-import multiprocessing as mp
 import re
 import shutil
 import time
 import threading
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional
 from tqdm import tqdm
 
@@ -35,41 +33,6 @@ def _create_store_from_config(config: dict, store_path: str):
     store_cfg = config.get('store', {})
     store_type = store_cfg.get('type', 'viking')
 
-    if store_type == 'pageindex':
-        from src.core.pageindex_store import PageIndexStoreWrapper
-
-        pageindex_conf = store_cfg.get('pageindex_config_path')
-        return PageIndexStoreWrapper(
-            store_path=store_path,
-            doc_output_dir=config['paths'].get('doc_output_dir', ''),
-            config_path=pageindex_conf
-        )
-    if store_type == 'hipporag':
-        from src.core.hipporag_store import HippoRAGStoreWrapper
-
-        hipporag_conf = store_cfg.get('hipporag_config', {})
-        return HippoRAGStoreWrapper(
-            store_path=store_path,
-            hipporag_config=hipporag_conf
-        )
-    if store_type == 'lightrag':
-        from src.core.lightrag_store import LightRAGStoreWrapper
-
-        lightrag_conf = store_cfg.get('lightrag_config', {})
-        return LightRAGStoreWrapper(
-            store_path=store_path,
-            lightrag_config=lightrag_conf
-        )
-    if store_type == 'sql_agent':
-        from src.core.sql_agent_store import SQLAgentStoreWrapper
-
-        sql_agent_conf = dict(store_cfg.get('sql_agent_config', {}))
-        sql_agent_conf['dataset_name'] = config.get('dataset_name', '')
-        sql_agent_conf['raw_data_path'] = config['paths'].get('raw_data', '')
-        return SQLAgentStoreWrapper(
-            store_path=store_path,
-            sql_agent_config=sql_agent_conf
-        )
     if store_type == 'modora':
         from src.core.modora_store import ModoraStoreWrapper
 
@@ -78,9 +41,10 @@ def _create_store_from_config(config: dict, store_path: str):
             modora_config=store_cfg,
         )
 
-    from src.core.vector_store import VikingStoreWrapper
-
-    return VikingStoreWrapper(store_path=store_path)
+    raise ValueError(
+        f"Unsupported store.type={store_type!r}. This branch is trimmed for MoDora testing; "
+        "use store.type: modora."
+    )
 
 
 def _standard_doc_paths(doc) -> List[str]:
@@ -148,17 +112,7 @@ def _run_generation_task(
     store_type = config.get('store', {}).get('type', 'viking')
 
     t0 = time.time()
-    if store_type == 'sql_agent':
-        res = store.retrieve(
-            query=qa.question,
-            topk=topk,
-            sample_id=sample_id,
-            qa_metadata=qa.metadata,
-        )
-    elif store_type == 'lightrag' and topk is None:
-        res = store.retrieve(query=qa.question)
-    else:
-        res = store.retrieve(query=qa.question, topk=topk)
+    res = store.retrieve(query=qa.question, topk=topk)
     latency = time.time() - t0
 
     retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
@@ -214,137 +168,6 @@ def _run_generation_task(
     }
 
 
-def _lightrag_ingest_group_worker(
-    config: dict,
-    store_parent_path: str,
-    store_key: str,
-    group: dict,
-):
-    store_path = os.path.join(store_parent_path, store_key)
-    store = _create_store_from_config(config, store_path)
-    started_at = time.time()
-    try:
-        docs = [_make_standard_doc(sample_id=store_key, doc_paths=group['doc_paths'])]
-        ingest_workers = config['execution'].get('ingest_workers')
-        stats = store.ingest(docs, max_workers=ingest_workers, monitor=None)
-        return {
-            "store_key": store_key,
-            "doc_paths": group['doc_paths'],
-            "stats": stats,
-            "elapsed_ingest": time.time() - started_at,
-        }
-    finally:
-        _close_store_instance(store)
-
-
-def _lightrag_query_group_worker(
-    config: dict,
-    store_parent_path: str,
-    store_key: str,
-    group: dict,
-    start_idx: int,
-    task_count: int,
-):
-    logger = get_logger()
-    adapter = _build_adapter_from_config(config)
-    llm = _build_llm_from_config(config)
-    store_path = os.path.join(store_parent_path, store_key)
-    store = _create_store_from_config(config, store_path)
-
-    try:
-        qa_tasks = []
-        idx = start_idx
-        for sample in group['samples']:
-            for qa in sample.qa_pairs:
-                if idx >= start_idx + task_count:
-                    break
-                qa_tasks.append({'id': idx, 'sample_id': sample.sample_id, 'qa': qa})
-                idx += 1
-            if idx >= start_idx + task_count:
-                break
-
-        async def _run_group_async():
-            query_group_workers = int(config.get('execution', {}).get('query_group_workers', 10) or 10)
-            topk = config.get('execution', {}).get('retrieval_topk')
-            semaphore = asyncio.Semaphore(query_group_workers)
-            if hasattr(store, "aensure_ready"):
-                await store.aensure_ready()
-
-            async def _run_single_task(task):
-                qa = task['qa']
-                task_id = task['id']
-                sample_id = task['sample_id']
-                async with semaphore:
-                    t0 = time.time()
-                    if topk is None:
-                        res = await store.aretrieve(query=qa.question)
-                    else:
-                        res = await store.aretrieve(query=qa.question, topk=topk)
-                    latency = time.time() - t0
-
-                    retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
-                    retrieve_out = getattr(res, 'retrieve_output_tokens', 0)
-                    retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(res)
-
-                    recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
-                    native_answer_used = bool(getattr(res, 'native_generation_used', False))
-                    if native_answer_used:
-                        ans_raw = getattr(res, 'native_final_answer', '')
-                        ans = adapter.post_process_answer(qa, ans_raw, {})
-                        in_tok = getattr(res, 'native_input_tokens', retrieve_in)
-                        out_tok = getattr(res, 'native_output_tokens', retrieve_out)
-                    else:
-                        full_prompt, meta = adapter.build_prompt(qa, context_blocks)
-                        ans_raw = await llm.agenerate(full_prompt)
-                        ans = adapter.post_process_answer(qa, ans_raw, meta)
-                        in_tok = store.count_tokens(full_prompt) + store.count_tokens(qa.question) + retrieve_in
-                        out_tok = store.count_tokens(ans) + retrieve_out
-
-                    not_mentioned_reason = ""
-                    if config.get('execution', {}).get('explain_not_mentioned', False):
-                        if MetricsCalculator.check_refusal(ans):
-                            not_mentioned_reason = await llm.aexplain_not_mentioned(qa.question, context_blocks)
-
-                    logger.info(
-                        f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s"
-                    )
-                    return {
-                        "_global_index": task_id,
-                        "sample_id": sample_id,
-                        "question": qa.question,
-                        "gold_answers": qa.gold_answers,
-                        "category": str(qa.category),
-                        "evidence": qa.evidence,
-                        "retrieval": {
-                            "latency_sec": latency,
-                            "uris": retrieved_uris,
-                            "recall_texts": retrieved_texts,
-                            "prompt_texts": context_blocks,
-                            "sql_queries": getattr(res, 'sql_queries', []),
-                        },
-                        "llm": {
-                            "final_answer": ans,
-                            "not_mentioned_reason": not_mentioned_reason,
-                        },
-                        "metrics": {"Recall": recall},
-                        "token_usage": {
-                            "total_input_tokens": in_tok,
-                            "llm_output_tokens": out_tok,
-                        },
-                    }
-
-            tasks = [asyncio.create_task(_run_single_task(task)) for task in qa_tasks]
-            results = {}
-            for completed in asyncio.as_completed(tasks):
-                res = await completed
-                results[res['_global_index']] = res
-            return results
-
-        return asyncio.run(_run_group_async())
-    finally:
-        _close_store_instance(store)
-
-
 class PerQuestionPipeline(BenchmarkPipeline):
 
     def __init__(self, config, adapter, vector_db, llm):
@@ -357,7 +180,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
         # 记录文件路径（按 store_key 索引）
         self.records_file = os.path.join(self.store_parent_path, "_ingest_records.json")
         self.records: Dict[str, dict] = self._load_records()
-        self._records_lock = threading.Lock()
+        self._records_lock = threading.RLock()
 
     # ---- 记录持久化 ----
 
@@ -542,69 +365,28 @@ class PerQuestionPipeline(BenchmarkPipeline):
             self._save_records()
 
             ingest_timeout = self.config['execution'].get('ingest_timeout')
-            if self.store_type == 'lightrag' and max_workers != 1:
-                mp_context = mp.get_context("spawn")
-                with ProcessPoolExecutor(
-                    max_workers=max_workers,
-                    mp_context=mp_context,
-                    max_tasks_per_child=1,
-                ) as executor:
-                    future_to_key = {
-                        executor.submit(
-                            _lightrag_ingest_group_worker,
-                            self.config,
-                            self.store_parent_path,
-                            sk,
-                            grp,
-                        ): sk
-                        for sk, grp, _, _ in group_tasks
-                    }
-                    pbar = tqdm(total=len(future_to_key), desc="Ingesting Groups", unit="group")
-                    try:
-                        for future in as_completed(future_to_key, timeout=ingest_timeout):
-                            sk = future_to_key[future]
-                            try:
-                                payload = future.result()
-                                self._record_ingest_success(
-                                    store_key=payload['store_key'],
-                                    doc_paths=payload['doc_paths'],
-                                    stats=payload['stats'],
-                                    elapsed_ingest=payload.get('elapsed_ingest'),
-                                )
-                            except Exception as e:
-                                self.logger.error(f"Ingest group {sk} failed: {e}")
-                                failed_keys.add(sk)
-                            pbar.update(1)
-                    except TimeoutError:
-                        for fut, sk in future_to_key.items():
-                            if not fut.done():
-                                self.logger.error(f"Ingest group {sk} timed out")
-                                failed_keys.add(sk)
-                                fut.cancel()
-                    pbar.close()
-            else:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    future_to_key = {
-                        executor.submit(self._ingest_group, sk, grp): sk
-                        for sk, grp, _, _ in group_tasks
-                    }
-                    pbar = tqdm(total=len(future_to_key), desc="Ingesting Groups", unit="group")
-                    try:
-                        for future in as_completed(future_to_key, timeout=ingest_timeout):
-                            sk = future_to_key[future]
-                            try:
-                                future.result()
-                            except Exception as e:
-                                self.logger.error(f"Ingest group {sk} failed: {e}")
-                                failed_keys.add(sk)
-                            pbar.update(1)
-                    except TimeoutError:
-                        for fut, sk in future_to_key.items():
-                            if not fut.done():
-                                self.logger.error(f"Ingest group {sk} timed out")
-                                failed_keys.add(sk)
-                                fut.cancel()
-                    pbar.close()
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_key = {
+                    executor.submit(self._ingest_group, sk, grp): sk
+                    for sk, grp, _, _ in group_tasks
+                }
+                pbar = tqdm(total=len(future_to_key), desc="Ingesting Groups", unit="group")
+                try:
+                    for future in as_completed(future_to_key, timeout=ingest_timeout):
+                        sk = future_to_key[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            self.logger.error(f"Ingest group {sk} failed: {e}")
+                            failed_keys.add(sk)
+                        pbar.update(1)
+                except TimeoutError:
+                    for fut, sk in future_to_key.items():
+                        if not fut.done():
+                            self.logger.error(f"Ingest group {sk} timed out")
+                            failed_keys.add(sk)
+                            fut.cancel()
+                pbar.close()
 
             if failed_keys:
                 self.logger.warning(f"Failed/timed-out groups: {failed_keys}")
@@ -641,7 +423,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
 
         # ---- Phase 2: max_workers 控制组间并发度 ----
         all_results = {}
-        if max_workers <= 1 and self.store_type != 'lightrag':
+        if max_workers <= 1:
             pbar = tqdm(total=len(group_tasks), desc="Query Groups", unit="group")
             for sk, grp, si, cnt in group_tasks:
                 try:
@@ -651,53 +433,6 @@ class PerQuestionPipeline(BenchmarkPipeline):
                     self.logger.error(f"Group {sk} failed: {e}")
                 pbar.update(1)
             pbar.close()
-        elif self.store_type == 'lightrag':
-            if max_workers <= 1:
-                pbar = tqdm(total=len(group_tasks), desc="Query Groups", unit="group")
-                for sk, grp, si, cnt in group_tasks:
-                    try:
-                        group_result = _lightrag_query_group_worker(
-                            self.config,
-                            self.store_parent_path,
-                            sk,
-                            grp,
-                            si,
-                            cnt,
-                        )
-                        all_results.update(group_result)
-                    except Exception as e:
-                        self.logger.error(f"Group {sk} failed: {e}")
-                    pbar.update(1)
-                pbar.close()
-            else:
-                mp_context = mp.get_context("spawn")
-                with ProcessPoolExecutor(
-                    max_workers=max_workers,
-                    mp_context=mp_context,
-                    max_tasks_per_child=1,
-                ) as executor:
-                    future_to_key = {
-                        executor.submit(
-                            _lightrag_query_group_worker,
-                            self.config,
-                            self.store_parent_path,
-                            sk,
-                            grp,
-                            si,
-                            cnt,
-                        ): sk
-                        for sk, grp, si, cnt in group_tasks
-                    }
-                    pbar = tqdm(total=len(future_to_key), desc="Query Groups", unit="group")
-                    for future in as_completed(future_to_key):
-                        sk = future_to_key[future]
-                        try:
-                            group_result = future.result()
-                            all_results.update(group_result)
-                        except Exception as e:
-                            self.logger.error(f"Group {sk} failed: {e}")
-                        pbar.update(1)
-                    pbar.close()
         else:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_key = {
@@ -754,30 +489,10 @@ class PerQuestionPipeline(BenchmarkPipeline):
         t_ingest = time.time()
         store = self._create_store(store_path)
         try:
-            if self.store_type == 'sql_agent':
-                # SQL Agent 需要真实 sample_id 来过滤原始数据
-                docs = []
-                for s in group['samples']:
-                    doc_meta = {}
-                    # 收集 QA 元数据中的辅助信息（如 HotpotQA 的 supporting_titles）
-                    all_titles = set()
-                    for qa in s.qa_pairs:
-                        all_titles.update(qa.metadata.get('supporting_fact_titles', []))
-                    if all_titles:
-                        doc_meta['supporting_titles'] = list(all_titles)
-                    docs.append(_make_standard_doc(
-                        sample_id=s.sample_id,
-                        doc_paths=doc_paths,
-                        metadata=doc_meta,
-                    ))
-            else:
-                if self.store_type == 'modora':
-                    docs = [
-                        _make_standard_doc(sample_id=store_key, doc_paths=[path])
-                        for path in doc_paths
-                    ]
-                else:
-                    docs = [_make_standard_doc(sample_id=store_key, doc_paths=doc_paths)]
+            docs = [
+                _make_standard_doc(sample_id=store_key, doc_paths=[path])
+                for path in doc_paths
+            ]
             ingest_workers = self.config['execution'].get('ingest_workers')
             stats = store.ingest(docs, max_workers=ingest_workers, monitor=self.monitor)
         except Exception as e:
