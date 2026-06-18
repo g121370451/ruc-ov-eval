@@ -1,4 +1,4 @@
 [submodule "modora"]
 	path = modora
-	url = git@github.com:sponge225/modora.git
+	url = https://github.com/sponge225/modora.git
 	branch = modora
