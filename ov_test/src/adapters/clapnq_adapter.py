@@ -1,110 +1,159 @@
 
+# src/adapters/clapnq_adapter.py
+"""
+ClapNQ Dataset Adapter
+
+ClapNQ is a QA dataset with Wikipedia articles as documents.
+"""
+
 import json
 import os
 import re
-from pathlib import Path
-from typing import List, Dict, Any
-
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
-
 import unicodedata
+from pathlib import Path
+import sys
 
-def sanitize_filename(name: str, max_length: int = 150) -> str:
+sys.path.append(str(Path(__file__).parent))
+
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
+
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
+
+
+def sanitize_filename(name, max_length=150):
     name = unicodedata.normalize("NFKD", name)
-
     name = re.sub(r'[\\/*?:"<>|]', "", name)
-
     name = re.sub(r'[\x00-\x1f\x7f]', "", name)
-
     name = name.strip(" .")
-
+    
     reserved_names = {
         "CON", "PRN", "AUX", "NUL",
-        *(f"COM{i}" for i in range(1, 10)),
-        *(f"LPT{i}" for i in range(1, 10)),
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     }
-
+    
     if name.upper() in reserved_names:
-        name = f"{name}_file"
-
+        name = name + "_file"
+    
     if len(name) > max_length:
         name = name[:max_length].rstrip()
-
+    
     if not name:
         name = "untitled"
-
+    
     return name
 
-QA_PROMPT = """Based on the above context, write an answer to the following question.
-Use information from the context to answer. Even if the context only partially addresses the question, provide the best possible answer based on available information. Only write 'Not mentioned' if the context contains absolutely no relevant information.
-Note: Question words like "who", "what", "where" should be interpreted broadly. For example, "who does X" might be answered by a description of the activity, field, or method rather than a specific person's name. Always answer based on what the context provides.
-Important: If the question contains qualifiers (e.g. "in the bible", "in the US", "in 2020") but the context provides relevant factual content without explicitly mentioning that qualifier, still use the context to answer. Do not refuse just because the context does not restate the qualifier.
 
-Question: {}
-Answer:
-"""
-
-def convert_to_md(raw_text: str) -> str:
+def convert_to_md(raw_text):
     """
-    将：
-    navigation            -&gt;  ## navigation\n
-    Contents ( hide )     -&gt;  ## Contents ( hide )\n
+    将ClapNQ的原始文本转换为Markdown格式。
     """
-
-    # 1. 压缩多余空白为单空格
-    text = re.sub(r"\s+", " ", raw_text).strip()
+    text = raw_text
     
-    text = re.sub(r"Contents\s*\(\s*hide\s*\)", "## Contents ( hide )\n", text)
+    # 移除开头的Wikipedia导航信息："标题 - wikipedia 标题 Jump to : navigation , search"
+    text = re.sub(r'^.*?Jump to\s*:\s*navigation\s*,\s*search', '', text)
+    
+    # 修复多余的空格（单词之间只有一个空格）
+    text = re.sub(r'\s+', ' ', text)
+    
+    # 移除"( edit )"编辑标记
+    text = re.sub(r'\(\s*edit\s*\)', '', text)
+    
+    # 处理Contents部分
+    text = re.sub(r'Contents\s*\(\s*hide\s*\)', '\n\n## Contents\n\n', text)
+    
+    # 在句号后且后面跟着大写字母的地方创建段落
+    text = re.sub(r'(\.)\s+([A-Z])', r'\1\n\n\2', text)
+    
+    # 处理冒号后创建列表项的情况
+    text = re.sub(r'(:)\s+(\d)', r'\1\n\n\2', text)
+    
+    # 清理多余空行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip() + '\n'
 
-    # 3. 让标题前强制换行（避免粘在正文后）
-    text = re.sub(r"\s*## ", r"\n\n## ", text)
-
-    # 4. 清理多余空行
-    text = re.sub(r"\n{3,}", "\n\n", text)
-
-    return text.strip() + "\n"
 
 class ClapNQAdapter(BaseAdapter):
     """
-    专门用于处理 ClapNQ 数据集的适配器。
+    ClapNQ Dataset Adapter.
+    Processes QA data with Wikipedia articles as documents.
     """
-    
-    def __init__(self, raw_file_path: str):
+
+    def __init__(self, raw_file_path):
         super().__init__(raw_file_path)
-        self.logger.info(f"[ClapNQAdapter initialized")
+        self.doc_file_path = self._find_doc_file()
 
-    def data_prepare(self, doc_dir: str) -> List[StandardDoc]:
-        """
-        加载original_document目录下dev和train目录下的answerable_orig.jsonl文件
-        并转换为Markdown格式
-        """
-        doc_files = []
-        
-        # 从标注数据路径推导原始文档目录
-        orig_dir = os.path.join(self.raw_file_path, "original_documents")
-        
-        if not os.path.exists(orig_dir):
-            raise FileNotFoundError(f"Original documents directory not found: {orig_dir}")
-        
-        # 查找dev和train目录下的answerable_orig.jsonl文件
-        for split in ['dev']:
-            split_dir = os.path.join(orig_dir, split)
-            if os.path.exists(split_dir):
-                for filename in os.listdir(split_dir):
-                    if filename.endswith('answerable_orig.jsonl') and not filename.endswith('unanswerable_orig.jsonl'):
-                        doc_files.append(os.path.join(split_dir, filename))
-        
-        if not doc_files:
-            raise FileNotFoundError(f"No answerable_orig.jsonl files found in {orig_dir}/dev and {orig_dir}/train")
-        
-        self.logger.info(f"Found {len(doc_files)} answerable_orig.jsonl files")
+    def _find_doc_file(self):
+        if os.path.isfile(self.raw_file_path):
+            data_dir = os.path.dirname(self.raw_file_path)
+            candidate = os.path.join(data_dir, "clapnq_dev_answerable_orig.jsonl")
+            return candidate if os.path.exists(candidate) else self.raw_file_path
 
-        res: List[StandardDoc] = []
+        candidates = [
+            os.path.join(self.raw_file_path, "clapnq_dev_answerable_orig.jsonl"),
+            os.path.join(self.raw_file_path, "original_documents", "dev", "clapnq_dev_answerable_orig.jsonl"),
+            os.path.join(self.raw_file_path, "dev", "clapnq_dev_answerable_orig.jsonl"),
+        ]
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return candidates[0]
+
+    def _qa_files(self):
+        if os.path.isfile(self.raw_file_path):
+            return [self.raw_file_path]
+
+        candidates = [
+            os.path.join(self.raw_file_path, "clapnq_dev_answerable.jsonl"),
+            os.path.join(self.raw_file_path, "annotated_data", "dev", "clapnq_dev_answerable.jsonl"),
+            os.path.join(self.raw_file_path, "dev", "clapnq_dev_answerable.jsonl"),
+        ]
+        return [path for path in candidates if os.path.exists(path)]
+
+    def data_prepare(self, doc_dir):
+        if not os.path.exists(self.doc_file_path):
+            raise FileNotFoundError(f"Document file not found: {self.doc_file_path}")
+
+        title_to_path = {}
         os.makedirs(doc_dir, exist_ok=True)
 
-        for doc_file in doc_files:
-            self.logger.info(f"Processing: {doc_file}")
-            with open(doc_file, 'r', encoding='utf-8') as f:
+        with open(self.doc_file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                
+                document_plaintext = item.get("document_plaintext", "")
+                document_title = item.get("document_title", "")
+                doc_content = convert_to_md(document_plaintext)
+                
+                final_content = "# " + document_title + "\n\n" + doc_content
+                
+                try:
+                    doc_filename = document_title + ".md"
+                    doc_filename = sanitize_filename(doc_filename)
+                    doc_path = os.path.join(doc_dir, doc_filename)
+                    with open(doc_path, "w", encoding="utf-8") as f_out:
+                        f_out.write(final_content)
+                    title_to_path[document_title] = doc_path
+                except Exception as e:
+                    self.logger.error(f"[clapnq adapter] doc prepare error {e}")
+                    raise e
+
+        res = []
+        for qa_file in self._qa_files():
+            with open(qa_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -113,62 +162,32 @@ class ClapNQAdapter(BaseAdapter):
                         item = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    
-                    example_id = item.get("example_id", "unknown")
-                    
-                    # 提取文档纯文本并转换为Markdown
-                    document_plaintext = item.get("document_plaintext", "")
-                    document_title = item.get("document_title", "")
-                    doc_content = convert_to_md(document_plaintext)
-                    
-                    # 添加文档标题到开头
-                    final_content = f"# {document_title}\n\n{doc_content}"
-                    
-                    try:
-                        # 使用document_title作为文件名（清理非法字符）
-                        # safe_title = document_title
-                        # safe_title = safe_title[:100]  # 限制文件名长度
-                        # doc_filename = f"{safe_title}_{example_id}.md"
-                        doc_filename = f"{document_title}.md"
-                        doc_filename = sanitize_filename(doc_filename)
-                        doc_path = os.path.join(doc_dir, doc_filename)
-                        self.logger.info(f"doc_path is {doc_path}")
-                        with open(doc_path, "w", encoding="utf-8") as f_out:
-                            f_out.write(final_content)
-                        res.append(StandardDoc(example_id, [doc_path]))
-                    except Exception as e:
-                        self.logger.error(f"[clapnq adapter] doc:{example_id} prepare error {e}")
-                        raise e
+
+                    sample_id = item.get("id", "")
+                    passages = item.get("passages", [])
+                    doc_paths = []
+                    seen_paths = set()
+                    for passage in passages:
+                        title = passage.get("title", "")
+                        doc_path = title_to_path.get(title)
+                        if doc_path and doc_path not in seen_paths:
+                            seen_paths.add(doc_path)
+                            doc_paths.append(doc_path)
+                    if doc_paths:
+                        res.append(StandardDoc(sample_id=sample_id, doc_paths=doc_paths))
 
         self.logger.info(f"Total {len(res)} documents prepared")
         return res
-        # return [StandardDoc("123123",doc_dir)]
 
-    def load_and_transform(self) -> List[StandardSample]:
-        """
-        加载原始 JSONL 数据并转换为标准化的 StandardSample 对象列表。
-        """
-        data_files = []
-        if os.path.isdir(self.raw_file_path):
-            # 如果是目录，查找所有.jsonl文件
-            for root, _, files in os.walk(self.raw_file_path):
-                for filename in files:
-                    if root.endswith('dev') and filename.endswith('answerable.jsonl') and not filename.endswith('unanswerable.jsonl') and not filename.endswith('_orig.jsonl'):
-                        data_files.append(os.path.join(root, filename))
-        else:
-            data_files.append(self.raw_file_path)
-        
-        if not data_files:
-            raise FileNotFoundError(f"No annotated data files found.")
-        
-        self.logger.info(f"Found {len(data_files)} annotated data files")
+    def load_and_transform(self):
+        qa_files = self._qa_files()
+        if not qa_files:
+            raise FileNotFoundError(f"Raw data file not found: {self.raw_file_path}")
 
         standard_samples = []
-        processed_ids = set()
 
-        for data_file in data_files:
-            self.logger.info(f"Processing annotated data file: {data_file}")
-            with open(data_file, 'r', encoding='utf-8') as f:
+        for qa_file in qa_files:
+            with open(qa_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -178,19 +197,19 @@ class ClapNQAdapter(BaseAdapter):
                     except json.JSONDecodeError:
                         continue
                     
-                    sample_id = item.get("id", "unknown")
-                    
-                    # 避免重复处理
-                    if sample_id in processed_ids:
-                        continue
-                    processed_ids.add(sample_id)
-                    
-                    qa_pairs = []
+                    qa_id = item.get("id", "")
                     question = item.get("input", "")
                     
                     gold_answers = []
                     evidence = []
                     
+                    # 从passages中提取evidence（如果有）
+                    passages = item.get("passages", [])
+                    for passage in passages:
+                        sentences = passage.get("sentences", [])
+                        evidence.extend(sentences)
+                    
+                    # 从output中提取答案（如果有）
                     outputs = item.get("output", [])
                     for output in outputs:
                         answer = output.get("answer", "")
@@ -199,17 +218,28 @@ class ClapNQAdapter(BaseAdapter):
                         selected_sentences = output.get("selected_sentences", [])
                         evidence.extend(selected_sentences)
                     
-                    passages = item.get("passages", [])
-                    first_passage_title = passages[0].get("title", "") if passages else ""
-
-                    qa_pairs.append(StandardQA(
+                    # 如果没有从output中找到答案，尝试从其他字段提取
+                    if not gold_answers:
+                        answers_text = item.get("answers", "")
+                        if answers_text:
+                            if isinstance(answers_text, str):
+                                answers = answers_text.split('::')
+                                gold_answers = [ans.strip() for ans in answers if ans.strip()]
+                            elif isinstance(answers_text, list):
+                                gold_answers = [ans.strip() for ans in answers_text if ans.strip()]
+                    
+                    qa_pairs = [StandardQA(
                         question=question,
                         gold_answers=gold_answers if gold_answers else ["Not mentioned"],
                         evidence=evidence,
                         category=None,
-                        metadata={"original_id": sample_id, "first_passage_title": first_passage_title}
-                    ))
-
+                        metadata={
+                            "id": qa_id,
+                            "passages": passages
+                        }
+                    )]
+                    
+                    sample_id = qa_id
                     standard_samples.append(StandardSample(
                         sample_id=sample_id,
                         qa_pairs=qa_pairs
@@ -218,12 +248,18 @@ class ClapNQAdapter(BaseAdapter):
         self.logger.info(f"Total {len(standard_samples)} samples loaded")
         return standard_samples
 
-    def build_prompt(self, qa: StandardQA, context_blocks: List[str]) -> tuple[str, Dict[str, Any]]:
+    def build_prompt(self, qa, context_blocks):
         context_text = "\n\n".join(context_blocks)
-        full_prompt = f"{context_text}\n\n{QA_PROMPT.format(qa.question)}"
-        meta = {}
+        full_prompt = (
+            f"{context_text}\n\n"
+            f"{ASSESSMENT_INSTRUCTION}\n\n"
+            "Interpret 'who' and 'what' broadly as context-dependent descriptions, "
+            "not necessarily as a specific person or object.\n"
+            "If a question includes constraints and the context provides the relevant facts, "
+            "answer within that scope even if the constraint is not repeated explicitly.\n\n"
+            f"Question: {qa.question}"
+        )
+        meta = {
+            "id": qa.metadata.get("id", ""),
+        }
         return full_prompt, meta
-
-    def post_process_answer(self, qa: StandardQA, raw_answer: str, meta: Dict[str, Any]) -> str:
-        return raw_answer.strip()
-

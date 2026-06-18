@@ -70,10 +70,34 @@ def _create_store_from_config(config: dict, store_path: str):
             store_path=store_path,
             sql_agent_config=sql_agent_conf
         )
+    if store_type == 'modora':
+        from src.core.modora_store import ModoraStoreWrapper
+
+        return ModoraStoreWrapper(
+            store_path=store_path,
+            modora_config=store_cfg,
+        )
 
     from src.core.vector_store import VikingStoreWrapper
 
     return VikingStoreWrapper(store_path=store_path)
+
+
+def _standard_doc_paths(doc) -> List[str]:
+    paths = getattr(doc, 'doc_paths', None)
+    if paths is None:
+        path = getattr(doc, 'doc_path', None)
+        paths = [] if path is None else path
+    if isinstance(paths, str):
+        paths = [paths]
+    return [str(p) for p in paths if p]
+
+
+def _make_standard_doc(sample_id: str, doc_paths: List[str], metadata: Optional[dict] = None):
+    doc = StandardDoc(sample_id=sample_id, doc_paths=[str(p) for p in doc_paths if p])
+    if metadata is not None:
+        setattr(doc, 'metadata', metadata)
+    return doc
 
 
 def _close_store_instance(store):
@@ -200,7 +224,7 @@ def _lightrag_ingest_group_worker(
     store = _create_store_from_config(config, store_path)
     started_at = time.time()
     try:
-        docs = [StandardDoc(sample_id=store_key, doc_paths=group['doc_paths'])]
+        docs = [_make_standard_doc(sample_id=store_key, doc_paths=group['doc_paths'])]
         ingest_workers = config['execution'].get('ingest_workers')
         stats = store.ingest(docs, max_workers=ingest_workers, monitor=None)
         return {
@@ -420,14 +444,24 @@ class PerQuestionPipeline(BenchmarkPipeline):
 
     # ---- 主流程 ----
 
-    def run_generation(self):
+    def run_import(self):
+        """只执行逐问题分组入库。"""
+        self.run_generation(import_only=True)
+
+    def run_generation(self, import_only: bool = False):
         """Phase1: 并行入库 → 备份 → Phase2: 并行检索生成"""
-        self.logger.info(">>> Stage: Ingestion & Generation (Per-Question, Parallel Groups)")
+        if import_only:
+            self.logger.info(">>> Stage: Ingestion (Per-Question, Parallel Groups)")
+        elif self.config['execution'].get('skip_ingestion', False):
+            self.logger.info(">>> Stage: Generation (Per-Question, Parallel Groups)")
+        else:
+            self.logger.info(">>> Stage: Ingestion & Generation (Per-Question, Parallel Groups)")
         doc_dir = self.config['paths'].get('doc_output_dir')
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
 
         try:
+            setattr(self.adapter, "target_store_type", self.store_type)
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception:
             self.logger.error("Data preparation failed")
@@ -438,22 +472,36 @@ class PerQuestionPipeline(BenchmarkPipeline):
         # sample_id -> doc_paths（合并同 sample_id 的路径）
         sample_doc_paths: Dict[str, List[str]] = {}
         for doc in doc_info:
-            sample_doc_paths.setdefault(doc.sample_id, []).extend(doc.doc_paths)
+            sample_doc_paths.setdefault(doc.sample_id, []).extend(_standard_doc_paths(doc))
 
         samples = self.adapter.load_and_transform()
         max_queries = self.config['execution'].get('max_queries')
 
         # 按 store_key 分组 sample，保持原始顺序
         groups: OrderedDict[str, dict] = OrderedDict()
-        for sample in samples:
-            sid = sample.sample_id
-            doc_paths = sample_doc_paths.get(sid, [])
-            if not doc_paths:
-                continue
-            store_key = self._make_store_key(doc_paths)
-            if store_key not in groups:
-                groups[store_key] = {'doc_paths': doc_paths, 'samples': []}
-            groups[store_key]['samples'].append(sample)
+        if self.store_type == 'modora':
+            all_doc_paths = []
+            seen_paths = set()
+            for paths in sample_doc_paths.values():
+                for path in paths:
+                    if path in seen_paths:
+                        continue
+                    seen_paths.add(path)
+                    all_doc_paths.append(path)
+            groups['modora_library'] = {
+                'doc_paths': all_doc_paths,
+                'samples': samples,
+            }
+        else:
+            for sample in samples:
+                sid = sample.sample_id
+                doc_paths = sample_doc_paths.get(sid, [])
+                if not doc_paths:
+                    continue
+                store_key = self._make_store_key(doc_paths)
+                if store_key not in groups:
+                    groups[store_key] = {'doc_paths': doc_paths, 'samples': []}
+                groups[store_key]['samples'].append(sample)
 
         # 分配 global_idx（预先分配，保证顺序确定）
         global_idx = 0
@@ -588,6 +636,9 @@ class PerQuestionPipeline(BenchmarkPipeline):
         if failed_keys:
             group_tasks = [(sk, grp, si, cnt) for sk, grp, si, cnt in group_tasks if sk not in failed_keys]
 
+        if import_only:
+            return
+
         # ---- Phase 2: max_workers 控制组间并发度 ----
         all_results = {}
         if max_workers <= 1 and self.store_type != 'lightrag':
@@ -714,10 +765,19 @@ class PerQuestionPipeline(BenchmarkPipeline):
                         all_titles.update(qa.metadata.get('supporting_fact_titles', []))
                     if all_titles:
                         doc_meta['supporting_titles'] = list(all_titles)
-                    docs.append(StandardDoc(sample_id=s.sample_id, doc_paths=doc_paths,
-                                            metadata=doc_meta))
+                    docs.append(_make_standard_doc(
+                        sample_id=s.sample_id,
+                        doc_paths=doc_paths,
+                        metadata=doc_meta,
+                    ))
             else:
-                docs = [StandardDoc(sample_id=store_key, doc_paths=doc_paths)]
+                if self.store_type == 'modora':
+                    docs = [
+                        _make_standard_doc(sample_id=store_key, doc_paths=[path])
+                        for path in doc_paths
+                    ]
+                else:
+                    docs = [_make_standard_doc(sample_id=store_key, doc_paths=doc_paths)]
             ingest_workers = self.config['execution'].get('ingest_workers')
             stats = store.ingest(docs, max_workers=ingest_workers, monitor=self.monitor)
         except Exception as e:

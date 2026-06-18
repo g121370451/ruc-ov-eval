@@ -5,3 +5,6 @@
 [submodule "lightrag"]
 	path = lightrag
 	url = https://github.com/HKUDS/LightRAG.git
+[submodule "modora"]
+	path = modora
+	url = https://github.com/g121370451/modora.git

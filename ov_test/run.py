@@ -99,10 +99,12 @@ def main():
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
     
-    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all",
-                        help="Execution step: 'gen' (Retrieval+LLM), 'eval' (Judge), or 'all'")
+    parser.add_argument("--step", choices=["all", "import", "gen", "eval", "gen+eval", "del"], default="all",
+                        help="Execution step: all, import (ingest only), gen, eval, gen+eval, or del")
     parser.add_argument("--skip-ingest", action="store_true", default=False,
                         help="Skip document ingestion, reuse existing store")
+    parser.add_argument("--max-queries", "--max_queries", dest="max_queries", type=int, default=None,
+                        help="Override execution.max_queries for quick smoke tests")
 
     args = parser.parse_args()
 
@@ -133,10 +135,19 @@ def main():
             config['paths'][key] = resolved
             # print(f"  - {key}: {resolved}")
 
+    store_cfg = config.get('store', {})
+    if store_cfg.get('type') == 'modora':
+        for key in ['modora_backend_path', 'modora_config', 'docs_dir', 'cache_dir']:
+            if key in store_cfg and store_cfg[key]:
+                rendered_path = str(store_cfg[key]).format(dataset_name=dataset_name)
+                store_cfg[key] = rendered_path
+
     # --- C2. 自增输出目录 + CLI skip_ingest ---
     resolve_auto_output_dir(config)
     if args.skip_ingest:
         config['execution']['skip_ingestion'] = True
+    if args.max_queries is not None:
+        config.setdefault('execution', {})['max_queries'] = args.max_queries
 
     # --- D. 初始化组件 ---
     try:
@@ -199,6 +210,12 @@ def main():
                 store_path=config['paths']['vector_store'],
                 sql_agent_config=sql_agent_conf
             )
+        elif store_type == 'modora':
+            from src.core.modora_store import ModoraStoreWrapper
+            vector_store = ModoraStoreWrapper(
+                store_path=config['paths']['vector_store'],
+                modora_config=store_cfg,
+            )
         else:
             from src.core.vector_store import VikingStoreWrapper
             vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])
@@ -222,15 +239,20 @@ def main():
         )
 
         # --- E. 执行任务 ---
-        if args.step in ["all", "gen"]:
-            logger.info("Stage: Generation (Ingest -> Retrieve -> Generate)")
+        if args.step in ["all", "import"]:
+            logger.info("Stage: Import (Ingest Only)")
+            pipeline.run_import()
+
+        if args.step in ["all", "gen", "gen+eval"]:
+            config['execution']['skip_ingestion'] = True
+            logger.info("Stage: Generation (Retrieve -> Generate)")
             pipeline.run_generation()
             
-        if args.step in ["all", "eval"]:
+        if args.step in ["all", "eval", "gen+eval"]:
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 
-        if args.step in ["del"]:
+        if args.step in ["all", "del"]:
             logger.info("Stage: Delete Vector Store")
             pipeline.run_deletion()
         

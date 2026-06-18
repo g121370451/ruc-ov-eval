@@ -1,0 +1,73 @@
+project_name: RAG_Benchmark
+dataset_name: FinanceBench
+adapter:
+  module: src.adapters.finance_bench_adapter
+  class_name: FinanceBenchAdapter
+execution:
+  max_workers: 1
+  ingest_workers: 1
+  retrieval_topk: 5
+  max_queries: null
+paths:
+  raw_data: Data/{dataset_name}/data/financebench_open_source.jsonl
+  doc_output_dir: Data/{dataset_name}/modora/docs
+  vector_store: Data/{dataset_name}/modora/store_index
+  output_dir: Output/{dataset_name}/modora_global/experiment_0001
+  log_file: Output/{dataset_name}/modora_global/experiment_0001/benchmark.log
+store:
+  type: modora
+  modora_backend_path: modora/MoDora-backend
+  docs_dir: Data/{dataset_name}/modora/docs
+  cache_dir: Data/{dataset_name}/modora/cache
+  ingest_mode: python
+  preload_library: false
+  share_library_cache: true
+  force_full_library_retrieval: true
+  serial_queries: false
+  run_ocr: true
+  run_build_tree: true
+  resume: true
+  overwrite: false
+  delete_mode: cache_only
+  materialize_clean_unreferenced_pdfs: true
+  ocr_batch_size: 1
+  ocr_text_recognition_batch_size: 1
+  component_workers: 8
+  build_tree_concurrency: 8
+  enable_vector_search: false
+  ocr_model: pdf_text
+  ocr_device: cpu
+  ocr_lang: en
+  allow_pdf_text_fallback: false
+  query_trace_logging: false
+  remote_llm_max_concurrency: null
+  remote_llm_per_query_concurrency: null
+  remote_llm_max_attempts: 4
+  remote_llm_base_delay_s: 1.0
+  remote_llm_max_delay_s: 30.0
+  model_instances:
+    JUDGE_LLM:
+      type: remote
+      model: ${LLM_MODEL}
+      base_url: ${LLM_BASE_URL}
+      api_key: ${LLM_API_KEY}
+  ui_settings:
+    schemaVersion: 3
+    pipelines:
+      enrichment:
+        modelInstance: JUDGE_LLM
+      levelGenerator:
+        modelInstance: JUDGE_LLM
+      metadataGenerator:
+        modelInstance: JUDGE_LLM
+      retriever:
+        modelInstance: JUDGE_LLM
+      qaService:
+        modelInstance: JUDGE_LLM
+  text_extract_workers: 8
+  pdf_text_empty_policy: warn
+llm:
+  model: ${LLM_MODEL}
+  temperature: 0
+  base_url: ${LLM_BASE_URL}
+  api_key: ${LLM_API_KEY}

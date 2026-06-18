@@ -61,20 +61,19 @@ class BenchmarkPipeline:
             with open(self.records_file, 'w', encoding='utf-8') as f:
                 json.dump(self.records, f, indent=2, ensure_ascii=False)
 
-    def run_generation(self):
-        """Step1 数据预处理"""
-        self.logger.info(">>> Stage: Ingestion & Generation")
+    def _prepare_ingestion_docs(self):
         doc_dir = self.config['paths'].get('doc_output_dir')
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
-        # 0. 预处理数据集
         try:
+            setattr(self.adapter, "target_store_type", self.store_type)
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception as e:
             self.logger.error(f"Data preparation failed: {e}")
             raise
-        skip_ingestion = self.config['execution'].get('skip_ingestion', False)
+        return doc_dir, doc_info
 
+    def _run_ingestion(self, doc_info, doc_dir, *, skip_ingestion=False):
         # 断点恢复：如果 records 标记已入库完成，跳过入库
         if self.records.get("ingested"):
             self.logger.info("Records indicate ingestion already completed, skipping.")
@@ -89,9 +88,8 @@ class BenchmarkPipeline:
             if not self.records.get("ingested"):
                 self.metrics_summary["insertion"] = {"time": 0, "input_tokens": 0, "output_tokens": 0}
 
-        else:  # 正常执行入库
+        else:
             import shutil
-            from src.core.backup_utils import backup_store
             store_path = self.config['paths'].get('vector_store', '')
             # 清空 store 目录
             if os.path.isdir(store_path):
@@ -122,7 +120,23 @@ class BenchmarkPipeline:
                 }
             })
             # backup_store(store_path, self.logger)
-        """Step 2 & 3: 数据入库 + 检索生成"""
+
+    def run_import(self):
+        """Step1: 只执行数据预处理和入库。"""
+        self.logger.info(">>> Stage: Ingestion")
+        doc_dir, doc_info = self._prepare_ingestion_docs()
+        self._run_ingestion(doc_info, doc_dir, skip_ingestion=False)
+
+    def run_generation(self):
+        """Step 2 & 3: 检索生成；未跳过入库时会先执行入库。"""
+        skip_ingestion = self.config['execution'].get('skip_ingestion', False)
+        if skip_ingestion:
+            self.logger.info(">>> Stage: Generation")
+        else:
+            self.logger.info(">>> Stage: Ingestion & Generation")
+        doc_dir, doc_info = self._prepare_ingestion_docs()
+        self._run_ingestion(doc_info, doc_dir, skip_ingestion=skip_ingestion)
+
         # 1. 始终加载数据
         samples = self.adapter.load_and_transform()
         # 2. 准备 QA 任务

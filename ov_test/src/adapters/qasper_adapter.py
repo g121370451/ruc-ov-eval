@@ -25,7 +25,13 @@ import json
 import os
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
 
 # Specific instructions for different answer types
 CATEGORY_INSTRUCTIONS = {
@@ -48,7 +54,7 @@ CATEGORY_INSTRUCTIONS = {
 }
 
 # Rule for when answer cannot be found
-MISSING_RULE = "If no information is available to answer the question, write 'Not mentioned'."
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
 
 
 class QasperAdapter(BaseAdapter):
@@ -107,7 +113,7 @@ class QasperAdapter(BaseAdapter):
                 doc_path = os.path.join(doc_dir, f"{paper_id}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(paper_id, [doc_path]))
+                res.append(StandardDoc(sample_id=paper_id, doc_paths=[doc_path]))
             except Exception as e:
                 self.logger.error(f"[qasper adapter] doc:{paper_id} prepare error {e}")
                 raise e
@@ -195,10 +201,8 @@ class QasperAdapter(BaseAdapter):
                         yes_no = answer_obj.get("yes_no")
                         
                         if extractive_spans:
-                            # 修改：将多个提取片段合并为一个完整答案
                             valid_spans = [span.strip() for span in extractive_spans if span and span.strip()]
                             if valid_spans:
-                                # 使用分号连接，表示这是一个由多部分组成的完整答案
                                 combined_answer = "; ".join(valid_spans)
                                 gold_answers.append(combined_answer)
                                 current_answer = combined_answer
@@ -382,19 +386,15 @@ class QasperAdapter(BaseAdapter):
 
 {category_instruction}
 
-{MISSING_RULE}
+{ASSESSMENT_INSTRUCTION}
 
-Question: {qa.question}
-
-Answer:"""
+Question: {qa.question}"""
         else:
             full_prompt = f"""{context_text}
 
-{MISSING_RULE}
+{ASSESSMENT_INSTRUCTION}
 
-Question: {qa.question}
-
-Answer:"""
+Question: {qa.question}"""
 
         meta = {
             "question_id": qa.metadata.get("question_id", ""),

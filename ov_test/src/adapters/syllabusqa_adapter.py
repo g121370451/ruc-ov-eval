@@ -30,10 +30,16 @@ import os
 import csv
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
 
 # Rule for when answer cannot be found
-MISSING_RULE = "If no information is available to answer the question, write 'Not mentioned'."
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
 
 # Specific instructions for different categories
 CATEGORY_INSTRUCTIONS = {
@@ -151,7 +157,7 @@ class SyllabusQAAdapter(BaseAdapter):
                 doc_path = os.path.join(doc_dir, f"{syllabus_id}_doc.md")
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(doc_content)
-                res.append(StandardDoc(syllabus_id, [doc_path]))
+                res.append(StandardDoc(sample_id=syllabus_id, doc_paths=[doc_path]))
             except Exception as e:
                 self.logger.error(f"[syllabusqa adapter] doc:{syllabus_id} prepare error {e}")
                 # If python-docx not installed, try using plain text
@@ -461,9 +467,9 @@ class SyllabusQAAdapter(BaseAdapter):
         context_text = "\n\n".join(context_blocks)
         
         if category_instruction:
-            full_prompt = f"{context_text}\n\n{category_instruction}\n\n{MISSING_RULE}\n\nQuestion: {eff_q}\n\nAnswer:"
+            full_prompt = f"{context_text}\n\n{category_instruction}\n\n{ASSESSMENT_INSTRUCTION}\n\nQuestion: {eff_q}"
         else:
-            full_prompt = f"{context_text}\n\n{MISSING_RULE}\n\nQuestion: {eff_q}\n\nAnswer:"
+            full_prompt = f"{context_text}\n\n{ASSESSMENT_INSTRUCTION}\n\nQuestion: {eff_q}"
 
         meta = {"id": qa.metadata.get("id", "")}
         return full_prompt, meta
