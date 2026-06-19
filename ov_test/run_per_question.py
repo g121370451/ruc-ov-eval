@@ -51,12 +51,18 @@ def resolve_env_vars(obj):
     """递归替换配置中的 ${VAR} 引用为环境变量值"""
     if isinstance(obj, str):
         def _replace(match):
-            var_name = match.group(1)
+            expr = match.group(1)
+            if ":-" in expr:
+                var_name, default_value = expr.split(":-", 1)
+            else:
+                var_name, default_value = expr, None
             value = os.environ.get(var_name)
             if value is None:
+                if default_value is not None:
+                    return default_value
                 raise ValueError(f"环境变量 {var_name} 未设置，请检查 .env 文件")
             return value
-        return re.sub(r'\$\{(\w+)\}', _replace, obj)
+        return re.sub(r'\$\{([^}]+)\}', _replace, obj)
     elif isinstance(obj, dict):
         return {k: resolve_env_vars(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -138,7 +144,7 @@ def main():
 
     store_cfg = config.get('store', {})
     if store_cfg.get('type') == 'modora':
-        for key in ['modora_backend_path', 'modora_config', 'docs_dir', 'cache_dir']:
+        for key in ['modora_backend_path', 'modora_config', 'docs_dir', 'cache_dir', 'chroma_persist_path']:
             if key in store_cfg and store_cfg[key]:
                 rendered_path = str(store_cfg[key]).format(dataset_name=dataset_name)
                 store_cfg[key] = rendered_path

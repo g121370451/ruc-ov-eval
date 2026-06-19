@@ -93,6 +93,12 @@ class ModoraStoreWrapper:
         self.docs_dir = self._resolve_optional_path(cfg.get("docs_dir"))
         self.cache_dir = self._resolve_optional_path(cfg.get("cache_dir"))
         self.inline_modora_config = self._build_inline_modora_config(cfg)
+        if self.inline_modora_config.get("chroma_persist_path"):
+            chroma_path = self._resolve_optional_path(
+                self.inline_modora_config.get("chroma_persist_path")
+            )
+            if chroma_path is not None:
+                self.inline_modora_config["chroma_persist_path"] = str(chroma_path)
 
         self.ingest_mode = str(cfg.get("ingest_mode", "python") or "python").lower()
         self.preload_library = bool(cfg.get("preload_library", True)) and (
@@ -181,8 +187,11 @@ class ModoraStoreWrapper:
             "remote_llm_base_delay_s",
             "remote_llm_max_delay_s",
             "query_trace_logging",
-            "disable_visual_llm",
-            "strip_llm_images",
+            "text_only_mode",
+            "enrich_non_text_components",
+            "visual_level_generation",
+            "visual_relevance_check",
+            "visual_reasoning",
             "ocr_model",
             "ocr_device",
             "ocr_lang",
@@ -194,6 +203,7 @@ class ModoraStoreWrapper:
             "text_extract_workers",
             "pdf_text_empty_policy",
             "enable_vector_search",
+            "enable_rerank",
             "ui_settings",
         ]:
             if key in cfg:

@@ -1,56 +1,132 @@
+# project_name/dataset_name: 实验标识；dataset_name 也用于路径模板替换。
 project_name: RAG_Benchmark
 dataset_name: SyllabusQA
+# adapter: 数据集适配器，负责把原始数据整理成统一的 StandardDoc/QA 格式。
 adapter:
   module: src.adapters.syllabusqa_adapter
   class_name: SyllabusQAAdapter
+# execution: benchmark 执行层参数，不直接传给 MoDora。
+# max_workers 控制 QA 查询之间的并发数；ingest_workers 控制入库阶段外层并发。
+# auto_output_dir=true 时会自动选择下一个 experiment_NNNN 输出目录。
 execution:
+  # QA 查询间并发数；开 embedding 时过大可能触发更多 embedding 请求和 Chroma 写入压力。
   max_workers: 10
+  # 入库外层 worker 数；实际 OCR/text extraction/build_tree 还会受下面 MoDora 参数限制。
   ingest_workers: 1
+  # 最终保留给生成/评测的检索结果数量。
   retrieval_topk: 5
+  # 调试时限制问题数量；null 表示跑完整数据集。
   max_queries: null
+# paths: ruc-ov-eval 侧的输入、输出和中间目录；{dataset_name} 会在运行时替换。
+# output_dir/log_file 是实验结果位置；vector_store 这里与 MoDora 的 Chroma 目录保持一致。
 paths:
+  # 原始数据入口。
   raw_data: Data/{dataset_name}
+  # adapter 输出/物化给 MoDora 入库的 PDF 目录。
   doc_output_dir: Data/{dataset_name}/modora/docs
+  # 外层 store 路径；MoDora 场景下主要对应 Chroma 持久化目录。
   vector_store: Data/{dataset_name}/modora/store_index
+  # 实验输出目录；auto_output_dir 开启时这里只作为扫描父目录的模板。
   output_dir: Output/{dataset_name}/modora_global/experiment_0001
+  # benchmark 日志文件；auto_output_dir 开启时会自动改到新实验目录下。
   log_file: Output/{dataset_name}/modora_global/experiment_0001/benchmark.log
+# store: MoDora 后端配置。这里会被写入临时 MoDora config，并传给 MoDora backend。
 store:
+  # 当前配置只使用 MoDora store。
   type: modora
+  # MoDora-backend 源码目录，用于把 modora 包加入 Python import 路径。
   modora_backend_path: modora/MoDora-backend
+  # MoDora 文档目录；最终应全部是 PDF。
   docs_dir: Data/{dataset_name}/modora/docs
+  # MoDora 缓存目录；保存 res.json/co.json/tree.json 等入库产物。
   cache_dir: Data/{dataset_name}/modora/cache
+  # python 表示直接调用 MoDora Python pipeline 入库。
   ingest_mode: python
+  # validate/cache/external 等模式可预加载；python 入库场景通常保持 false。
   preload_library: false
+  # true 表示多个查询复用已加载的 MoDora tree/library，减少重复加载。
   share_library_cache: true
+  # true 表示检索范围覆盖整库多文档，不先按定位阶段缩小到单页。
   force_full_library_retrieval: true
+  # true 会把 QA 查询串行化；false 允许查询间并发。
   serial_queries: false
+  # 是否运行 MoDora preprocess 阶段；ocr_model=pdf_text 时实际走 PDF 文本提取。
   run_ocr: true
+  # 是否根据 co.json 构建 MoDora tree.json。
   run_build_tree: true
+  # true 表示已有 res/co/tree 可复用，跳过已完成文件。
   resume: true
+  # true 会强制重做入库产物；一般实验保持 false。
   overwrite: false
+  # del 步骤删除策略：cache_only 只清 cache，docs_and_cache 会连 docs 一起清。
   delete_mode: cache_only
+  # true 会把 docs_dir 中当前 manifest 未引用的旧 PDF 移到 _unreferenced_pdfs。
   materialize_clean_unreferenced_pdfs: true
+  # Paddle OCR 批大小；pdf_text 模式下基本无影响。
   ocr_batch_size: 1
+  # Paddle 文本识别批大小；pdf_text 模式下基本无影响。
   ocr_text_recognition_batch_size: 1
+  # component extraction 并发数。
   component_workers: 8
+  # build_tree 阶段并发文档数。
   build_tree_concurrency: 8
-  enable_vector_search: false
+  # 是否启用 embedding/Chroma 向量检索；首次 gen 会懒生成缺失的 embedding。
+  enable_vector_search: true
+  # 是否启用 rerank 二阶段排序；当前默认关闭。
+  enable_rerank: false
+  # Chroma 向量库持久化目录；embedding 结果写在这里。
+  chroma_persist_path: Data/{dataset_name}/modora/store_index
+  # embedding 服务 base url；必须在 .env 中配置 EMBEDDING_BASE_URL。
+  embedding_api_base: ${EMBEDDING_BASE_URL}
+  # embedding 服务 key；必须在 .env 中配置 EMBEDDING_API_KEY。
+  embedding_api_key: ${EMBEDDING_API_KEY}
+  # embedding 模型名；doubao-embedding-vision 会自动走 multimodal embedding endpoint。
+  embedding_model_name: ${EMBEDDING_MODEL_NAME}
+  # rerank 关闭时保持空字符串；开启时需要补对应服务地址。
+  rerank_api_base: ""
+  # rerank 关闭时保持空字符串；开启时需要补 key。
+  rerank_api_key: ""
+  # rerank 关闭时保持空字符串；开启时需要补模型名。
+  rerank_model_name: ""
+  # pdf_text 表示不用 Paddle OCR/VLM，直接从文本 PDF 提取文字块；ppstructure 才走 Paddle OCR。
   ocr_model: pdf_text
+  # OCR 设备；无 CUDA 环境保持 cpu。
   ocr_device: cpu
+  # OCR 语言；pdf_text 模式下影响较小。
   ocr_lang: en
+  # Paddle OCR 失败后是否允许回退到 PDF 文本提取；pdf_text 模式不依赖它。
   allow_pdf_text_fallback: false
+  # 是否打印每个 QA 内部阶段详细日志；批量实验建议 false。
   query_trace_logging: false
+  # true 表示适配非 VLM 模型，剥离图片输入并走文本提示词。
+  text_only_mode: true
+  # 是否用 VLM/LLM enrich 图片、表格、图表等非文本组件；text_only 下关闭。
+  enrich_non_text_components: false
+  # 是否用视觉信息生成标题层级；text_only 下关闭。
+  visual_level_generation: false
+  # 是否用图像裁剪做相关性判断；text_only 下关闭。
+  visual_relevance_check: false
+  # 是否把截图/图片送入最终推理；text_only 下关闭。
+  visual_reasoning: false
+  # 远程 LLM 全局并发限制；null 表示不加这个全局 semaphore。
   remote_llm_max_concurrency: null
+  # 单个 QA 内部 LLM 并发限制；null 表示不限制查询内部并发。
   remote_llm_per_query_concurrency: null
+  # 远程 LLM 失败/429 的最大重试次数。
   remote_llm_max_attempts: 4
+  # 退避重试的初始等待秒数。
   remote_llm_base_delay_s: 1.0
+  # 退避重试的最大等待秒数。
   remote_llm_max_delay_s: 30.0
+  # model_instances: MoDora 内部可用的 LLM 实例；当前统一走远程 JUDGE_LLM。
   model_instances:
     JUDGE_LLM:
       type: remote
       model: ${LLM_MODEL}
       base_url: ${LLM_BASE_URL}
       api_key: ${LLM_API_KEY}
+  # ui_settings: MoDora 原生 pipeline 到 LLM 实例的映射。
+  # text_only_mode=true 时，视觉相关 pipeline 会被我们改造后的后端跳过或降级为文本路径。
   ui_settings:
     schemaVersion: 3
     pipelines:
@@ -64,8 +140,11 @@ store:
         modelInstance: JUDGE_LLM
       qaService:
         modelInstance: JUDGE_LLM
+  # pdf_text 模式下 PDF 文本提取的并发 worker 数。
   text_extract_workers: 8
+  # pdf_text 提取为空时的策略：warn/fail/ignore。
   pdf_text_empty_policy: warn
+# llm: ruc-ov-eval 评测/裁判等外层 LLM 配置，和 MoDora 内部 model_instances 分开。
 llm:
   model: ${LLM_MODEL}
   temperature: 0
