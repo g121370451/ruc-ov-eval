@@ -99,6 +99,9 @@ class ModoraStoreWrapper:
             )
             if chroma_path is not None:
                 self.inline_modora_config["chroma_persist_path"] = str(chroma_path)
+        self.chroma_persist_path = self._resolve_optional_path(
+            self.inline_modora_config.get("chroma_persist_path")
+        )
 
         self.ingest_mode = str(cfg.get("ingest_mode", "python") or "python").lower()
         self.preload_library = bool(cfg.get("preload_library", True)) and (
@@ -130,6 +133,10 @@ class ModoraStoreWrapper:
         self.query_trace_logging = self._bool_value(
             cfg.get("query_trace_logging", True),
             default=True,
+        )
+        self.delete_vector_index = self._bool_value(
+            cfg.get("delete_vector_index", cfg.get("enable_vector_search", False)),
+            default=False,
         )
         delete_mode = str(cfg.get("delete_mode", "cache_only") or "cache_only").lower()
         delete_mode_aliases = {
@@ -1327,76 +1334,158 @@ class ModoraStoreWrapper:
             )
         return removed
 
+    def _drop_chroma_client_cache(self, chroma_root: Path) -> None:
+        try:
+            self._ensure_modora_importable()
+            from modora.core.services.retrieve.vector_retriever import VectorRetriever
+
+            cache_key = str(chroma_root.expanduser().resolve())
+            with VectorRetriever._client_lock:
+                VectorRetriever._persistent_clients.pop(cache_key, None)
+        except Exception as e:
+            self.logger.warning(f"MoDora delete could not release Chroma client cache: {e}")
+
+    def _delete_vector_index(self) -> bool:
+        if not self.delete_vector_index:
+            return False
+        if self.chroma_persist_path is None:
+            self.logger.info(
+                "MoDora vector index delete skipped; chroma_persist_path is not configured."
+            )
+            return False
+
+        chroma_root = self.chroma_persist_path.resolve()
+        project_roots = [
+            self.workspace_root.resolve(),
+            self.repo_root.resolve(),
+        ]
+        store_root = Path(self.store_path).resolve()
+        if any(chroma_root == root for root in project_roots):
+            self.logger.warning(
+                "MoDora vector index delete skipped root path "
+                f"(path={chroma_root})"
+            )
+            return False
+        if chroma_root.name not in {"store_index", "chroma", "chroma_index"}:
+            self.logger.warning(
+                "MoDora vector index delete skipped suspicious path "
+                f"(path={chroma_root}); expected a Chroma index directory name "
+                "like store_index."
+            )
+            return False
+        if not (
+            chroma_root == store_root
+            or self._is_under(chroma_root, store_root)
+            or any(self._is_under(chroma_root, root) for root in project_roots)
+        ):
+            self.logger.warning(
+                "MoDora vector index delete skipped unsafe path "
+                f"(path={chroma_root}, allowed_roots={project_roots + [store_root]})"
+            )
+            return False
+
+        self._drop_chroma_client_cache(chroma_root)
+        if not chroma_root.exists():
+            return False
+        try:
+            if chroma_root.is_dir():
+                shutil.rmtree(chroma_root)
+            else:
+                chroma_root.unlink()
+        except Exception as e:
+            self.logger.warning(
+                "MoDora vector index delete failed "
+                f"(path={chroma_root}, error={e})"
+            )
+            return False
+
+        self.logger.info(f"MoDora delete removed vector index (path={chroma_root})")
+        return True
+
     def clear(self):
         """Delete MoDora cache entries one PDF at a time."""
         start_time = time.time()
-        if self.delete_mode == "none":
+        if self.delete_mode == "none" and not self.delete_vector_index:
             self.logger.info("MoDora delete skipped (delete_mode=none).")
             return
 
         self._ensure_modora_config_file()
 
-        if self.docs_dir is None or self.cache_dir is None:
-            self.logger.warning(
-                "MoDora delete skipped because docs_dir or cache_dir is not configured "
-                f"(docs_dir={self.docs_dir}, cache_dir={self.cache_dir})"
-            )
-            return
-
-        docs_root = self.docs_dir.resolve()
-        cache_root = self.cache_dir.resolve()
-        if not docs_root.exists():
-            self.logger.warning(f"MoDora delete skipped; docs_dir not found: {docs_root}")
-            return
-
-        pdf_paths = sorted(path.resolve() for path in docs_root.rglob("*.pdf"))
         removed_cache_dirs = 0
         removed_docs = 0
-        self.logger.info(
-            "MoDora delete started "
-            f"(mode={self.delete_mode}, docs_dir={docs_root}, "
-            f"cache_dir={cache_root}, pdf_count={len(pdf_paths)})"
-        )
-
-        for pdf_path in pdf_paths:
-            if not self._is_under(pdf_path, docs_root):
+        kb_removed = 0
+        pdf_count = 0
+        if self.delete_mode == "none":
+            self.logger.info("MoDora docs/cache delete skipped (delete_mode=none).")
+            pdf_paths: list[Path] = []
+        elif self.docs_dir is None or self.cache_dir is None:
+            self.logger.warning(
+                "MoDora docs/cache delete skipped because docs_dir or cache_dir is not configured "
+                f"(docs_dir={self.docs_dir}, cache_dir={self.cache_dir})"
+            )
+            pdf_paths: list[Path] = []
+        else:
+            docs_root = self.docs_dir.resolve()
+            cache_root = self.cache_dir.resolve()
+            if not docs_root.exists():
                 self.logger.warning(
-                    f"MoDora delete skipped unsafe PDF path: {pdf_path}"
+                    f"MoDora docs/cache delete skipped; docs_dir not found: {docs_root}"
                 )
-                continue
+                pdf_paths = []
+            else:
+                pdf_paths = sorted(path.resolve() for path in docs_root.rglob("*.pdf"))
+                pdf_count = len(pdf_paths)
+                self.logger.info(
+                    "MoDora delete started "
+                    f"(mode={self.delete_mode}, docs_dir={docs_root}, "
+                    f"cache_dir={cache_root}, pdf_count={pdf_count})"
+                )
 
-            cache_candidates = [
-                cache_root / pdf_path.stem,
-                cache_root / "trees" / pdf_path.stem,
-            ]
-            if pdf_path.stem.isdigit():
-                cache_candidates.append(cache_root / str(int(pdf_path.stem)))
+                for pdf_path in pdf_paths:
+                    if not self._is_under(pdf_path, docs_root):
+                        self.logger.warning(
+                            f"MoDora delete skipped unsafe PDF path: {pdf_path}"
+                        )
+                        continue
 
-            seen: set[Path] = set()
-            for cache_path in cache_candidates:
-                resolved_cache_path = cache_path.resolve()
-                if resolved_cache_path in seen:
-                    continue
-                seen.add(resolved_cache_path)
-                if self._safe_delete_path(
-                    resolved_cache_path,
-                    cache_root,
-                    f"cache for {pdf_path.name}",
-                ):
-                    removed_cache_dirs += 1
+                    cache_candidates = [
+                        cache_root / pdf_path.stem,
+                        cache_root / "trees" / pdf_path.stem,
+                    ]
+                    if pdf_path.stem.isdigit():
+                        cache_candidates.append(cache_root / str(int(pdf_path.stem)))
 
-            if self.delete_mode == "docs_and_cache":
-                if self._safe_delete_path(pdf_path, docs_root, f"document {pdf_path.name}"):
-                    removed_docs += 1
+                    seen: set[Path] = set()
+                    for cache_path in cache_candidates:
+                        resolved_cache_path = cache_path.resolve()
+                        if resolved_cache_path in seen:
+                            continue
+                        seen.add(resolved_cache_path)
+                        if self._safe_delete_path(
+                            resolved_cache_path,
+                            cache_root,
+                            f"cache for {pdf_path.name}",
+                        ):
+                            removed_cache_dirs += 1
 
-        kb_removed = self._delete_knowledge_base_entries(pdf_paths)
+                    if self.delete_mode == "docs_and_cache":
+                        if self._safe_delete_path(
+                            pdf_path,
+                            docs_root,
+                            f"document {pdf_path.name}",
+                        ):
+                            removed_docs += 1
+
+                kb_removed = self._delete_knowledge_base_entries(pdf_paths)
+        removed_vector_index = self._delete_vector_index()
         self._invalidate_library_cache()
         elapsed = time.time() - start_time
         self.logger.info(
             "MoDora delete finished "
-            f"(elapsed_s={elapsed:.2f}, pdf_count={len(pdf_paths)}, "
+            f"(elapsed_s={elapsed:.2f}, pdf_count={pdf_count}, "
             f"removed_cache_dirs={removed_cache_dirs}, removed_docs={removed_docs}, "
-            f"removed_kb_entries={kb_removed}, mode={self.delete_mode})"
+            f"removed_kb_entries={kb_removed}, "
+            f"removed_vector_index={removed_vector_index}, mode={self.delete_mode})"
         )
 
     def close(self):

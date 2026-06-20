@@ -62,6 +62,8 @@ store:
   overwrite: false
   # del 步骤删除策略：cache_only 只清 cache，docs_and_cache 会连 docs 一起清。
   delete_mode: cache_only
+  # del 步骤是否同步删除 Chroma 向量库 store_index。
+  delete_vector_index: true
   # true 会把 docs_dir 中当前 manifest 未引用的旧 PDF 移到 _unreferenced_pdfs。
   materialize_clean_unreferenced_pdfs: true
   # Paddle OCR 批大小；pdf_text 模式下基本无影响。
