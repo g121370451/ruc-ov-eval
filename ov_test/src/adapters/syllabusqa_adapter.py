@@ -30,10 +30,15 @@ import os
 import csv
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
 
-# Rule for when answer cannot be found
-MISSING_RULE = "If no information is available to answer the question, write 'Not mentioned'."
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
 
 # Specific instructions for different categories
 CATEGORY_INSTRUCTIONS = {
@@ -461,9 +466,9 @@ class SyllabusQAAdapter(BaseAdapter):
         context_text = "\n\n".join(context_blocks)
         
         if category_instruction:
-            full_prompt = f"{context_text}\n\n{category_instruction}\n\n{MISSING_RULE}\n\nQuestion: {eff_q}\n\nAnswer:"
+            full_prompt = f"{context_text}\n\n{category_instruction}\n\n{ASSESSMENT_INSTRUCTION}\n\nQuestion: {eff_q}"
         else:
-            full_prompt = f"{context_text}\n\n{MISSING_RULE}\n\nQuestion: {eff_q}\n\nAnswer:"
+            full_prompt = f"{context_text}\n\n{ASSESSMENT_INSTRUCTION}\n\nQuestion: {eff_q}"
 
         meta = {"id": qa.metadata.get("id", "")}
         return full_prompt, meta
@@ -482,4 +487,4 @@ class SyllabusQAAdapter(BaseAdapter):
         Returns:
             str: Processed answer
         """
-        return raw_answer.strip()
+        return super().post_process_answer(qa, raw_answer, meta)

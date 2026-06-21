@@ -1,9 +1,9 @@
 project_name: "RAG_Benchmark"
-dataset_name: "Locomo"
+dataset_name: "LegalBench"
 
 adapter:
-  module: "src.adapters.locomo_adapter"
-  class_name: "LocomoAdapter"
+  module: "src.adapters.legalbench_adapter"
+  class_name: "LegalBenchAdapter"
 
 store:
   type: "mc_indexing"
@@ -18,13 +18,14 @@ store:
     allow_dense_fallback: false
 
 execution:
-  max_workers: 32
+  max_workers: 8
   ingest_workers: 1
   retrieval_topk: 5
   max_queries: null
+  auto_output_dir: true
 
 paths:
-  raw_data: "Data/{dataset_name}/{dataset_name}.json"
+  raw_data: "Data/{dataset_name}"
   doc_output_dir: "Data/{dataset_name}/mc_indexing/processed_docs"
   vector_store: "Data/{dataset_name}/mc_indexing/store_index"
   output_dir: "Output/{dataset_name}/mc_indexing/experiment_0001"

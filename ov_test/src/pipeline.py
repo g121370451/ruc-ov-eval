@@ -61,20 +61,19 @@ class BenchmarkPipeline:
             with open(self.records_file, 'w', encoding='utf-8') as f:
                 json.dump(self.records, f, indent=2, ensure_ascii=False)
 
-    def run_generation(self):
-        """Step1 数据预处理"""
-        self.logger.info(">>> Stage: Ingestion & Generation")
+    def _prepare_ingestion_docs(self):
         doc_dir = self.config['paths'].get('doc_output_dir')
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
-        # 0. 预处理数据集
         try:
+            setattr(self.adapter, "target_store_type", self.store_type)
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception as e:
             self.logger.error(f"Data preparation failed: {e}")
             raise
-        skip_ingestion = self.config['execution'].get('skip_ingestion', False)
+        return doc_dir, doc_info
 
+    def _run_ingestion(self, doc_info, doc_dir, *, skip_ingestion=False):
         # 断点恢复：如果 records 标记已入库完成，跳过入库
         if self.records.get("ingested"):
             self.logger.info("Records indicate ingestion already completed, skipping.")
@@ -118,11 +117,26 @@ class BenchmarkPipeline:
                 "Insertion Efficiency (Total Dataset)": {
                     "Total Insertion Time (s)": self.metrics_summary["insertion"]["time"],
                     "Total Input Tokens": self.metrics_summary["insertion"]["input_tokens"],
-                    "Total Output Tokens": self.metrics_summary["insertion"]["output_tokens"]
+                    "Total Output Tokens": self.metrics_summary["insertion"]["output_tokens"],
+                    "API Input Tokens": self.metrics_summary["insertion"].get("api_input_tokens", self.metrics_summary["insertion"]["input_tokens"]),
+                    "API Output Tokens": self.metrics_summary["insertion"].get("api_output_tokens", self.metrics_summary["insertion"]["output_tokens"]),
+                    "Estimated Input Tokens": self.metrics_summary["insertion"].get("estimated_input_tokens", 0),
+                    "Estimated Output Tokens": self.metrics_summary["insertion"].get("estimated_output_tokens", 0),
+                    "Stage Times (s)": self.metrics_summary["insertion"].get("stage_times", {}),
                 }
             })
             # backup_store(store_path, self.logger)
-        """Step 2 & 3: 数据入库 + 检索生成"""
+
+    def run_import(self):
+        """Step1: 只执行数据预处理和入库。"""
+        self.logger.info(">>> Stage: Ingestion")
+        doc_dir, doc_info = self._prepare_ingestion_docs()
+        self._run_ingestion(doc_info, doc_dir, skip_ingestion=False)
+
+    def run_generation(self):
+        """Step 2: 只执行检索生成，不执行数据预处理或入库。"""
+        self.logger.info(">>> Stage: Generation")
+
         # 1. 始终加载数据
         samples = self.adapter.load_and_transform()
         # 2. 准备 QA 任务
@@ -186,9 +200,22 @@ class BenchmarkPipeline:
         if total > 0:
             self._update_report({
                     "Query Efficiency (Average Per Query)": {
-                        "Average Retrieval Time (s)": sum(r['retrieval']['latency_sec'] for r in sorted_results) / total,
+                        "Average Retrieval Time (s)": sum(r.get('timing', {}).get('retrieval_latency_sec', r['retrieval']['latency_sec']) for r in sorted_results) / total,
+                        "Average Generation Time (s)": sum(r.get('timing', {}).get('generation_latency_sec', 0) for r in sorted_results) / total,
+                        "Average Query Time (s)": sum(r.get('timing', {}).get('total_latency_sec', r['retrieval']['latency_sec']) for r in sorted_results) / total,
+                        "Total Retrieval Time (s)": sum(r.get('timing', {}).get('retrieval_latency_sec', r['retrieval']['latency_sec']) for r in sorted_results),
+                        "Total Generation Time (s)": sum(r.get('timing', {}).get('generation_latency_sec', 0) for r in sorted_results),
+                        "Total Query Time (s)": sum(r.get('timing', {}).get('total_latency_sec', r['retrieval']['latency_sec']) for r in sorted_results),
                         "Average Input Tokens": sum(r['token_usage']['total_input_tokens'] for r in sorted_results) / total,
                         "Average Output Tokens": sum(r['token_usage']['llm_output_tokens'] for r in sorted_results) / total,
+                        "Average Retrieval Input Tokens": sum(r['token_usage'].get('retrieval_input_tokens', 0) for r in sorted_results) / total,
+                        "Average Retrieval Output Tokens": sum(r['token_usage'].get('retrieval_output_tokens', 0) for r in sorted_results) / total,
+                        "Average Generation Input Tokens": sum(r['token_usage'].get('generation_input_tokens', 0) for r in sorted_results) / total,
+                        "Average Generation Output Tokens": sum(r['token_usage'].get('generation_output_tokens', 0) for r in sorted_results) / total,
+                        "Total Retrieval Input Tokens": sum(r['token_usage'].get('retrieval_input_tokens', 0) for r in sorted_results),
+                        "Total Retrieval Output Tokens": sum(r['token_usage'].get('retrieval_output_tokens', 0) for r in sorted_results),
+                        "Total Generation Input Tokens": sum(r['token_usage'].get('generation_input_tokens', 0) for r in sorted_results),
+                        "Total Generation Output Tokens": sum(r['token_usage'].get('generation_output_tokens', 0) for r in sorted_results),
                     }
                 }
             )
@@ -277,6 +304,7 @@ class BenchmarkPipeline:
         self.monitor.worker_start()
         try:
             qa = task['qa']
+            task_start = time.time()
 
             # 1. Retrieval
             t0 = time.time()
@@ -303,14 +331,21 @@ class BenchmarkPipeline:
             if native_answer_used:
                 ans_raw = getattr(search_res, 'native_final_answer', '')
                 ans = self.adapter.post_process_answer(qa, ans_raw, {})
-                in_tokens = getattr(search_res, 'native_input_tokens', retrieve_in)
-                out_tokens = getattr(search_res, 'native_output_tokens', retrieve_out)
+                generation_in = getattr(search_res, 'native_input_tokens', retrieve_in)
+                generation_out = getattr(search_res, 'native_output_tokens', retrieve_out)
+                in_tokens = generation_in
+                out_tokens = generation_out
+                generation_latency = 0.0
             else:
+                gen_t0 = time.time()
                 full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
                 ans_raw = self.llm.generate(full_prompt)
                 ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-                in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
-                out_tokens = self.db.count_tokens(ans) + retrieve_out
+                generation_in = self.db.count_tokens(full_prompt)
+                generation_out = self.db.count_tokens(ans_raw or ans)
+                in_tokens = retrieve_in + generation_in
+                out_tokens = retrieve_out + generation_out
+                generation_latency = time.time() - gen_t0
 
             # 检查是否需要解释 Not mentioned
             not_mentioned_reason = ""
@@ -318,9 +353,15 @@ class BenchmarkPipeline:
                 if MetricsCalculator.check_refusal(ans):
                     not_mentioned_reason = self.llm.explain_not_mentioned(qa.question, context_blocks)
 
+            total_latency = time.time() - task_start
             self.monitor.worker_end(tokens=in_tokens + out_tokens)
 
-            self.logger.info(f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s")
+            self.logger.info(
+                f"[Query-{task['id']}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | "
+                f"Latency: {latency:.2f}s | generation_latency={generation_latency:.2f}s | "
+                f"retrieve_tokens=({retrieve_in},{retrieve_out}) | "
+                f"generation_tokens=({generation_in},{generation_out})"
+            )
 
             return {
                 "_global_index": task['id'], "sample_id": task['sample_id'], "question": qa.question,
@@ -329,7 +370,22 @@ class BenchmarkPipeline:
                               "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
                               "sql_queries": getattr(search_res, 'sql_queries', [])},
                 "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
-                "metrics": {"Recall": recall}, "token_usage": {"total_input_tokens": in_tokens, "llm_output_tokens": out_tokens}
+                "timing": {
+                    "retrieval_latency_sec": latency,
+                    "generation_latency_sec": generation_latency,
+                    "total_latency_sec": total_latency,
+                },
+                "metrics": {"Recall": recall},
+                "token_usage": {
+                    "retrieval_input_tokens": retrieve_in,
+                    "retrieval_output_tokens": retrieve_out,
+                    "generation_input_tokens": generation_in,
+                    "generation_output_tokens": generation_out,
+                    "total_input_tokens": in_tokens,
+                    "llm_output_tokens": out_tokens,
+                    "total_output_tokens": out_tokens,
+                    "total_tokens": in_tokens + out_tokens,
+                }
             }
         except Exception as e:
             self.logger.exception(f"[Query-{task['id']}] Failed during generation task")
@@ -358,27 +414,39 @@ class BenchmarkPipeline:
                 retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
                 retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
                 native_answer_used = bool(getattr(search_res, 'native_generation_used', False))
+                task_start = t0
 
                 if native_answer_used:
                     ans_raw = getattr(search_res, 'native_final_answer', '')
                     ans = self.adapter.post_process_answer(qa, ans_raw, {})
-                    in_tokens = getattr(search_res, 'native_input_tokens', retrieve_in)
-                    out_tokens = getattr(search_res, 'native_output_tokens', retrieve_out)
+                    generation_in = getattr(search_res, 'native_input_tokens', retrieve_in)
+                    generation_out = getattr(search_res, 'native_output_tokens', retrieve_out)
+                    in_tokens = generation_in
+                    out_tokens = generation_out
+                    generation_latency = 0.0
                 else:
+                    gen_t0 = time.time()
                     full_prompt, meta = self.adapter.build_prompt(qa, context_blocks)
                     ans_raw = await self.llm.agenerate(full_prompt)
                     ans = self.adapter.post_process_answer(qa, ans_raw, meta)
-                    in_tokens = self.db.count_tokens(full_prompt) + self.db.count_tokens(qa.question) + retrieve_in
-                    out_tokens = self.db.count_tokens(ans) + retrieve_out
+                    generation_in = self.db.count_tokens(full_prompt)
+                    generation_out = self.db.count_tokens(ans_raw or ans)
+                    in_tokens = retrieve_in + generation_in
+                    out_tokens = retrieve_out + generation_out
+                    generation_latency = time.time() - gen_t0
 
                 not_mentioned_reason = ""
                 if self.config.get('execution', {}).get('explain_not_mentioned', False):
                     if MetricsCalculator.check_refusal(ans):
                         not_mentioned_reason = await self.llm.aexplain_not_mentioned(qa.question, context_blocks)
 
+                total_latency = time.time() - task_start
                 self.monitor.worker_end(tokens=in_tokens + out_tokens)
                 self.logger.info(
-                    f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | Latency: {latency:.2f}s"
+                    f"[Query-{task_id}] Q: {qa.question[:30]}... | Recall: {recall:.2f} | "
+                    f"Latency: {latency:.2f}s | generation_latency={generation_latency:.2f}s | "
+                    f"retrieve_tokens=({retrieve_in},{retrieve_out}) | "
+                    f"generation_tokens=({generation_in},{generation_out})"
                 )
 
                 return {
@@ -388,8 +456,22 @@ class BenchmarkPipeline:
                                   "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
                                   "sql_queries": getattr(search_res, 'sql_queries', [])},
                     "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
+                    "timing": {
+                        "retrieval_latency_sec": latency,
+                        "generation_latency_sec": generation_latency,
+                        "total_latency_sec": total_latency,
+                    },
                     "metrics": {"Recall": recall},
-                    "token_usage": {"total_input_tokens": in_tokens, "llm_output_tokens": out_tokens}
+                    "token_usage": {
+                        "retrieval_input_tokens": retrieve_in,
+                        "retrieval_output_tokens": retrieve_out,
+                        "generation_input_tokens": generation_in,
+                        "generation_output_tokens": generation_out,
+                        "total_input_tokens": in_tokens,
+                        "llm_output_tokens": out_tokens,
+                        "total_output_tokens": out_tokens,
+                        "total_tokens": in_tokens + out_tokens,
+                    }
                 }
             except Exception:
                 self.logger.exception(f"[Query-{task_id}] Failed during async generation task")

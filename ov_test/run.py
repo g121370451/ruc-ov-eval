@@ -87,6 +87,13 @@ def resolve_auto_output_dir(config):
     config['paths']['log_file'] = os.path.join(experiment_dir, "benchmark.log")
     print(f"[Init] Auto output dir: {experiment_dir}")
 
+
+def should_use_auto_output_dir(config, args):
+    """默认尊重 YAML 中的 paths.output_dir，只有显式开启时才自动递增。"""
+    if args.auto_output_dir:
+        return True
+    return bool(config.get('execution', {}).get('auto_output_dir', False))
+
 # ==========================================
 # 3. 主程序
 # ==========================================
@@ -99,10 +106,14 @@ def main():
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
     
-    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all",
-                        help="Execution step: 'gen' (Retrieval+LLM), 'eval' (Judge), or 'all'")
+    parser.add_argument("--step", choices=["all", "import", "gen", "eval", "gen+eval", "del"], default="all",
+                        help="Execution step: all, import (ingest only), gen, eval, gen+eval, or del")
     parser.add_argument("--skip-ingest", action="store_true", default=False,
                         help="Skip document ingestion, reuse existing store")
+    parser.add_argument("--max-queries", "--max_queries", dest="max_queries", type=int, default=None,
+                        help="Override execution.max_queries for quick smoke tests")
+    parser.add_argument("--auto-output-dir", action="store_true", default=False,
+                        help="Auto-increment paths.output_dir to the next experiment_NNNN directory")
 
     args = parser.parse_args()
 
@@ -134,9 +145,14 @@ def main():
             # print(f"  - {key}: {resolved}")
 
     # --- C2. 自增输出目录 + CLI skip_ingest ---
-    resolve_auto_output_dir(config)
+    if should_use_auto_output_dir(config, args):
+        resolve_auto_output_dir(config)
+    else:
+        print(f"[Init] Using configured output dir: {config['paths']['output_dir']}")
     if args.skip_ingest:
         config['execution']['skip_ingestion'] = True
+    if args.max_queries is not None:
+        config.setdefault('execution', {})['max_queries'] = args.max_queries
 
     # --- D. 初始化组件 ---
     try:
@@ -230,15 +246,19 @@ def main():
         )
 
         # --- E. 执行任务 ---
-        if args.step in ["all", "gen"]:
-            logger.info("Stage: Generation (Ingest -> Retrieve -> Generate)")
+        if args.step in ["all", "import"]:
+            logger.info("Stage: Import (Ingest Only)")
+            pipeline.run_import()
+
+        if args.step in ["all", "gen", "gen+eval"]:
+            logger.info("Stage: Generation (Retrieve -> Generate)")
             pipeline.run_generation()
             
-        if args.step in ["all", "eval"]:
+        if args.step in ["all", "eval", "gen+eval"]:
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 
-        if args.step in ["del"]:
+        if args.step in ["all", "del"]:
             logger.info("Stage: Delete Vector Store")
             pipeline.run_deletion()
         

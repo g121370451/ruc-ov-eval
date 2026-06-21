@@ -5,7 +5,13 @@ import re
 from pathlib import Path
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
 
 import unicodedata
 
@@ -35,14 +41,7 @@ def sanitize_filename(name: str, max_length: int = 150) -> str:
 
     return name
 
-QA_PROMPT = """Based on the above context, write an answer to the following question.
-Use information from the context to answer. Even if the context only partially addresses the question, provide the best possible answer based on available information. Only write 'Not mentioned' if the context contains absolutely no relevant information.
-Note: Question words like "who", "what", "where" should be interpreted broadly. For example, "who does X" might be answered by a description of the activity, field, or method rather than a specific person's name. Always answer based on what the context provides.
-Important: If the question contains qualifiers (e.g. "in the bible", "in the US", "in 2020") but the context provides relevant factual content without explicitly mentioning that qualifier, still use the context to answer. Do not refuse just because the context does not restate the qualifier.
-
-Question: {}
-Answer:
-"""
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
 
 def convert_to_md(raw_text: str) -> str:
     """
@@ -220,10 +219,20 @@ class ClapNQAdapter(BaseAdapter):
 
     def build_prompt(self, qa: StandardQA, context_blocks: List[str]) -> tuple[str, Dict[str, Any]]:
         context_text = "\n\n".join(context_blocks)
-        full_prompt = f"{context_text}\n\n{QA_PROMPT.format(qa.question)}"
-        meta = {}
+        full_prompt = (
+            f"{context_text}\n\n"
+            f"{ASSESSMENT_INSTRUCTION}\n\n"
+            "Interpret 'who' and 'what' broadly as context-dependent descriptions, "
+            "not necessarily as a specific person or object.\n"
+            "If a question includes constraints and the context provides the relevant facts, "
+            "answer within that scope even if the constraint is not repeated explicitly.\n\n"
+            f"Question: {qa.question}"
+        )
+        meta = {
+            "id": qa.metadata.get("id", qa.metadata.get("original_id", "")),
+        }
         return full_prompt, meta
 
     def post_process_answer(self, qa: StandardQA, raw_answer: str, meta: Dict[str, Any]) -> str:
-        return raw_answer.strip()
+        return super().post_process_answer(qa, raw_answer, meta)
 

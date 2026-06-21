@@ -25,33 +25,26 @@ import os
 from collections import defaultdict
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
 
-QA_PROMPT = """You are a helpful assistant that answers questions based on the provided context. 
+CATEGORY_INSTRUCTIONS = {
+    "bridge": """Answer the bridge-type question using information from the context.
+- Use facts from the context as the basis for reasoning
+- Connect the dots between different pieces of information
+- Make logical inferences when needed""",
+    "comparison": """Answer the comparison-type question using information from the context.
+- Use facts from the context for comparison
+- Highlight similarities and differences clearly
+- Draw conclusions based on the evidence""",
+}
 
-### INSTRUCTIONS:
-1. **Source Grounding**: Answer the question using ONLY the provided context.
-2. **Conciseness**: Provide the answer as a short phrase, entity, or specific value. Avoid full sentences unless absolutely necessary.
-3. **Yes/No Questions**: If the question is a Yes/No question, respond with ONLY "yes" or "no".
-4. **Lists**: If the answer involves multiple items, separate them with a comma.
-5. **Exact Extraction**: Use exact terminology from the text whenever possible.
-
-### ABSENCE RULE:
-{missing_rule}
-
----
-### CONTEXT:
-{context_text}
-
----
-### QUESTION:
-{question}
-
----
-### ANSWER:
-"""
-
-MISSING_RULE = "If no information is available to answer the question, write 'Not mentioned'."
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
 
 
 class HotpotQAAdapter(BaseAdapter):
@@ -460,11 +453,21 @@ class HotpotQAAdapter(BaseAdapter):
         """
         context_text = "\n\n".join(context_blocks) if context_blocks else "No relevant context found."
         
-        full_prompt = QA_PROMPT.format(
-            missing_rule=MISSING_RULE,
-            context_text=context_text,
-            question=qa.question
-        )
+        category_instruction = CATEGORY_INSTRUCTIONS.get(qa.category, "")
+        if category_instruction:
+            full_prompt = f"""{context_text}
+
+{category_instruction}
+
+{ASSESSMENT_INSTRUCTION}
+
+Question: {qa.question}"""
+        else:
+            full_prompt = f"""{context_text}
+
+{ASSESSMENT_INSTRUCTION}
+
+Question: {qa.question}"""
 
         meta = {
             "id": qa.metadata.get("id", ""),
@@ -487,4 +490,4 @@ class HotpotQAAdapter(BaseAdapter):
         Returns:
             str: 处理后的答案
         """
-        return raw_answer.strip()
+        return super().post_process_answer(qa, raw_answer, meta)

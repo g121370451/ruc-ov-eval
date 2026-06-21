@@ -12,15 +12,21 @@ import os
 from collections import defaultdict
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
 
 QA_PROMPT = """Based on the financial document excerpts above, answer the following question accurately and concisely.
 If the answer involves a numerical value, include the unit (e.g., USD millions, %, etc.).
 
 Question: {}
-Answer:"""
+"""
 
-MISSING_RULE = "If the provided context does not contain sufficient information to answer the question, respond with 'Insufficient information'."
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
 
 
 class FinanceBenchAdapter(BaseAdapter):
@@ -118,7 +124,7 @@ class FinanceBenchAdapter(BaseAdapter):
 
     def build_prompt(self, qa: StandardQA, context_blocks: List[str]) -> tuple[str, Dict[str, Any]]:
         context_text = "\n\n".join(context_blocks)
-        full_prompt = f"{context_text}\n\n{MISSING_RULE}\n\n{QA_PROMPT.format(qa.question)}"
+        full_prompt = f"{context_text}\n\n{ASSESSMENT_INSTRUCTION}\n\n{QA_PROMPT.format(qa.question)}"
         meta = {
             "question_type": qa.category,
             "financebench_id": qa.metadata.get("financebench_id"),

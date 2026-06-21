@@ -1,4 +1,5 @@
 import json
+import hashlib
 import math
 import os
 import re
@@ -19,16 +20,25 @@ from src.adapters.base import StandardDoc
 from src.core.logger import get_logger
 
 
-VIEW_PROMPT = """You are helping reproduce MC-indexing for long-document retrieval.
-For the section below, produce two views:
-1. "summary": no more than 10 sentences or 200 words.
-2. "keywords": an array of 8-20 concepts, entities, and important descriptions useful for retrieval.
+PROMPT_VERSION = "mcindex-paper-figure8-9-v1"
 
-Return JSON only with keys "summary" and "keywords".
 
-Section Name: {title}
-Section Text:
+SUMMARY_PROMPT = """You are a helpful summarization assistant. Please help me summarize the following section into no more than 10 sentences or 200 words.
+**Section Name**:
+{title}
+**Section Text**:
 {text}
+"""
+
+
+KEYWORD_PROMPT = """You are a helpful keyword extractor. You need to extract keywords from the following section. The keywords should consist of concepts, entities, or important descriptions that are related to the section text, which could be used to answer any questions from users.
+**Section Name**:
+{title}
+**Section Text**:
+**Beginning of text**
+{text}
+**End of text**
+Please output format in list format: [...]. Do not output anything else aside from this list.
 """
 
 
@@ -53,6 +63,8 @@ class MCView:
     summary: str
     keywords: List[str]
     generation_method: str
+    content_hash: str = ""
+    view_config_hash: str = ""
 
 
 @dataclass
@@ -109,28 +121,14 @@ def lexical_tokens(text: str) -> List[str]:
 
 
 def sentence_split(text: str) -> List[str]:
-    pieces = re.split(r"(?<=[.!?。！？])\s+|(?<=[。！？])", str(text))
+    raw = str(text)
+    try:
+        from nltk.tokenize import sent_tokenize
+
+        pieces = sent_tokenize(raw)
+    except Exception:
+        pieces = re.split(r"(?<=[.!?。！？])\s+|(?<=[。！？])", raw)
     return [normalize_space(piece) for piece in pieces if normalize_space(piece)]
-
-
-def fallback_summary(text: str) -> str:
-    return truncate(" ".join(sentence_split(text)[:4]) or text, 900)
-
-
-def fallback_keywords(title: str, text: str, limit: int = 16) -> List[str]:
-    tokens = [
-        token
-        for token in re.findall(r"[A-Za-z][A-Za-z0-9.+_-]{1,}|[\u4e00-\u9fff]{2,}", f"{title} {text}")
-        if len(token) > 1
-    ]
-    counts = Counter(tokens)
-    keywords = []
-    for token, _count in counts.most_common(50):
-        if token not in keywords:
-            keywords.append(token)
-        if len(keywords) >= limit:
-            break
-    return keywords
 
 
 def read_jsonl(path: Path) -> List[dict]:
@@ -150,6 +148,23 @@ def write_jsonl(path: Path, rows: List[dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def unique_preserve_order(items: List[str]) -> List[str]:
+    seen = set()
+    result = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
 
 
 class SimpleBM25Retriever:
@@ -374,19 +389,23 @@ class MCIndexingStoreWrapper:
         self.logger = get_logger()
         self.method = self.config.get("method", "MC-indexing")
         self.retriever_name = self.config.get("retriever", "bm25")
-        self.generate_views = bool(self.config.get("generate_views", True))
         self.cache_views = bool(self.config.get("cache_views", True))
         self.view_workers = int(self.config.get("view_workers", 1) or 1)
-        self.max_view_input_chars = int(self.config.get("max_view_input_chars", 12000))
+        self.summary_min_tokens = int(self.config.get("summary_min_tokens", 200))
         self.max_context_chars = int(self.config.get("max_context_chars", 12000))
         self.context_block_chars = int(self.config.get("context_block_chars", 2000))
         self.return_source_text = bool(self.config.get("return_source_text", True))
         self.allow_dense_fallback = bool(self.config.get("allow_dense_fallback", False))
         self.llm_json_mode = bool(self.config.get("llm_json_mode", True))
+        self.pdf_pages_as_sections = bool(self.config.get("pdf_pages_as_sections", True))
         self.store_path.mkdir(parents=True, exist_ok=True)
         self._token_lock = threading.Lock()
         self.view_input_tokens = 0
         self.view_output_tokens = 0
+        self.view_api_input_tokens = 0
+        self.view_api_output_tokens = 0
+        self.view_estimated_input_tokens = 0
+        self.view_estimated_output_tokens = 0
 
         try:
             import tiktoken
@@ -406,19 +425,71 @@ class MCIndexingStoreWrapper:
             return 0
         return len(self.enc.encode(str(text)))
 
+    def _section_token_count(self, text: str) -> int:
+        counted = self.count_tokens(text)
+        return counted if counted else len(lexical_tokens(text))
+
     def ingest(self, samples: List[StandardDoc], max_workers: int = 10, monitor=None) -> dict:
         start = time.time()
         self.view_input_tokens = 0
         self.view_output_tokens = 0
+        self.view_api_input_tokens = 0
+        self.view_api_output_tokens = 0
+        self.view_estimated_input_tokens = 0
+        self.view_estimated_output_tokens = 0
+        parse_start = time.time()
+        doc_count = sum(len(sample.doc_paths) for sample in samples)
+        self.logger.info(
+            f"MC-indexing ingest started: samples={len(samples)}, doc_paths={doc_count}, "
+            f"method={self.method}, retriever={self.retriever_name}, "
+            f"view_workers={self.view_workers}, cache_views={self.cache_views}"
+        )
         self.sections = self._parse_documents(samples)
+        parse_time = time.time() - parse_start
+        self.logger.info("MC-indexing stage: generate/load views")
+        view_start = time.time()
         self.views = self._generate_or_load_views(self.sections)
+        view_time = time.time() - view_start
+        self.logger.info(f"MC-indexing views ready: {len(self.views)}")
+        self.logger.info("MC-indexing stage: build chunks")
+        chunk_start = time.time()
         self.chunks_by_method = self._build_all_chunks(self.sections, self.views)
+        chunk_time = time.time() - chunk_start
+        chunk_summary = ", ".join(
+            f"{method}={len(chunks)}" for method, chunks in sorted(self.chunks_by_method.items())
+        )
+        self.logger.info(f"MC-indexing chunks ready: {chunk_summary}")
+        self.logger.info("MC-indexing stage: build retrievers")
+        retriever_start = time.time()
         self._build_retrievers()
+        retriever_time = time.time() - retriever_start
+        self.logger.info("MC-indexing stage: save index")
+        save_start = time.time()
         self._save_index()
+        save_time = time.time() - save_start
+        elapsed = time.time() - start
+        self.logger.info(
+            f"MC-indexing ingest finished in {elapsed:.2f}s; "
+            f"view_input_tokens={self.view_input_tokens}, view_output_tokens={self.view_output_tokens}, "
+            f"api_input_tokens={self.view_api_input_tokens}, api_output_tokens={self.view_api_output_tokens}, "
+            f"estimated_input_tokens={self.view_estimated_input_tokens}, "
+            f"estimated_output_tokens={self.view_estimated_output_tokens}"
+        )
         return {
-            "time": time.time() - start,
+            "time": elapsed,
             "input_tokens": self.view_input_tokens,
             "output_tokens": self.view_output_tokens,
+            "api_input_tokens": self.view_api_input_tokens,
+            "api_output_tokens": self.view_api_output_tokens,
+            "estimated_input_tokens": self.view_estimated_input_tokens,
+            "estimated_output_tokens": self.view_estimated_output_tokens,
+            "stage_times": {
+                "parse_documents": parse_time,
+                "generate_views": view_time,
+                "build_chunks": chunk_time,
+                "build_retrievers": retriever_time,
+                "save_index": save_time,
+            },
         }
 
     def retrieve(self, query: str, topk: int = 10, target_uri: Optional[str] = None) -> MCSearchResult:
@@ -459,15 +530,27 @@ class MCIndexingStoreWrapper:
     def _parse_documents(self, samples: List[StandardDoc]) -> List[MCSection]:
         sections = []
         order = 0
+        seen_paths = set()
         for sample in samples:
             for doc_path in sample.doc_paths:
                 path = Path(doc_path)
                 if not path.exists():
                     self.logger.warning(f"MC-indexing skipped missing doc: {doc_path}")
                     continue
-                raw = path.read_text(encoding="utf-8", errors="replace")
+                resolved_path = str(path.resolve())
+                if resolved_path in seen_paths:
+                    continue
+                seen_paths.add(resolved_path)
                 doc_id = path.stem
-                parsed = self._markdown_sections(raw, sample.sample_id, doc_id, str(path))
+                if path.suffix.lower() == ".pdf":
+                    parsed = self._pdf_sections(path, sample.sample_id, doc_id)
+                else:
+                    raw = path.read_text(encoding="utf-8", errors="replace")
+                    parsed = self._markdown_sections(raw, sample.sample_id, doc_id, str(path))
+                self.logger.info(
+                    f"MC-indexing parsed document: {path.name}, sections={len(parsed)}, "
+                    f"cumulative_sections={len(sections) + len(parsed)}"
+                )
                 for section in parsed:
                     order += 1
                     section.order = order
@@ -475,11 +558,43 @@ class MCIndexingStoreWrapper:
         self.logger.info(f"MC-indexing parsed {len(sections)} sections")
         return sections
 
+    def _pdf_sections(self, path: Path, sample_id: str, doc_id: str) -> List[MCSection]:
+        try:
+            import pdfplumber
+        except ImportError as exc:
+            raise RuntimeError("MC-indexing PDF input requires pdfplumber.") from exc
+
+        sections = []
+        with pdfplumber.open(str(path)) as pdf:
+            for page_index, page in enumerate(pdf.pages, start=1):
+                text = normalize_space(page.extract_text() or "")
+                if not text:
+                    continue
+                title = f"{doc_id} page {page_index}"
+                section_id = f"{sample_id}::{doc_id}::p{page_index:04d}"
+                sections.append(
+                    MCSection(
+                        section_id=section_id,
+                        doc_id=doc_id,
+                        sample_id=sample_id,
+                        title=title,
+                        text=f"{title}. {text}" if self.pdf_pages_as_sections else text,
+                        order=page_index,
+                        source_path=str(path),
+                    )
+                )
+        if sections:
+            return sections
+
+        self.logger.warning(f"MC-indexing extracted no text from PDF: {path}")
+        return []
+
     @staticmethod
     def _markdown_sections(raw: str, sample_id: str, doc_id: str, source_path: str) -> List[MCSection]:
         sections = []
         current_title = doc_id
         current_lines = []
+        title_stack: List[str] = []
         local_order = 0
 
         def finish():
@@ -506,7 +621,11 @@ class MCIndexingStoreWrapper:
             heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
             if heading:
                 finish()
-                current_title = heading.group(2).strip()
+                level = len(heading.group(1))
+                title = heading.group(2).strip()
+                del title_stack[level - 1 :]
+                title_stack.append(title)
+                current_title = " > ".join(title_stack) or doc_id
             else:
                 current_lines.append(line)
         finish()
@@ -526,63 +645,160 @@ class MCIndexingStoreWrapper:
 
     def _generate_or_load_views(self, sections: List[MCSection]) -> List[MCView]:
         views_path = self.store_path / "views.jsonl"
+        model = self.config.get("llm_model") or os.environ.get("LLM_MODEL", "")
+        self._require_llm(model)
+        view_config_hash = self._view_config_hash(model=model)
         existing = {}
         if self.cache_views and views_path.exists():
-            existing = {row["section_id"]: MCView(**row) for row in read_jsonl(views_path)}
+            for row in read_jsonl(views_path):
+                view = MCView(**row)
+                if view.view_config_hash == view_config_hash:
+                    existing[view.section_id] = view
 
-        rows = [existing[section.section_id] for section in sections if section.section_id in existing]
-        todo = [section for section in sections if section.section_id not in existing]
+        rows = []
+        todo = []
+        for section in sections:
+            cached = existing.get(section.section_id)
+            if cached and cached.content_hash == self._section_hash(section):
+                rows.append(cached)
+            else:
+                todo.append(section)
+        estimated_summary_calls = sum(
+            1 for section in todo
+            if self._section_token_count(normalize_space(section.text)) > self.summary_min_tokens
+        )
+        estimated_llm_calls = len(todo) + estimated_summary_calls
+        self.logger.info(
+            f"MC-indexing view cache: total_sections={len(sections)}, cached={len(rows)}, "
+            f"todo={len(todo)}, estimated_summary_calls={estimated_summary_calls}, "
+            f"estimated_keyword_calls={len(todo)}, estimated_llm_calls={estimated_llm_calls}, "
+            f"cache_path={views_path}"
+        )
         if not todo:
+            self.logger.info("MC-indexing view generation skipped: all views loaded from cache")
             return rows
 
-        use_llm = self.generate_views and bool(os.environ.get("LLM_API_KEY")) and bool(os.environ.get("LLM_BASE_URL"))
-        model = self.config.get("llm_model") or os.environ.get("LLM_MODEL", "")
-        if self.generate_views and not use_llm:
-            self.logger.warning("LLM env not fully set; MC-indexing will generate fallback summary/keywords.")
-
         def build(section: MCSection) -> MCView:
-            return self._generate_view(section, model=model, use_llm=use_llm)
+            return self._generate_view(section, model=model, view_config_hash=view_config_hash)
 
+        progress_every = max(1, int(self.config.get("view_log_every", 25) or 25))
+        progress_lock = threading.Lock()
+        completed = 0
+
+        def record_progress(view: MCView) -> None:
+            nonlocal completed
+            rows.append(view)
+            completed += 1
+            if self.cache_views:
+                append_jsonl(views_path, asdict(view))
+            if completed == 1 or completed == len(todo) or completed % progress_every == 0:
+                self.logger.info(
+                    f"MC-indexing view generation progress: {completed}/{len(todo)} "
+                    f"latest={view.section_id}, input_tokens={self.view_input_tokens}, "
+                    f"output_tokens={self.view_output_tokens}"
+                )
+
+        self.logger.info(
+            f"MC-indexing view generation started: todo={len(todo)}, workers={self.view_workers}, "
+            f"log_every={progress_every}"
+        )
         if self.view_workers > 1 and len(todo) > 1:
             with ThreadPoolExecutor(max_workers=self.view_workers) as executor:
                 futures = {executor.submit(build, section): section for section in todo}
                 for future in as_completed(futures):
-                    rows.append(future.result())
+                    with progress_lock:
+                        record_progress(future.result())
         else:
             for section in todo:
-                rows.append(build(section))
+                record_progress(build(section))
 
         rows.sort(key=lambda view: (view.sample_id, view.doc_id, view.section_id))
         if self.cache_views:
             write_jsonl(views_path, [asdict(row) for row in rows])
+            self.logger.info(f"MC-indexing view cache finalized: {views_path}")
         return rows
 
-    def _generate_view(self, section: MCSection, model: str, use_llm: bool) -> MCView:
-        text = truncate(section.text, self.max_view_input_chars)
-        if use_llm:
-            try:
-                prompt = VIEW_PROMPT.format(title=section.title, text=text)
-                obj = self._call_llm_json(prompt, model=model)
-                summary = str(obj.get("summary", "")).strip() or fallback_summary(text)
-                raw_keywords = obj.get("keywords", [])
-                keywords = [str(item).strip() for item in raw_keywords if str(item).strip()]
-                if not keywords:
-                    keywords = fallback_keywords(section.title, text)
-                with self._token_lock:
-                    self.view_input_tokens += self.count_tokens(prompt)
-                    self.view_output_tokens += self.count_tokens(
-                        json.dumps({"summary": summary, "keywords": keywords}, ensure_ascii=False)
-                    )
-                method = f"llm:chat:{model}"
-            except Exception as exc:
-                self.logger.warning(f"View generation failed for {section.section_id}: {exc}; using fallback views.")
-                summary = fallback_summary(text)
-                keywords = fallback_keywords(section.title, text)
-                method = "extractive-fallback:llm-error"
+    def _section_hash(self, section: MCSection) -> str:
+        payload = {
+            "section_id": section.section_id,
+            "title": section.title,
+            "text": section.text,
+        }
+        return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _require_llm(self, model: str) -> None:
+        missing = []
+        if not os.environ.get("LLM_API_KEY"):
+            missing.append("LLM_API_KEY")
+        if not os.environ.get("LLM_BASE_URL"):
+            missing.append("LLM_BASE_URL")
+        if not model:
+            missing.append("LLM_MODEL")
+        if missing:
+            raise RuntimeError(f"MC-indexing view generation requires {', '.join(missing)}.")
+
+    def _view_config_hash(self, model: str) -> str:
+        payload = {
+            "prompt_version": PROMPT_VERSION,
+            "summary_min_tokens": self.summary_min_tokens,
+            "llm_model": model,
+            "view_max_tokens": int(self.config.get("view_max_tokens", 600)),
+        }
+        return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _generate_view(self, section: MCSection, model: str, view_config_hash: str) -> MCView:
+        text = normalize_space(section.text)
+        content_hash = self._section_hash(section)
+        needs_summary = self._section_token_count(text) > self.summary_min_tokens
+
+        input_tokens = 0
+        output_tokens = 0
+        api_input_tokens = 0
+        api_output_tokens = 0
+        estimated_input_tokens = 0
+        estimated_output_tokens = 0
+        if needs_summary:
+            summary_prompt = SUMMARY_PROMPT.format(title=section.title, text=text)
+            summary, usage = self._call_llm_text_with_usage(summary_prompt, model=model)
+            summary = summary.strip()
+            if not summary:
+                raise RuntimeError(f"LLM returned empty summary for {section.section_id}.")
+            est_in = self.count_tokens(summary_prompt)
+            est_out = self.count_tokens(summary)
+            estimated_input_tokens += est_in
+            estimated_output_tokens += est_out
+            api_in = int(usage.get("input_tokens", 0) or 0)
+            api_out = int(usage.get("output_tokens", 0) or 0)
+            api_input_tokens += api_in
+            api_output_tokens += api_out
+            input_tokens += api_in or est_in
+            output_tokens += api_out or est_out
         else:
-            summary = fallback_summary(text)
-            keywords = fallback_keywords(section.title, text)
-            method = "extractive-fallback:no-llm-key"
+            summary = text
+
+        keyword_prompt = KEYWORD_PROMPT.format(title=section.title, text=text)
+        raw_keywords, usage = self._call_llm_jsonish_with_usage(keyword_prompt, model=model)
+        keywords = self._parse_keywords(raw_keywords)
+        if not keywords:
+            raise RuntimeError(f"LLM returned no keywords for {section.section_id}.")
+        est_in = self.count_tokens(keyword_prompt)
+        est_out = self.count_tokens(json.dumps(keywords, ensure_ascii=False))
+        estimated_input_tokens += est_in
+        estimated_output_tokens += est_out
+        api_in = int(usage.get("input_tokens", 0) or 0)
+        api_out = int(usage.get("output_tokens", 0) or 0)
+        api_input_tokens += api_in
+        api_output_tokens += api_out
+        input_tokens += api_in or est_in
+        output_tokens += api_out or est_out
+        with self._token_lock:
+            self.view_input_tokens += input_tokens
+            self.view_output_tokens += output_tokens
+            self.view_api_input_tokens += api_input_tokens
+            self.view_api_output_tokens += api_output_tokens
+            self.view_estimated_input_tokens += estimated_input_tokens
+            self.view_estimated_output_tokens += estimated_output_tokens
+        method = f"llm:chat:{model}"
 
         return MCView(
             section_id=section.section_id,
@@ -593,9 +809,29 @@ class MCIndexingStoreWrapper:
             summary=summary,
             keywords=keywords,
             generation_method=method,
+            content_hash=content_hash,
+            view_config_hash=view_config_hash,
         )
 
-    def _call_llm_json(self, prompt: str, model: str) -> dict:
+    def _call_llm_text(self, prompt: str, model: str, json_mode: bool = False) -> str:
+        text, _usage = self._call_llm_text_with_usage(prompt, model=model, json_mode=json_mode)
+        return text
+
+    @staticmethod
+    def _openai_usage(response) -> Dict[str, int]:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens)
+        return {
+            "input_tokens": int(prompt_tokens),
+            "output_tokens": int(completion_tokens),
+            "total_tokens": int(total_tokens),
+        }
+
+    def _call_llm_text_with_usage(self, prompt: str, model: str, json_mode: bool = False) -> tuple[str, Dict[str, int]]:
         from openai import OpenAI
 
         if not model:
@@ -603,28 +839,55 @@ class MCIndexingStoreWrapper:
         client = OpenAI(api_key=os.environ["LLM_API_KEY"], base_url=os.environ["LLM_BASE_URL"])
         kwargs = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": "Return valid JSON only. Do not include markdown fences."},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": int(self.config.get("view_max_tokens", 600)),
         }
-        if self.llm_json_mode:
+        if json_mode and self.llm_json_mode:
             kwargs["response_format"] = {"type": "json_object"}
         try:
             response = client.chat.completions.create(**kwargs)
         except Exception:
             kwargs.pop("response_format", None)
             response = client.chat.completions.create(**kwargs)
-        text = response.choices[0].message.content or "{}"
+        text = response.choices[0].message.content or ""
         if text.strip().startswith("```"):
             text = text.strip().strip("`")
             text = text.split("\n", 1)[-1]
-        return json.loads(text)
+        return text.strip(), self._openai_usage(response)
+
+    def _call_llm_jsonish(self, prompt: str, model: str):
+        text, _usage = self._call_llm_jsonish_with_usage(prompt, model=model)
+        return text
+
+    def _call_llm_jsonish_with_usage(self, prompt: str, model: str):
+        return self._call_llm_text_with_usage(prompt, model=model, json_mode=False)
+
+    @staticmethod
+    def _parse_keywords(raw) -> List[str]:
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        text = str(raw).strip()
+        if not text:
+            return []
+        if text.startswith("```"):
+            text = text.strip("`").split("\n", 1)[-1]
+        try:
+            value = json.loads(text)
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, dict):
+                for key in ("keywords", "keyword", "items"):
+                    items = value.get(key)
+                    if isinstance(items, list):
+                        return [str(item).strip() for item in items if str(item).strip()]
+        except json.JSONDecodeError:
+            pass
+        text = text.strip("[]")
+        parts = re.split(r",|\n|;", text)
+        return [part.strip().strip("\"' -") for part in parts if part.strip().strip("\"' -")]
 
     def _build_all_chunks(self, sections: List[MCSection], views: List[MCView]) -> Dict[str, List[MCChunk]]:
         by_section = {section.section_id: section for section in sections}
-        by_view = {view.section_id: view for view in views}
         chunks = {
             "Content raw-text": self._content_chunks(sections, "Content raw-text", "text", by_section),
             "Content summary": self._view_chunks(views, "Content summary", "summary", by_section),
@@ -692,19 +955,24 @@ class MCIndexingStoreWrapper:
             by_doc.setdefault(section.doc_id, []).append(section)
         for doc_id, doc_sections in by_doc.items():
             ordered = sorted(doc_sections, key=lambda row: row.order)
-            units = []
-            source_sections = []
+            sentence_rows = []
             sample_id = ordered[0].sample_id if ordered else doc_id
             for section in ordered:
-                section_units = re.findall(r"[A-Za-z0-9.+_-]+|[\u4e00-\u9fff]", section.text)
-                units.extend(section_units)
-                source_sections.extend([section.section_id] * len(section_units))
-            for start in range(0, len(units), length):
-                end = min(start + length, len(units))
-                if start >= end:
-                    continue
-                chunk_index = start // length + 1
-                text = " ".join(units[start:end])
+                sentences = sentence_split(section.text) or [section.text]
+                for sentence in sentences:
+                    sentence_rows.append((sentence, section.section_id))
+
+            current_sentences = []
+            current_sources = []
+            current_tokens = 0
+            chunk_index = 0
+
+            def flush():
+                nonlocal chunk_index, current_sentences, current_sources, current_tokens
+                if not current_sentences:
+                    return
+                chunk_index += 1
+                text = normalize_space(" ".join(current_sentences))
                 chunks.append(
                     MCChunk(
                         chunk_id=f"{sample_id}::{doc_id}::flc{length}-{chunk_index:04d}",
@@ -713,11 +981,42 @@ class MCIndexingStoreWrapper:
                         method=f"FLC-{length}",
                         title=f"{doc_id} FLC-{length} chunk {chunk_index}",
                         text=text,
-                        source_sections=sorted(set(source_sections[start:end])),
+                        source_sections=unique_preserve_order(current_sources),
                         return_text=text,
                     )
                 )
+                current_sentences = []
+                current_sources = []
+                current_tokens = 0
+
+            for sentence, section_id in sentence_rows:
+                token_count = max(1, len(lexical_tokens(sentence)))
+                if current_sentences and current_tokens + token_count > length:
+                    flush()
+                current_sentences.append(sentence)
+                current_sources.append(section_id)
+                current_tokens += token_count
+            flush()
         return chunks
+
+    @staticmethod
+    def _mc_view_topk(topk: int) -> int:
+        if topk <= 1:
+            return 1
+        return max(1, int(round(2 * topk / 3)))
+
+    @staticmethod
+    def _merge_view_results(results_by_view: List[Tuple[str, List[Tuple[MCChunk, float]]]], topk: int) -> List[Tuple[MCChunk, float]]:
+        merged: Dict[Tuple[str, ...], Tuple[MCChunk, float]] = {}
+        for _method, results in results_by_view:
+            for chunk, score in results:
+                key = tuple(chunk.source_sections)
+                if key in merged:
+                    existing_chunk, existing_score = merged[key]
+                    merged[key] = (existing_chunk, max(existing_score, float(score)))
+                    continue
+                merged[key] = (chunk, float(score))
+        return list(merged.values())[:topk]
 
     def _make_retriever(self, method: str):
         normalized = str(self.retriever_name).lower()
@@ -742,6 +1041,7 @@ class MCIndexingStoreWrapper:
         methods = ["MC raw-text", "MC summary", "MC keyword"] if self.method == "MC-indexing" else [self.method]
         for method in methods:
             chunks = self.chunks_by_method.get(method, [])
+            self.logger.info(f"MC-indexing fitting retriever: method={method}, chunks={len(chunks)}")
             retriever = self._make_retriever(method)
             retriever.fit(chunks)
             self.retrievers[method] = retriever
@@ -749,15 +1049,11 @@ class MCIndexingStoreWrapper:
 
     def _search(self, query: str, topk: int) -> List[MCResource]:
         if self.method == "MC-indexing":
-            combined: Dict[Tuple[str, ...], Tuple[MCChunk, float]] = {}
+            per_view_k = self._mc_view_topk(topk)
+            results_by_view = []
             for method, retriever in self.retrievers.items():
-                for rank, (chunk, score) in enumerate(retriever.search(query, topk), start=1):
-                    key = tuple(chunk.source_sections)
-                    weighted = float(score) / rank
-                    if key not in combined:
-                        combined[key] = (chunk, 0.0)
-                    combined[key] = (combined[key][0], combined[key][1] + weighted)
-            ranked = sorted(combined.values(), key=lambda item: item[1], reverse=True)[:topk]
+                results_by_view.append((method, retriever.search(query, per_view_k)))
+            ranked = self._merge_view_results(results_by_view, topk)
             return [self._resource_from_chunk(chunk, score) for chunk, score in ranked]
 
         retriever = self.retrievers.get(self.method)

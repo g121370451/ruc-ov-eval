@@ -1,9 +1,9 @@
 project_name: "RAG_Benchmark"
-dataset_name: "Locomo"
+dataset_name: "ClapNQ"
 
 adapter:
-  module: "src.adapters.locomo_adapter"
-  class_name: "LocomoAdapter"
+  module: "src.adapters.clapnq_adapter"
+  class_name: "ClapNQAdapter"
 
 store:
   type: "mc_indexing"
@@ -18,15 +18,16 @@ store:
     allow_dense_fallback: false
 
 execution:
-  max_workers: 32
+  max_workers: 10
   ingest_workers: 1
   retrieval_topk: 5
   max_queries: null
+  auto_output_dir: true
 
 paths:
-  raw_data: "Data/{dataset_name}/{dataset_name}.json"
-  doc_output_dir: "Data/{dataset_name}/mc_indexing/processed_docs"
-  vector_store: "Data/{dataset_name}/mc_indexing/store_index"
+  raw_data: "Data/clapnq-main"
+  doc_output_dir: "Data/clapnq-main/mc_indexing/processed_docs"
+  vector_store: "Data/clapnq-main/mc_indexing/store_index"
   output_dir: "Output/{dataset_name}/mc_indexing/experiment_0001"
   log_file: "Output/{dataset_name}/mc_indexing/experiment_0001/benchmark.log"
 

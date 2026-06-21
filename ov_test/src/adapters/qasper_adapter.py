@@ -25,7 +25,13 @@ import json
 import os
 from typing import List, Dict, Any
 
-from .base import BaseAdapter, StandardDoc, StandardSample, StandardQA
+from .base import (
+    BaseAdapter,
+    EVIDENCE_BASED_ASSESSMENT_INSTRUCTION,
+    StandardDoc,
+    StandardSample,
+    StandardQA,
+)
 
 # Specific instructions for different answer types
 CATEGORY_INSTRUCTIONS = {
@@ -47,8 +53,7 @@ CATEGORY_INSTRUCTIONS = {
 - Do NOT invent information"""
 }
 
-# Rule for when answer cannot be found
-MISSING_RULE = "If no information is available to answer the question, write 'Not mentioned'."
+ASSESSMENT_INSTRUCTION = EVIDENCE_BASED_ASSESSMENT_INSTRUCTION
 
 
 class QasperAdapter(BaseAdapter):
@@ -382,19 +387,15 @@ class QasperAdapter(BaseAdapter):
 
 {category_instruction}
 
-{MISSING_RULE}
+{ASSESSMENT_INSTRUCTION}
 
-Question: {qa.question}
-
-Answer:"""
+Question: {qa.question}"""
         else:
             full_prompt = f"""{context_text}
 
-{MISSING_RULE}
+{ASSESSMENT_INSTRUCTION}
 
-Question: {qa.question}
-
-Answer:"""
+Question: {qa.question}"""
 
         meta = {
             "question_id": qa.metadata.get("question_id", ""),
@@ -416,4 +417,4 @@ Answer:"""
         Returns:
             str: Processed answer
         """
-        return raw_answer.strip()
+        return super().post_process_answer(qa, raw_answer, meta)

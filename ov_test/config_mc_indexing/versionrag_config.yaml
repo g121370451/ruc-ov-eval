@@ -1,16 +1,16 @@
 project_name: "RAG_Benchmark"
-dataset_name: "Locomo"
+dataset_name: "VersionRAG"
 
 adapter:
-  module: "src.adapters.locomo_adapter"
-  class_name: "LocomoAdapter"
+  module: "src.adapters.versionrag_adapter"
+  class_name: "VersionRAGAdapter"
 
 store:
   type: "mc_indexing"
   mc_indexing_config:
     method: "MC-indexing"
     retriever: "bm25"
-    view_workers: 1
+    view_workers: 8
     max_context_chars: 12000
     context_block_chars: 2000
     cache_views: true
@@ -18,13 +18,14 @@ store:
     allow_dense_fallback: false
 
 execution:
-  max_workers: 32
-  ingest_workers: 1
+  max_workers: 8
+  ingest_workers: 8
   retrieval_topk: 5
   max_queries: null
+  auto_output_dir: true
 
 paths:
-  raw_data: "Data/{dataset_name}/{dataset_name}.json"
+  raw_data: "Data/{dataset_name}/data/test/evaluation_set.csv"
   doc_output_dir: "Data/{dataset_name}/mc_indexing/processed_docs"
   vector_store: "Data/{dataset_name}/mc_indexing/store_index"
   output_dir: "Output/{dataset_name}/mc_indexing/experiment_0001"
