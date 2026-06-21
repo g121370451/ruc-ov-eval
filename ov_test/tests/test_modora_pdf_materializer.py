@@ -107,6 +107,33 @@ class ModoraPdfMaterializerTest(unittest.TestCase):
                     [StandardDoc(sample_id="sample", doc_paths=[str(bad_path)])]
                 )
 
+    def test_clear_removes_configured_vector_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs = root / "docs"
+            cache = root / "cache"
+            chroma = root / "store_index"
+            docs.mkdir()
+            cache.mkdir()
+            chroma.mkdir()
+            (chroma / "chroma.sqlite3").write_text("index", encoding="utf-8")
+
+            wrapper = ModoraStoreWrapper(
+                store_path=str(chroma),
+                modora_config={
+                    "docs_dir": str(docs),
+                    "cache_dir": str(cache),
+                    "chroma_persist_path": str(chroma),
+                    "delete_vector_index": True,
+                    "ingest_mode": "none",
+                    "preload_library": False,
+                },
+            )
+
+            wrapper.clear()
+
+            self.assertFalse(chroma.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
