@@ -1,38 +1,71 @@
+# 实验项目名，仅用于标识当前 benchmark。
 project_name: "RAG_Benchmark"
+# 数据集名称；run.py 会用它替换路径中的 {dataset_name}。
 dataset_name: "SyllabusQA"
 
+# 数据集适配器配置：负责数据预处理、QA 标准化和答案生成 prompt 构造。
 adapter:
+  # Adapter 的 Python 模块路径。
   module: "src.adapters.syllabusqa_adapter"
+  # Adapter 类名。
   class_name: "SyllabusQAAdapter"
 
+# 检索后端配置。
 store:
+  # 后端类型；mc_indexing 表示使用当前 MC-indexing 实现。
   type: "mc_indexing"
+  # MC-indexing 专属配置。
   mc_indexing_config:
+    # 检索方法；MC-indexing 启用 raw-text、summary、keyword 三视图。
     method: "MC-indexing"
+    # 每个 view 内部使用的检索器；bm25 适合 CPU 环境。
     retriever: "bm25"
+    # 生成 summary/keyword view 的 LLM 并发数。
     view_workers: 1
+    # 单个问题最终送入答案生成 prompt 的总上下文字符上限。
     max_context_chars: 12000
+    # 单个检索片段进入 prompt 前的字符截断上限。
     context_block_chars: 2000
+    # 是否缓存已生成的 summary/keyword views，便于断点续跑。
     cache_views: true
+    # 是否把命中的原始 section 文本返回给答案生成；summary/keyword 只用于检索排序。
     return_source_text: true
+    # Dense retriever 初始化失败时是否降级；BM25 下保持 false。
     allow_dense_fallback: false
 
+# benchmark 执行配置。
 execution:
+  # Generation 阶段并发处理的 QA 数。
   max_workers: 10
+  # Import 阶段入库并发数；MC-indexing 的 view 生成并发由 view_workers 控制。
   ingest_workers: 1
+  # 每个问题最终返回给答案生成的检索结果数；MC-indexing 内部会按三视图分别取候选再合并。
   retrieval_topk: 5
+  # 最大评测问题数；null 表示跑完整数据集。
   max_queries: null
+  # 是否自动递增输出目录，避免覆盖旧实验。
   auto_output_dir: true
 
+# 路径配置；相对路径会基于项目上级目录 D:\project\postgraduate 解析。
 paths:
+  # 原始数据目录。
   raw_data: "Data/{dataset_name}"
+  # Adapter 转换后的中间文档输出目录。
   doc_output_dir: "Data/{dataset_name}/mc_indexing/processed_docs"
+  # MC-indexing 索引、缓存和持久化数据目录。
   vector_store: "Data/{dataset_name}/mc_indexing/store_index"
+  # benchmark 输出目录。
   output_dir: "Output/{dataset_name}/mc_indexing/experiment_0001"
+  # 运行日志文件路径。
   log_file: "Output/{dataset_name}/mc_indexing/experiment_0001/benchmark.log"
 
+# LLM 配置；通常由 ov_test/.env 或系统环境变量提供。
 llm:
+  # 模型名。
   model: "${LLM_MODEL}"
+  # 生成温度，benchmark 默认 0 保持稳定。
   temperature: 0
+  # OpenAI-compatible API base URL。
   base_url: "${LLM_BASE_URL}"
+  # API key。
   api_key: "${LLM_API_KEY}"
