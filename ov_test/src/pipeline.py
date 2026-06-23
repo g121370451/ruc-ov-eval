@@ -141,8 +141,17 @@ class BenchmarkPipeline:
         # 2. 准备 QA 任务
         tasks = self._prepare_tasks(samples)
 
-        # 断点恢复：从 records 中加载已完成的 task 结果
-        completed_tasks = self.records.get("tasks", {})
+        # 断点恢复只在显式 --resume 时启用；默认重新跑所有 QA 并覆盖旧结果。
+        resume_generation = self.config.get('execution', {}).get('resume_generation', False)
+        if resume_generation:
+            completed_tasks = self.records.get("tasks", {})
+        else:
+            completed_tasks = {}
+            if self.records.get("tasks"):
+                self.logger.info("Generation resume disabled; clearing completed task records.")
+                with self._records_lock:
+                    self.records["tasks"] = {}
+                self._save_records()
         results_map = {}
         pending_tasks = []
         for task in tasks:
@@ -155,6 +164,11 @@ class BenchmarkPipeline:
         if results_map:
             self.logger.info(f"Resumed {len(results_map)} completed tasks, {len(pending_tasks)} remaining")
 
+        vector_index_stats = self._prebuild_vector_index()
+        if vector_index_stats.get("enabled"):
+            self._update_report({
+                "Vector Indexing": vector_index_stats
+            })
         max_workers = self.config.get('execution', {}).get('max_workers', 1)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -189,11 +203,26 @@ class BenchmarkPipeline:
         }
         total = len(sorted_results)
         if total > 0:
+            total_embedding_in = sum(r['token_usage'].get('embedding_input_tokens', 0) for r in sorted_results)
+            total_embedding_out = sum(r['token_usage'].get('embedding_output_tokens', 0) for r in sorted_results)
+            total_embedding_query_in = sum(r['token_usage'].get('embedding_query_input_tokens', 0) for r in sorted_results)
+            total_embedding_index_in = sum(r['token_usage'].get('embedding_index_input_tokens', 0) for r in sorted_results)
+            total_embedding_time = sum(r['token_usage'].get('embedding_time_sec', 0.0) for r in sorted_results)
+            total_embedding_query_time = sum(r['token_usage'].get('embedding_query_time_sec', 0.0) for r in sorted_results)
+            total_embedding_index_time = sum(r['token_usage'].get('embedding_index_time_sec', 0.0) for r in sorted_results)
             self._update_report({
                     "Query Efficiency (Average Per Query)": {
                         "Average Retrieval Time (s)": sum(r['retrieval']['latency_sec'] for r in sorted_results) / total,
                         "Average Input Tokens": sum(r['token_usage']['total_input_tokens'] for r in sorted_results) / total,
                         "Average Output Tokens": sum(r['token_usage']['llm_output_tokens'] for r in sorted_results) / total,
+                        "Total Embedding Input Tokens": total_embedding_in,
+                        "Total Embedding Output Tokens": total_embedding_out,
+                        "Total Embedding Query Input Tokens": total_embedding_query_in,
+                        "Total Embedding Index Input Tokens": total_embedding_index_in,
+                        "Total Embedding Time (s)": total_embedding_time,
+                        "Total Embedding Query Time (s)": total_embedding_query_time,
+                        "Total Embedding Index Time (s)": total_embedding_index_time,
+                        "Average Embedding Time (s)": total_embedding_time / total,
                     }
                 }
             )
@@ -278,6 +307,21 @@ class BenchmarkPipeline:
                 break
         return tasks
 
+    def _prebuild_vector_index(self):
+        store_cfg = self.config.get('store', {})
+        if not bool(store_cfg.get('enable_vector_search', False)):
+            return {"enabled": False}
+        build_index = getattr(self.db, 'build_vector_index', None)
+        if build_index is None:
+            return {"enabled": False}
+
+        self.logger.info("Prebuilding MoDora vector index before query workers.")
+        try:
+            return build_index()
+        except Exception as e:
+            self.logger.error(f"MoDora vector index prebuild failed: {e}")
+            raise
+
     def _process_generation_task(self, task):
         self.monitor.worker_start()
         try:
@@ -296,6 +340,13 @@ class BenchmarkPipeline:
             # 2. 构建 prompt → LLM 生成
             retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
+            embedding_in = getattr(search_res, 'embedding_input_tokens', 0)
+            embedding_out = getattr(search_res, 'embedding_output_tokens', 0)
+            embedding_query_in = getattr(search_res, 'embedding_query_input_tokens', 0)
+            embedding_index_in = getattr(search_res, 'embedding_index_input_tokens', 0)
+            embedding_time = getattr(search_res, 'embedding_time_sec', 0.0)
+            embedding_query_time = getattr(search_res, 'embedding_query_time_sec', 0.0)
+            embedding_index_time = getattr(search_res, 'embedding_index_time_sec', 0.0)
             native_answer_used = bool(getattr(search_res, 'native_generation_used', False))
 
             if native_answer_used:
@@ -327,7 +378,18 @@ class BenchmarkPipeline:
                               "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
                               "sql_queries": getattr(search_res, 'sql_queries', [])},
                 "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},
-                "metrics": {"Recall": recall}, "token_usage": {"total_input_tokens": in_tokens, "llm_output_tokens": out_tokens}
+                "metrics": {"Recall": recall},
+                "token_usage": {
+                    "total_input_tokens": in_tokens,
+                    "llm_output_tokens": out_tokens,
+                    "embedding_input_tokens": embedding_in,
+                    "embedding_output_tokens": embedding_out,
+                    "embedding_query_input_tokens": embedding_query_in,
+                    "embedding_index_input_tokens": embedding_index_in,
+                    "embedding_time_sec": embedding_time,
+                    "embedding_query_time_sec": embedding_query_time,
+                    "embedding_index_time_sec": embedding_index_time,
+                }
             }
         except Exception as e:
             self.logger.exception(f"[Query-{task['id']}] Failed during generation task")

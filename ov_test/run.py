@@ -112,6 +112,8 @@ def main():
                         help="Override execution.max_queries for quick smoke tests")
     parser.add_argument("--auto-output-dir", action="store_true", default=False,
                         help="Auto-increment paths.output_dir to the next experiment_NNNN directory")
+    parser.add_argument("--resume", action="store_true", default=False,
+                        help="Resume completed QA generation tasks from _pipeline_records.json")
 
     args = parser.parse_args()
 
@@ -158,6 +160,7 @@ def main():
         config['execution']['skip_ingestion'] = True
     if args.max_queries is not None:
         config.setdefault('execution', {})['max_queries'] = args.max_queries
+    config.setdefault('execution', {})['resume_generation'] = args.resume
 
     # --- D. 初始化组件 ---
     try:
@@ -231,7 +234,7 @@ def main():
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 
-        if args.step in ["all", "del"]:
+        if args.step == "del":
             logger.info("Stage: Delete Vector Store")
             pipeline.run_deletion()
         

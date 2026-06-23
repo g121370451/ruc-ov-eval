@@ -176,6 +176,9 @@ def main():
             mod = importlib.import_module(module_path)
             AdapterClass = getattr(mod, class_name)
             adapter = AdapterClass(raw_file_path=config['paths']['raw_data'])
+            for key, value in adapter_cfg.items():
+                if key not in {"module", "class_name"}:
+                    setattr(adapter, key, value)
         except ImportError as e:
             logger.error(f"Could not import module '{module_path}'. Please check your config 'adapter.module'. Error: {e}")
             raise e
@@ -214,8 +217,9 @@ def main():
             logger.info("Stage: Import (Ingest Only)")
             pipeline.run_import()
 
-        if args.step in ["all", "gen", "gen+eval"]:
+        if args.step == "gen":
             config['execution']['skip_ingestion'] = True
+        if args.step in ["all", "gen", "gen+eval"]:
             logger.info("Stage: Generation (Retrieve -> Generate)")
             pipeline.run_generation()
 
@@ -223,7 +227,7 @@ def main():
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 
-        if args.step in ["all", "del"]:
+        if args.step == "del":
             logger.info("Stage: Delete Vector Store")
             pipeline.run_deletion()
 

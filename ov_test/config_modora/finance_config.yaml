@@ -10,7 +10,7 @@ adapter:
 # auto_output_dir=true 时会自动选择下一个 experiment_NNNN 输出目录。
 execution:
   # QA 查询间并发数；开 embedding 时过大可能触发更多 embedding 请求和 Chroma 写入压力。
-  max_workers: 1
+  max_workers: 6
   # 入库外层 worker 数；实际 OCR/text extraction/build_tree 还会受下面 MoDora 参数限制。
   ingest_workers: 1
   # 最终保留给生成/评测的检索结果数量。
@@ -84,6 +84,10 @@ store:
   embedding_api_key: ${EMBEDDING_API_KEY}
   # embedding 模型名；doubao-embedding-vision 会自动走 multimodal embedding endpoint。
   embedding_model_name: ${EMBEDDING_MODEL_NAME}
+  # 建向量库时每个 batch 包含的 node 文本数；vision embedding endpoint 下 batch 内仍会逐条请求。
+  embedding_index_batch_size: 32
+  # 建向量库时并发处理的 batch 数；近似控制 index embedding 请求并发。
+  embedding_index_concurrency: 16
   # rerank 关闭时保持空字符串；开启时需要补对应服务地址。
   rerank_api_base: ""
   # rerank 关闭时保持空字符串；开启时需要补 key。
@@ -100,6 +104,10 @@ store:
   allow_pdf_text_fallback: false
   # 是否打印每个 QA 内部阶段详细日志；批量实验建议 false。
   query_trace_logging: false
+  # 只把 evidence 命中文档的 schema 放进回答 prompt，避免整库结构撑爆上下文。
+  qa_include_schema_in_reasoning: true
+  # global 实验中禁用 whole-tree fallback，避免把全部文档树塞进 LLM。
+  qa_enable_fallback: false
   # true 表示适配非 VLM 模型，剥离图片输入并走文本提示词。
   text_only_mode: true
   # 是否用 VLM/LLM enrich 图片、表格、图表等非文本组件；text_only 下关闭。
@@ -111,20 +119,20 @@ store:
   # 是否把截图/图片送入最终推理；text_only 下关闭。
   visual_reasoning: false
   # 远程 LLM 全局并发限制；null 表示不加这个全局 semaphore。
-  remote_llm_max_concurrency: null
+  remote_llm_max_concurrency: 8
   # 单个 QA 内部 LLM 并发限制；null 表示不限制查询内部并发。
-  remote_llm_per_query_concurrency: null
+  remote_llm_per_query_concurrency: 2
   # 远程 LLM 失败/429 的最大重试次数。
   remote_llm_max_attempts: 4
   # 退避重试的初始等待秒数。
-  remote_llm_base_delay_s: 1.0
+  remote_llm_base_delay_s: 4.0
   # 退避重试的最大等待秒数。
   remote_llm_max_delay_s: 30.0
   # model_instances: MoDora 内部可用的 LLM 实例；当前统一走远程 JUDGE_LLM。
   model_instances:
     JUDGE_LLM:
       type: remote
-      model: ${LLM_MODEL}
+      model: ep-20260611110940-6rnmv
       base_url: ${LLM_BASE_URL}
       api_key: ${LLM_API_KEY}
   # ui_settings: MoDora 原生 pipeline 到 LLM 实例的映射。
@@ -148,7 +156,7 @@ store:
   pdf_text_empty_policy: warn
 # llm: ruc-ov-eval 评测/裁判等外层 LLM 配置，和 MoDora 内部 model_instances 分开。
 llm:
-  model: ${LLM_MODEL}
+  model: ep-20260611110940-6rnmv
   temperature: 0
   base_url: ${LLM_BASE_URL}
   api_key: ${LLM_API_KEY}

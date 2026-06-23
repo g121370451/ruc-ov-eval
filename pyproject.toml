@@ -16,12 +16,17 @@ dependencies = [
     "pypdf>=6.10.2",
     "pdfplumber>=0.11.9",
     "protobuf>=3.20,<3.21",
+    "python-docx",
 ]
 
 [tool.uv.workspace]
 members = [
     "modora/MoDora-backend",
 ]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
 
 [tool.uv.sources]
 modora-backend = { workspace = true }

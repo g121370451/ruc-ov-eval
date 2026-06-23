@@ -29,6 +29,26 @@ from src.core.logger import get_logger
 from src.core.metrics import MetricsCalculator
 
 
+def _grouping_mode(config: dict) -> str:
+    mode = str(config.get('execution', {}).get('grouping_mode', 'doc_paths') or 'doc_paths').lower()
+    aliases = {
+        'doc': 'doc_paths',
+        'docs': 'doc_paths',
+        'doc_paths': 'doc_paths',
+        'per_doc': 'doc_paths',
+        'per-document': 'doc_paths',
+        'global': 'global_library',
+        'global_library': 'global_library',
+        'library': 'global_library',
+    }
+    if mode not in aliases:
+        raise ValueError(
+            f"Unsupported execution.grouping_mode={mode!r}. "
+            "Use doc_paths or global_library."
+        )
+    return aliases[mode]
+
+
 def _create_store_from_config(config: dict, store_path: str):
     store_cfg = config.get('store', {})
     store_type = store_cfg.get('type', 'viking')
@@ -36,9 +56,16 @@ def _create_store_from_config(config: dict, store_path: str):
     if store_type == 'modora':
         from src.core.modora_store import ModoraStoreWrapper
 
+        modora_cfg = dict(store_cfg)
+        if _grouping_mode(config) == 'doc_paths':
+            store_path = os.path.abspath(store_path)
+            modora_cfg['docs_dir'] = os.path.join(store_path, 'docs')
+            modora_cfg['cache_dir'] = os.path.join(store_path, 'cache')
+            modora_cfg['chroma_persist_path'] = os.path.join(store_path, 'store_index')
+
         return ModoraStoreWrapper(
             store_path=store_path,
-            modora_config=store_cfg,
+            modora_config=modora_cfg,
         )
 
     raise ValueError(
@@ -117,6 +144,13 @@ def _run_generation_task(
 
     retrieve_in = getattr(res, 'retrieve_input_tokens', 0)
     retrieve_out = getattr(res, 'retrieve_output_tokens', 0)
+    embedding_in = getattr(res, 'embedding_input_tokens', 0)
+    embedding_out = getattr(res, 'embedding_output_tokens', 0)
+    embedding_query_in = getattr(res, 'embedding_query_input_tokens', 0)
+    embedding_index_in = getattr(res, 'embedding_index_input_tokens', 0)
+    embedding_time = getattr(res, 'embedding_time_sec', 0.0)
+    embedding_query_time = getattr(res, 'embedding_query_time_sec', 0.0)
+    embedding_index_time = getattr(res, 'embedding_index_time_sec', 0.0)
 
     retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(res)
     recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
@@ -164,6 +198,13 @@ def _run_generation_task(
         "token_usage": {
             "total_input_tokens": in_tok,
             "llm_output_tokens": out_tok,
+            "embedding_input_tokens": embedding_in,
+            "embedding_output_tokens": embedding_out,
+            "embedding_query_input_tokens": embedding_query_in,
+            "embedding_index_input_tokens": embedding_index_in,
+            "embedding_time_sec": embedding_time,
+            "embedding_query_time_sec": embedding_query_time,
+            "embedding_index_time_sec": embedding_index_time,
         },
     }
 
@@ -175,6 +216,7 @@ class PerQuestionPipeline(BenchmarkPipeline):
         self.store_parent_path = config['paths']['vector_store']
         self.store_type = config.get('store', {}).get('type', 'viking')
         self.store_config = config.get('store', {})
+        self.grouping_mode = _grouping_mode(config)
         os.makedirs(self.store_parent_path, exist_ok=True)
 
         # 记录文件路径（按 store_key 索引）
@@ -244,6 +286,29 @@ class PerQuestionPipeline(BenchmarkPipeline):
             }
         self._save_records()
 
+    @staticmethod
+    def _limit_samples(samples: List[StandardSample], max_queries: Optional[int]) -> List[StandardSample]:
+        if max_queries is None:
+            return samples
+        if max_queries <= 0:
+            return []
+
+        limited: List[StandardSample] = []
+        remaining = max_queries
+        for sample in samples:
+            if remaining <= 0:
+                break
+            qa_pairs = list(sample.qa_pairs[:remaining])
+            if not qa_pairs:
+                continue
+            limited.append(StandardSample(
+                sample_id=sample.sample_id,
+                qa_pairs=qa_pairs,
+                metadata=dict(getattr(sample, 'metadata', {}) or {}),
+            ))
+            remaining -= len(qa_pairs)
+        return limited
+
     # ---- 备份 ----
 
     def _backup_store_parent(self):
@@ -299,10 +364,12 @@ class PerQuestionPipeline(BenchmarkPipeline):
 
         samples = self.adapter.load_and_transform()
         max_queries = self.config['execution'].get('max_queries')
+        samples = self._limit_samples(samples, max_queries)
+        max_queries = None
 
         # 按 store_key 分组 sample，保持原始顺序
         groups: OrderedDict[str, dict] = OrderedDict()
-        if self.store_type == 'modora':
+        if self.store_type == 'modora' and self.grouping_mode == 'global_library':
             all_doc_paths = []
             seen_paths = set()
             for paths in sample_doc_paths.values():
@@ -462,6 +529,13 @@ class PerQuestionPipeline(BenchmarkPipeline):
             total = len(results_list)
             total_in = sum(r['token_usage']['total_input_tokens'] for r in results_list)
             total_out = sum(r['token_usage']['llm_output_tokens'] for r in results_list)
+            total_embedding_in = sum(r['token_usage'].get('embedding_input_tokens', 0) for r in results_list)
+            total_embedding_out = sum(r['token_usage'].get('embedding_output_tokens', 0) for r in results_list)
+            total_embedding_query_in = sum(r['token_usage'].get('embedding_query_input_tokens', 0) for r in results_list)
+            total_embedding_index_in = sum(r['token_usage'].get('embedding_index_input_tokens', 0) for r in results_list)
+            total_embedding_time = sum(r['token_usage'].get('embedding_time_sec', 0.0) for r in results_list)
+            total_embedding_query_time = sum(r['token_usage'].get('embedding_query_time_sec', 0.0) for r in results_list)
+            total_embedding_index_time = sum(r['token_usage'].get('embedding_index_time_sec', 0.0) for r in results_list)
             self._update_report({
                 "Query Efficiency (Average Per Query)": {
                     "Average Retrieval Time (s)": sum(r['retrieval']['latency_sec'] for r in results_list) / total,
@@ -469,6 +543,14 @@ class PerQuestionPipeline(BenchmarkPipeline):
                     "Average Output Tokens": total_out / total,
                     "Total Input Tokens": total_in,
                     "Total Output Tokens": total_out,
+                    "Total Embedding Input Tokens": total_embedding_in,
+                    "Total Embedding Output Tokens": total_embedding_out,
+                    "Total Embedding Query Input Tokens": total_embedding_query_in,
+                    "Total Embedding Index Input Tokens": total_embedding_index_in,
+                    "Total Embedding Time (s)": total_embedding_time,
+                    "Total Embedding Query Time (s)": total_embedding_query_time,
+                    "Total Embedding Index Time (s)": total_embedding_index_time,
+                    "Average Embedding Time (s)": total_embedding_time / total,
                 }
             })
         with open(self.generated_file, "w", encoding="utf-8") as f:
@@ -526,6 +608,13 @@ class PerQuestionPipeline(BenchmarkPipeline):
             for t in qa_tasks:
                 try:
                     res = self._retrieve_and_generate(t['id'], t['sample_id'], t['qa'], store)
+                    res['per_question'] = {
+                        'enabled': True,
+                        'grouping_mode': self.grouping_mode,
+                        'store_key': store_key,
+                        'store_path': store_path,
+                        'doc_paths': group['doc_paths'],
+                    }
                     results_map[res['_global_index']] = res
                 except Exception as e:
                     self.logger.error(f"Generation failed for task {t['id']}: {e}")

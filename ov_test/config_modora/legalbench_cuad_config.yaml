@@ -1,10 +1,10 @@
 # project_name/dataset_name: 实验标识；dataset_name 也用于路径模板替换。
 project_name: RAG_Benchmark
-dataset_name: Qasper
+dataset_name: LegalBench
 # adapter: 数据集适配器，负责把原始数据整理成统一的 StandardDoc/QA 格式。
 adapter:
-  module: src.adapters.qasper_adapter
-  class_name: QasperAdapter
+  module: src.adapters.legalbench_adapter
+  class_name: LegalBenchAdapter
 # execution: benchmark 执行层参数，不直接传给 MoDora。
 # max_workers 控制 QA 查询之间的并发数；ingest_workers 控制入库阶段外层并发。
 # auto_output_dir=true 时会自动选择下一个 experiment_NNNN 输出目录。
@@ -21,15 +21,15 @@ execution:
 # output_dir/log_file 是实验结果位置；vector_store 这里与 MoDora 的 Chroma 目录保持一致。
 paths:
   # 原始数据入口。
-  raw_data: Data/{dataset_name}/qasper-dev-v0.3.json
+  raw_data: Data/{dataset_name}/benchmarks/cuad.json
   # adapter 输出/物化给 MoDora 入库的 PDF 目录。
   doc_output_dir: Data/{dataset_name}/modora/docs
   # 外层 store 路径；MoDora 场景下主要对应 Chroma 持久化目录。
   vector_store: Data/{dataset_name}/modora/store_index
   # 实验输出目录；auto_output_dir 开启时这里只作为扫描父目录的模板。
-  output_dir: Output/{dataset_name}/modora_global/experiment_0001
+  output_dir: Output/{dataset_name}/modora_cuad/experiment_0001
   # benchmark 日志文件；auto_output_dir 开启时会自动改到新实验目录下。
-  log_file: Output/{dataset_name}/modora_global/experiment_0001/benchmark.log
+  log_file: Output/{dataset_name}/modora_cuad/experiment_0001/benchmark.log
 # store: MoDora 后端配置。这里会被写入临时 MoDora config，并传给 MoDora backend。
 store:
   # 当前配置只使用 MoDora store。
@@ -132,7 +132,7 @@ store:
   model_instances:
     JUDGE_LLM:
       type: remote
-      model: ep-20260611111022-tfvss
+      model: ep-20260521151728-s497h
       base_url: ${LLM_BASE_URL}
       api_key: ${LLM_API_KEY}
   # ui_settings: MoDora 原生 pipeline 到 LLM 实例的映射。
@@ -156,7 +156,7 @@ store:
   pdf_text_empty_policy: warn
 # llm: ruc-ov-eval 评测/裁判等外层 LLM 配置，和 MoDora 内部 model_instances 分开。
 llm:
-  model: ep-20260611111022-tfvss
+  model: ep-20260521151728-s497h
   temperature: 0
   base_url: ${LLM_BASE_URL}
   api_key: ${LLM_API_KEY}

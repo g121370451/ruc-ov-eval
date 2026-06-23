@@ -43,6 +43,13 @@ class ModoraResult:
     resources: List[ModoraResource] = field(default_factory=list)
     retrieve_input_tokens: int = 0
     retrieve_output_tokens: int = 0
+    embedding_input_tokens: int = 0
+    embedding_output_tokens: int = 0
+    embedding_query_input_tokens: int = 0
+    embedding_index_input_tokens: int = 0
+    embedding_time_sec: float = 0.0
+    embedding_query_time_sec: float = 0.0
+    embedding_index_time_sec: float = 0.0
     native_generation_used: bool = True
     native_final_answer: str = ""
     native_input_tokens: int = 0
@@ -123,6 +130,7 @@ class ModoraStoreWrapper:
             default=True,
         )
         self.component_workers = cfg.get("component_workers")
+        self.get_component_timeout_s = cfg.get("get_component_timeout_s")
         self.text_extract_workers = cfg.get("text_extract_workers")
         self.pdf_text_empty_policy = cfg.get("pdf_text_empty_policy")
         self.ocr_batch_size = int(cfg.get("ocr_batch_size", 1) or 1)
@@ -183,6 +191,8 @@ class ModoraStoreWrapper:
             "embedding_api_base",
             "embedding_api_key",
             "embedding_model_name",
+            "embedding_index_batch_size",
+            "embedding_index_concurrency",
             "rerank_api_base",
             "rerank_api_key",
             "rerank_model_name",
@@ -194,6 +204,9 @@ class ModoraStoreWrapper:
             "remote_llm_base_delay_s",
             "remote_llm_max_delay_s",
             "query_trace_logging",
+            "qa_include_schema_in_reasoning",
+            "qa_schema_scope",
+            "qa_enable_fallback",
             "text_only_mode",
             "enrich_non_text_components",
             "visual_level_generation",
@@ -207,6 +220,7 @@ class ModoraStoreWrapper:
             "ocr_use_table_recognition",
             "ocr_use_doc_unwarping",
             "allow_pdf_text_fallback",
+            "get_component_timeout_s",
             "text_extract_workers",
             "pdf_text_empty_policy",
             "enable_vector_search",
@@ -382,6 +396,75 @@ class ModoraStoreWrapper:
             qa_service.extract_location = _library_scope_location
 
         return qa_service
+
+    def build_vector_index(self) -> Dict[str, Any]:
+        """Prebuild missing vector embeddings outside the query worker pool."""
+        self._ensure_modora_importable()
+        state = self._ensure_library_loaded()
+
+        async def _build():
+            from modora.core.infra.llm.usage import track_token_usage
+
+            qa_service = self._load_settings_and_service()
+            try:
+                vector_retriever = getattr(qa_service, "vector_retriever", None)
+                if vector_retriever is None:
+                    return {
+                        "enabled": False,
+                        "time_sec": 0.0,
+                        "embedding_input_tokens": 0,
+                        "embedding_output_tokens": 0,
+                        "embedding_index_input_tokens": 0,
+                        "nodes": 0,
+                        "documents": 0,
+                        "existing": 0,
+                        "missing": 0,
+                        "embedded": 0,
+                    }
+
+                with track_token_usage() as usage:
+                    t0 = time.monotonic()
+                    stats = await vector_retriever.ensure_index(
+                        state.tree,
+                        state.source_paths,
+                    )
+                    elapsed = time.monotonic() - t0
+
+                return {
+                    "enabled": True,
+                    "time_sec": elapsed,
+                    "embedding_input_tokens": int(
+                        usage.embedding_input_tokens or 0
+                    ),
+                    "embedding_output_tokens": int(
+                        usage.embedding_output_tokens or 0
+                    ),
+                    "embedding_index_input_tokens": int(
+                        usage.embedding_index_input_tokens or 0
+                    ),
+                    "nodes": int(stats.get("nodes", 0) or 0),
+                    "documents": int(stats.get("documents", 0) or 0),
+                    "existing": int(stats.get("existing", 0) or 0),
+                    "missing": int(stats.get("missing", 0) or 0),
+                    "embedded": int(stats.get("embedded", 0) or 0),
+                    "embedding_index_time_sec": float(
+                        stats.get("embedding_index_s", 0.0) or 0.0
+                    ),
+                }
+            finally:
+                await qa_service.aclose()
+
+        stats = self._run_coro_sync(_build())
+        if stats.get("enabled"):
+            self.logger.info(
+                "MoDora vector index prebuild finished "
+                f"(time_s={float(stats.get('time_sec', 0.0) or 0.0):.2f}, "
+                f"nodes={stats.get('nodes')}, documents={stats.get('documents')}, "
+                f"existing={stats.get('existing')}, missing={stats.get('missing')}, "
+                f"embedded={stats.get('embedded')}, "
+                f"embedding_input_tokens={stats.get('embedding_input_tokens')})"
+            )
+        return stats
 
     def _pdf_index(self) -> Dict[str, Path]:
         if self.docs_dir is None:
@@ -736,6 +819,7 @@ class ModoraStoreWrapper:
             dataset=str(self.docs_dir) if self.docs_dir else None,
             cache_dir=str(self.cache_dir) if self.cache_dir else None,
             component_workers=component_workers,
+            get_component_timeout_s=self.get_component_timeout_s,
             text_extract_workers=self.text_extract_workers,
             ocr_batch_size=self.ocr_batch_size,
             resume=self.resume_ingest,
@@ -1241,6 +1325,12 @@ class ModoraStoreWrapper:
                 f"remote_llm_retry_sleep_s={float(llm_timing.get('retry_sleep_s', 0.0) or 0.0):.2f}, "
                 f"input_tokens={int(usage.get('prompt_tokens', 0) or 0)}, "
                 f"output_tokens={int(usage.get('completion_tokens', 0) or 0)}, "
+                f"embedding_input_tokens={int(usage.get('embedding_input_tokens', 0) or 0)}, "
+                f"embedding_query_input_tokens={int(usage.get('embedding_query_input_tokens', 0) or 0)}, "
+                f"embedding_index_input_tokens={int(usage.get('embedding_index_input_tokens', 0) or 0)}, "
+                f"embedding_s={float(qa_stage_timing.get('embedding_s', 0.0) or 0.0):.2f}, "
+                f"embedding_query_s={float(qa_stage_timing.get('embedding_query_s', 0.0) or 0.0):.2f}, "
+                f"embedding_index_s={float(qa_stage_timing.get('embedding_index_s', 0.0) or 0.0):.2f}, "
                 f"resources={len(resources)}, retrieved_docs={len(retrieved_docs)})"
             )
 
@@ -1248,6 +1338,21 @@ class ModoraStoreWrapper:
             resources=resources,
             retrieve_input_tokens=int(usage.get("prompt_tokens", 0) or 0),
             retrieve_output_tokens=int(usage.get("completion_tokens", 0) or 0),
+            embedding_input_tokens=int(usage.get("embedding_input_tokens", 0) or 0),
+            embedding_output_tokens=int(usage.get("embedding_output_tokens", 0) or 0),
+            embedding_query_input_tokens=int(
+                usage.get("embedding_query_input_tokens", 0) or 0
+            ),
+            embedding_index_input_tokens=int(
+                usage.get("embedding_index_input_tokens", 0) or 0
+            ),
+            embedding_time_sec=float(qa_stage_timing.get("embedding_s", 0.0) or 0.0),
+            embedding_query_time_sec=float(
+                qa_stage_timing.get("embedding_query_s", 0.0) or 0.0
+            ),
+            embedding_index_time_sec=float(
+                qa_stage_timing.get("embedding_index_s", 0.0) or 0.0
+            ),
             native_final_answer=answer,
             native_input_tokens=int(usage.get("prompt_tokens", 0) or 0),
             native_output_tokens=int(usage.get("completion_tokens", 0) or 0),
