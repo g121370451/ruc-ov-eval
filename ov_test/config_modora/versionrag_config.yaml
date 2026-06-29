@@ -10,7 +10,7 @@ adapter:
 # auto_output_dir=true 时会自动选择下一个 experiment_NNNN 输出目录。
 execution:
   # QA 查询间并发数；开 embedding 时过大可能触发更多 embedding 请求和 Chroma 写入压力。
-  max_workers: 6
+  max_workers: 3
   # 入库外层 worker 数；实际 OCR/text extraction/build_tree 还会受下面 MoDora 参数限制。
   ingest_workers: 4
   # 最终保留给生成/评测的检索结果数量。
@@ -81,11 +81,11 @@ store:
   # Chroma 向量库持久化目录；embedding 结果写在这里。
   chroma_persist_path: Data/{dataset_name}/modora/store_index
   # embedding 服务 base url；必须在 .env 中配置 EMBEDDING_BASE_URL。
-  embedding_api_base: ${EMBEDDING_BASE_URL}
+  embedding_api_base: https://ark.cn-beijing.volces.com/api/v3
   # embedding 服务 key；必须在 .env 中配置 EMBEDDING_API_KEY。
-  embedding_api_key: ${EMBEDDING_API_KEY}
+  embedding_api_key: 269f7ee6-212a-4f46-9472-978a55cdb625
   # embedding 模型名；doubao-embedding-vision 会自动走 multimodal embedding endpoint。
-  embedding_model_name: ${EMBEDDING_MODEL_NAME}
+  embedding_model_name: doubao-embedding-vision-250615
   # 建向量库时每个 batch 包含的 node 文本数；vision embedding endpoint 下 batch 内仍会逐条请求。
   embedding_index_batch_size: 32
   # 建向量库时并发处理的 batch 数；近似控制 index embedding 请求并发。
@@ -121,7 +121,7 @@ store:
   # 是否把截图/图片送入最终推理；text_only 下关闭。
   visual_reasoning: false
   # 远程 LLM 全局并发限制；null 表示不加这个全局 semaphore。
-  remote_llm_max_concurrency: 8
+  remote_llm_max_concurrency: 4
   # 单个 QA 内部 LLM 并发限制；null 表示不限制查询内部并发。
   remote_llm_per_query_concurrency: 2
   # 远程 LLM 失败/429 的最大重试次数。
@@ -130,35 +130,35 @@ store:
   remote_llm_base_delay_s: 4.0
   # 退避重试的最大等待秒数。
   remote_llm_max_delay_s: 30.0
-  # model_instances: MoDora 内部可用的 LLM 实例；当前统一走远程 JUDGE_LLM。
+  # model_instances: MoDora 内部可用的 LLM 实例；当前统一走 GPT 远程模型。
   model_instances:
-    JUDGE_LLM:
+    GPT-5:
       type: remote
-      model: ep-20260612190309-tsv4t
-      base_url: ${LLM_BASE_URL}
-      api_key: ${LLM_API_KEY}
+      model: "gpt-5.5"
+      base_url: "https://www.tokenrouter.tech/v1"
+      api_key: "sk-nPlRjVjNAW4QS1RAKhtw2waSVz2b23CCusjKpa23PPDgAr4d"
   # ui_settings: MoDora 原生 pipeline 到 LLM 实例的映射。
   # text_only_mode=true 时，视觉相关 pipeline 会被我们改造后的后端跳过或降级为文本路径。
   ui_settings:
     schemaVersion: 3
     pipelines:
       enrichment:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       levelGenerator:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       metadataGenerator:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       retriever:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       qaService:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
   # pdf_text 模式下 PDF 文本提取的并发 worker 数。
   text_extract_workers: 8
   # pdf_text 提取为空时的策略：warn/fail/ignore。
   pdf_text_empty_policy: warn
 # llm: ruc-ov-eval 评测/裁判等外层 LLM 配置，和 MoDora 内部 model_instances 分开。
 llm:
-  model: ep-20260612190309-tsv4t
+  model: "gpt-5.5"
   temperature: 0
-  base_url: ${LLM_BASE_URL}
-  api_key: ${LLM_API_KEY}
+  base_url: "https://www.tokenrouter.tech/v1"
+  api_key: "sk-nPlRjVjNAW4QS1RAKhtw2waSVz2b23CCusjKpa23PPDgAr4d"

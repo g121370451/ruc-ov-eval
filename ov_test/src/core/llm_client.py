@@ -19,6 +19,12 @@ class LLMClientWrapper:
         self.async_client = AsyncOpenAI(api_key=api_key, base_url=config['base_url'])
         self.retry_count = 3
 
+    def _extra_body(self) -> dict[str, object] | None:
+        model = (self.model or "").lower()
+        if not (model.startswith("gpt-") or model.startswith("o")):
+            return None
+        return {"thinking": {"reasoning_effort": "none"}}
+
     @staticmethod
     def _normalize_messages(messages: list[Any]) -> list[dict[str, str]]:
         normalized = []
@@ -40,6 +46,7 @@ class LLMClientWrapper:
             model=self.model,
             temperature=self.temperature,
             messages=self._normalize_messages(messages),
+            extra_body=self._extra_body(),
         )
         return _LLMResponse(content=resp.choices[0].message.content or "")
 
@@ -48,6 +55,7 @@ class LLMClientWrapper:
             model=self.model,
             temperature=self.temperature,
             messages=self._normalize_messages(messages),
+            extra_body=self._extra_body(),
         )
         return _LLMResponse(content=resp.choices[0].message.content or "")
 

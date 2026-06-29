@@ -434,13 +434,13 @@ class ModoraStoreWrapper:
                     "enabled": True,
                     "time_sec": elapsed,
                     "embedding_input_tokens": int(
-                        usage.embedding_input_tokens or 0
+                        getattr(usage, "embedding_input_tokens", usage.prompt_tokens) or 0
                     ),
                     "embedding_output_tokens": int(
-                        usage.embedding_output_tokens or 0
+                        getattr(usage, "embedding_output_tokens", usage.completion_tokens) or 0
                     ),
                     "embedding_index_input_tokens": int(
-                        usage.embedding_index_input_tokens or 0
+                        getattr(usage, "embedding_index_input_tokens", usage.prompt_tokens) or 0
                     ),
                     "nodes": int(stats.get("nodes", 0) or 0),
                     "documents": int(stats.get("documents", 0) or 0),

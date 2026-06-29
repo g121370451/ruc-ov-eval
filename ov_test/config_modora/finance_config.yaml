@@ -128,35 +128,35 @@ store:
   remote_llm_base_delay_s: 4.0
   # 退避重试的最大等待秒数。
   remote_llm_max_delay_s: 30.0
-  # model_instances: MoDora 内部可用的 LLM 实例；当前统一走远程 JUDGE_LLM。
+  # model_instances: MoDora 内部可用的 LLM 实例；当前统一走 GPT 远程模型。
   model_instances:
-    JUDGE_LLM:
+    GPT-5:
       type: remote
-      model: ep-20260611110940-6rnmv
-      base_url: ${LLM_BASE_URL}
-      api_key: ${LLM_API_KEY}
+      model: "gpt-5.5"
+      base_url: "https://www.tokenrouter.tech/v1"
+      api_key: "sk-nPlRjVjNAW4QS1RAKhtw2waSVz2b23CCusjKpa23PPDgAr4d"
   # ui_settings: MoDora 原生 pipeline 到 LLM 实例的映射。
   # text_only_mode=true 时，视觉相关 pipeline 会被我们改造后的后端跳过或降级为文本路径。
   ui_settings:
     schemaVersion: 3
     pipelines:
       enrichment:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       levelGenerator:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       metadataGenerator:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       retriever:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
       qaService:
-        modelInstance: JUDGE_LLM
+        modelInstance: GPT-5
   # pdf_text 模式下 PDF 文本提取的并发 worker 数。
   text_extract_workers: 8
   # pdf_text 提取为空时的策略：warn/fail/ignore。
   pdf_text_empty_policy: warn
 # llm: ruc-ov-eval 评测/裁判等外层 LLM 配置，和 MoDora 内部 model_instances 分开。
 llm:
-  model: ep-20260611110940-6rnmv
+  model: "gpt-5.5"
   temperature: 0
-  base_url: ${LLM_BASE_URL}
-  api_key: ${LLM_API_KEY}
+  base_url: "https://www.tokenrouter.tech/v1"
+  api_key: "sk-nPlRjVjNAW4QS1RAKhtw2waSVz2b23CCusjKpa23PPDgAr4d"
