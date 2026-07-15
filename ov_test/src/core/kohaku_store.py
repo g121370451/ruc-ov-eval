@@ -488,15 +488,181 @@ class KohakuStoreWrapper:
         retrieved_uris = [r.uri for r in search_res.resources]
         return retrieved_texts, context_blocks, retrieved_uris
 
+    def delete_document(self, document_id: str) -> bool:
+        """Delete a single document and all its descendant nodes from the store.
+
+        This removes entries from:
+          - KVault metadata table
+          - main vector table (``_vectors``)
+          - optional full-paragraph vector table (``_para_full_vectors``)
+          - optional BM25 text index (``_bm25``)
+
+        The optional image-only vector table is currently not cleaned because
+        ``VectorKVault`` does not expose a key/row iterator and the benchmark
+        wrapper does not build image indexes.
+
+        Args:
+            document_id: The root ``node_id`` of the document to delete.
+
+        Returns:
+            True if at least one node was found and removed, False otherwise.
+        """
+        if not document_id:
+            self.logger.warning("delete_document called with empty document_id")
+            return False
+
+        store = self._get_kv_store()
+        doc_prefix = document_id + ":"
+
+        def belongs(node_id: str) -> bool:
+            return node_id == document_id or node_id.startswith(doc_prefix)
+
+        found_any = False
+        try:
+            # ------------------------------------------------------------------
+            # 1. Metadata + vector tables
+            # ------------------------------------------------------------------
+            # KVault.keys returns an iterator of bytes; collect matching records
+            # first to avoid iterator invalidation while deleting.
+            records_to_delete = []
+            for raw_key in store._kv.keys(prefix=document_id, limit=10_000_000):
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if key == store.META_KEY:
+                    continue
+                try:
+                    record = store._kv[key]
+                except KeyError:
+                    continue
+                node_id = record.get("node_id")
+                if not belongs(node_id):
+                    # Guard against prefix collisions (e.g. "doc1" vs "doc10").
+                    continue
+                records_to_delete.append((key, record))
+
+            if records_to_delete:
+                found_any = True
+
+            for key, record in records_to_delete:
+                vec_row_id = record.get("vector_row_id")
+                if vec_row_id is not None:
+                    try:
+                        store._vectors.delete(int(vec_row_id))
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Failed to delete vector row {vec_row_id} for {key}: {e}"
+                        )
+
+                if store._para_full_vectors is not None:
+                    para_row_id = record.get("para_full_row_id")
+                    if para_row_id is not None:
+                        try:
+                            store._para_full_vectors.delete(int(para_row_id))
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Failed to delete para_full row {para_row_id} for {key}: {e}"
+                            )
+
+                try:
+                    store._kv.delete(key)
+                except Exception as e:
+                    self.logger.warning(f"Failed to delete metadata key {key}: {e}")
+
+            # ------------------------------------------------------------------
+            # 2. BM25 index
+            # ------------------------------------------------------------------
+            if store._bm25 is not None:
+                bm25_rows_to_delete = []
+                for row_id in store._bm25.keys(limit=10_000_000):
+                    try:
+                        _, node_id = store._bm25.get_by_id(row_id)
+                        if belongs(node_id):
+                            bm25_rows_to_delete.append(row_id)
+                    except Exception:
+                        continue
+                for row_id in bm25_rows_to_delete:
+                    try:
+                        store._bm25.delete(row_id)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to delete BM25 row {row_id}: {e}")
+
+            # ------------------------------------------------------------------
+            # 3. Image-only vector index (not used by the current wrapper)
+            # ------------------------------------------------------------------
+            if store._image_vectors is not None and store._image_vectors.count() > 0:
+                self.logger.warning(
+                    "Image-only vector index exists but per-document image deletion "
+                    "is not implemented; image embeddings for the deleted document "
+                    "may remain."
+                )
+
+        finally:
+            # Force the wrapper to reopen the store on the next access so that
+            # internal caches/views do not hold stale state.
+            self.invalidate_kv_store_cache()
+
+        if found_any:
+            self.logger.info(f"Deleted document {document_id} from Kohaku store")
+        else:
+            self.logger.info(f"No nodes found for document_id={document_id}")
+
+        return found_any
+
     def clear(self):
-        """Delete SQLite database(s)."""
+        """Delete all ingested documents one by one, but keep the SQLite DB file.
+
+        This calls ``delete_document`` for every root document found in the
+        metadata table. The total ``clear()`` time can be divided by the number
+        of deleted documents to obtain a per-document deletion cost.
+
+        The underlying ``kohaku.db`` file is intentionally retained so that its
+        size can be inspected after deletion.
+        """
         if not os.path.exists(self.store_path):
             return
-        
+
         db_path = os.path.join(self.store_path, "kohaku.db")
-        if os.path.exists(db_path):
+        if not os.path.exists(db_path):
+            return
+
+        # ------------------------------------------------------------------
+        # 1. Enumerate root documents (parent_id is None)
+        # ------------------------------------------------------------------
+        doc_ids: list[str] = []
+        try:
+            store = self._get_kv_store()
+            for raw_key in store._kv.keys(limit=10_000_000):
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if key == store.META_KEY:
+                    continue
+                try:
+                    record = store._kv[key]
+                except KeyError:
+                    continue
+                # Root document nodes have no parent
+                if record.get("parent_id") is None:
+                    node_id = record.get("node_id")
+                    if node_id:
+                        doc_ids.append(node_id)
+        except Exception as e:
+            self.logger.warning(f"clear(): failed to enumerate documents: {e}")
+
+        self.logger.info(
+            f"clear(): found {len(doc_ids)} documents to delete: {doc_ids}"
+        )
+
+        # ------------------------------------------------------------------
+        # 2. Delete each document via delete_document
+        # ------------------------------------------------------------------
+        for doc_id in doc_ids:
+            self.logger.info(f"clear(): deleting document {doc_id}")
             try:
-                os.remove(db_path)
-                self.logger.info(f"Removed DB: {db_path}")
+                self.delete_document(doc_id)
             except Exception as e:
-                self.logger.warning(f"Failed to remove {db_path}: {e}")
+                self.logger.warning(f"clear(): failed to delete document {doc_id}: {e}")
+
+        self.logger.info(
+            f"clear(): finished deleting {len(doc_ids)} documents, DB kept at {db_path}"
+        )
+
+        # Keep the DB file for size inspection; only invalidate the in-memory cache.
+        self.invalidate_kv_store_cache()

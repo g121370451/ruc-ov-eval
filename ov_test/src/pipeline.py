@@ -90,13 +90,18 @@ class BenchmarkPipeline:
 
         else:  # 正常执行入库
             import shutil
-            from src.core.backup_utils import backup_store
             store_path = self.config['paths'].get('vector_store', '')
-            # 清空 store 目录
-            if os.path.isdir(store_path):
+            # DeepRead 由 _ingest_one 内部做断点续传，pipeline 层面不清空
+            if self.store_type != 'DeepRead' and os.path.isdir(store_path):
                 shutil.rmtree(store_path)
                 os.makedirs(store_path, exist_ok=True)
                 self.logger.info(f"Store directory cleared: {store_path}")
+            else:
+                os.makedirs(store_path, exist_ok=True)
+                if self.store_type == 'DeepRead':
+                    self.logger.info(f"Store directory preserved for DeepRead resume: {store_path}")
+                else:
+                    self.logger.info(f"Store directory ready: {store_path}")
             ingest_workers = self.config['execution'].get('ingest_workers', 10)
             ingest_stats = self.db.ingest(
                 doc_info,

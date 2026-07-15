@@ -19,10 +19,10 @@ store:
   use_pymupdf: true
 
 execution:
-  max_workers: 1         # LLM 生成任务的并发数
+  max_workers: 10        # LLM 生成任务的并发数
   ingest_workers: 1      # 数据入库任务的并发数（提交到 OV 的并发数）
-  retrieval_topk: 5
-  max_queries: 70        # 最大查询数，null 表示全部查询
+  retrieval_topk: 2
+  max_queries: 100        # 最大查询数，null 表示全部查询
   skip_ingestion: true
 # ======================================
 

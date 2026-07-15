@@ -1,7 +1,13 @@
+import logging
+import time
+import random
 from typing import List, Optional
 
 import volcenginesdkarkruntime
+from volcenginesdkarkruntime._exceptions import ArkRateLimitError
 from src.core.token_tracer_util import ThreadLocalTokenTracker
+
+logger = logging.getLogger(__name__)
 
 # embedding token追踪器实例
 embedding_token_tracker = ThreadLocalTokenTracker()
@@ -138,10 +144,27 @@ class VolcengineEmbedder():
             vector = truncate_and_normalize(vector, self.dimension)
             return vector
 
-        try:
-            return _embed_call()
-        except Exception as e:
-            raise RuntimeError(f"Volcengine embedding failed: {str(e)}") from e
+        # 重试策略：指数退避 + 抖动，专门处理 429 Rate Limit
+        max_retries = 5
+        base_delay = 2.0  # 初始等待 2 秒
+
+        for attempt in range(max_retries):
+            try:
+                return _embed_call()
+            except ArkRateLimitError as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        f"[VolcengineEmbedder] Rate limit (429) on attempt {attempt + 1}, "
+                        f"retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    raise RuntimeError(
+                        f"Volcengine embedding failed after {max_retries} retries due to rate limit: {str(e)}"
+                    ) from e
+            except Exception as e:
+                raise RuntimeError(f"Volcengine embedding failed: {str(e)}") from e
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Batch embedding

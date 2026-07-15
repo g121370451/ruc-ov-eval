@@ -232,6 +232,11 @@ class DeepReadWrapper:
             emb_path = os.path.join(self.store_path, f"{name}_emb.npy")
             idmap_path = os.path.join(self.store_path, f"{name}_idmap.json")
 
+            # --- 断点续传：如果所有输出文件都已存在，直接跳过 ---
+            if os.path.exists(merged_md_path) and os.path.exists(corpus_path) and os.path.exists(emb_path) and os.path.exists(idmap_path):
+                self.logger.info(f"[{name}] Already embedded (md/corpus/emb/idmap exist), skipping.")
+                return
+
             #  ---Step 1: PDF -> Markdown (or Markdown directly) ---
             ext = os.path.splitext(path)[1].lower()
             if ext in [".md", ".markdown"]:
@@ -445,12 +450,74 @@ class DeepReadWrapper:
                 return f.read()
         return ""
 
+    _DOC_FILE_SUFFIXES = [".md", "_corpus.json", "_emb.npy", "_idmap.json", ".json"]
+    _DOC_TEMP_SUFFIXES = ["_temp_page.json", "_temp_page.md"]
+
+    def _iter_document_ids(self) -> list[str]:
+        """从 store_path 中的文件名推断出所有 document id（文件主干）。"""
+        if not os.path.exists(self.store_path):
+            return []
+        doc_ids = set()
+        for filename in os.listdir(self.store_path):
+            filepath = os.path.join(self.store_path, filename)
+            if os.path.isdir(filepath):
+                continue
+            for suffix in self._DOC_FILE_SUFFIXES:
+                if filename.endswith(suffix):
+                    doc_ids.add(filename[: -len(suffix)])
+                    break
+        return sorted(doc_ids)
+
+    def delete_document(self, doc_id: str) -> bool:
+        """删除单个文档在 store_path 下的所有派生文件。
+
+        包括：.md、_corpus.json、_emb.npy、_idmap.json、.json 以及
+        可能残留的 _temp_page.* 文件。
+        """
+        if not self.store_path or not os.path.exists(self.store_path):
+            return False
+
+        removed_any = False
+        for suffix in self._DOC_FILE_SUFFIXES + self._DOC_TEMP_SUFFIXES:
+            path = os.path.join(self.store_path, f"{doc_id}{suffix}")
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    self.logger.info(f"[{doc_id}] Removed {path}")
+                    removed_any = True
+                except Exception as e:
+                    self.logger.warning(f"[{doc_id}] Failed to remove {path}: {e}")
+
+        return removed_any
+
     def clear(self):
-        """清空所有 sample 的 corpus 目录。"""
-        if os.path.exists(self.store_path):
-            import shutil
-            shutil.rmtree(self.store_path)
-            self.logger.info(f"Removed sample dir: {self.store_path}")
+        """逐个文档删除，但保留 store_path 目录本身。
+
+        删除时间会累计到 ``metrics_summary["deletion"]["time"]``，除以文档数即可
+        得到平均每篇文档的删除开销。
+        """
+        if not os.path.exists(self.store_path):
+            return
+
+        doc_ids = self._iter_document_ids()
+        self.logger.info(
+            f"clear(): found {len(doc_ids)} documents to delete: {doc_ids}"
+        )
+
+        for doc_id in doc_ids:
+            self.logger.info(f"clear(): deleting document {doc_id}")
+            try:
+                self.delete_document(doc_id)
+            except Exception as e:
+                self.logger.warning(f"clear(): failed to delete document {doc_id}: {e}")
+
+        self.logger.info(
+            f"clear(): finished deleting {len(doc_ids)} documents, "
+            f"store path kept: {self.store_path}"
+        )
+
+        # 清除 DocIndex 缓存，避免后续 retrieve 读到已删除的文档
+        self._doc_index_cacahe = None
 
 def main():
     # 简单测试
