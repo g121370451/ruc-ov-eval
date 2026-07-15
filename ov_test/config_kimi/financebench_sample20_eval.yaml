@@ -1,0 +1,33 @@
+# config_kimi > financebench_sample20_eval.yaml
+# 用于对 kimi_prompt_rag.py 生成的 answers 执行 eval 评测
+
+project_name: "RAG_Benchmark"
+dataset_name: "FinanceBench_sample20"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+# eval-only 步骤不会实际使用 store，这里仅保留占位
+store:
+  type: "viking"
+
+execution:
+  max_workers: 5
+  ingest_workers: 1
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: true
+
+paths:
+  raw_data: "Data/FinanceBench_sample20/data/financebench_open_source.jsonl"
+  doc_output_dir: "Data/FinanceBench_sample20/processed_docs"
+  vector_store: "Data/FinanceBench_sample20/viking_store_index"
+  output_dir: "Output/FinanceBench_sample20/kimi_prompt_experiment_0001"
+  log_file: "Output/FinanceBench_sample20/kimi_prompt_experiment_0001/benchmark.log"
+
+llm:
+  model: "doubao-seed-1-8-251228"
+  temperature: 0
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key: "68e15b71-7673-4734-bf7a-01bb80a127ea"
