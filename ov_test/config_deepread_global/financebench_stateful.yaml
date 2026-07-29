@@ -1,0 +1,54 @@
+project_name: "RAG_Benchmark"
+dataset_name: "FinanceBench"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+store:
+  type: "DeepRead"
+  enable_vector: true
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  # FinanceBench 已提供 Markdown；仅在 Markdown 缺失、回退到 PDF 时使用 PyMuPDF。
+  use_pymupdf: true
+
+  # 通用检索改进
+  source_header_enabled: true
+  enable_session_pagination: true
+  agent_topk_max: 10
+  pagination_candidate_limit: 50
+  embedding_api_key: "${EMBEDDING_API_KEY}"
+  embedding_base_url: "${EMBEDDING_BASE_URL}"
+  embedding_model: "${EMBEDDING_MODEL_NAME}"
+
+  # FinanceBench 专用策略，不写入 DeepRead 通用系统提示词。
+#  agent_instructions:
+#    - "FinanceBench document names usually encode the company, fiscal year, and report type. After locating a candidate document, verify those attributes against the question using the source-document node or directory before relying on its evidence."
+#    - "If a directory title clearly matches the requested financial topic, prefer read_section on that node. Otherwise continue with document-scoped retrieval using the candidate doc_id."
+#    - "For global regex retrieval, do not require the company name and the target metric or phrase to occur in the same paragraph. First locate the document, then run a shorter phrase or metric query with scope=doc."
+#    - "Before answering, check that dates, guidance periods, units, and financial definitions come from the same intended document and reporting period; do not silently combine incompatible evidence."
+
+execution:
+  max_workers: 3
+  ingest_workers: 1
+  # 这是建议默认值；Agent 可在单次工具调用中自主请求 1..agent_topk_max。
+  retrieval_topk: 1
+  max_queries: null
+  # 必须重新入库，才能把 source header 写入 Markdown、目录、BM25 和向量索引。
+  skip_ingestion: false
+
+paths:
+  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  # 使用全新路径，避免复用不含 source header 的历史索引。
+  doc_output_dir: "Data/{dataset_name}/DeepRead/global_stateful_v1/processed_docs"
+  vector_store: "Data/{dataset_name}/DeepRead/global_stateful_v1/store_index"
+  output_dir: "Output/{dataset_name}/deepread_global_stateful"
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"

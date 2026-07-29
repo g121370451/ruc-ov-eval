@@ -17,7 +17,7 @@ from src.core.token_tracer_util import token_tracker
 
 from DeepRead.tool import load_corpus
 from DeepRead.tool.utils import _normalize_neighbor_window
-from DeepRead.index import parse_markdown_to_corpus
+from DeepRead.index import ensure_source_header, parse_markdown_to_corpus
 from DeepRead.agent import (
     run_agent,
     JsonlLogger,
@@ -64,6 +64,14 @@ class DeepReadWrapper:
         neighbor_window: str = "1,-1",
         max_rounds: int = 50,
         use_pymupdf: bool = False,
+        source_header_enabled: bool = True,
+        enable_session_pagination: bool = True,
+        agent_topk_max: int = 10,
+        pagination_candidate_limit: int = 50,
+        agent_instructions: Optional[List[str] | str] = None,
+        embedding_api_key: Optional[str] = None,
+        embedding_base_url: Optional[str] = None,
+        embedding_model: str = "doubao-embedding-vision-250615",
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
@@ -81,6 +89,18 @@ class DeepReadWrapper:
         self.enable_semantic = enable_semantic
         self.max_rounds = max_rounds
         self.use_pymupdf = use_pymupdf
+        self.source_header_enabled = source_header_enabled
+        self.enable_session_pagination = enable_session_pagination
+        self.agent_topk_max = max(1, int(agent_topk_max))
+        self.pagination_candidate_limit = max(
+            self.agent_topk_max, int(pagination_candidate_limit)
+        )
+        self.agent_instructions = agent_instructions
+        self.embedding_api_key = embedding_api_key or api_key
+        self.embedding_base_url = (
+            embedding_base_url or base_url
+        ).rstrip("/")
+        self.embedding_model = embedding_model
 
         # Neighbor window
         try:
@@ -125,6 +145,20 @@ class DeepReadWrapper:
             neighbor_window=str(neighbor_window),
             max_rounds=store_cfg.get("max_rounds", 12),
             use_pymupdf=store_cfg.get("use_pymupdf", False),
+            source_header_enabled=store_cfg.get("source_header_enabled", True),
+            enable_session_pagination=store_cfg.get(
+                "enable_session_pagination", True
+            ),
+            agent_topk_max=store_cfg.get("agent_topk_max", 10),
+            pagination_candidate_limit=store_cfg.get(
+                "pagination_candidate_limit", 50
+            ),
+            agent_instructions=store_cfg.get("agent_instructions", ""),
+            embedding_api_key=store_cfg.get("embedding_api_key"),
+            embedding_base_url=store_cfg.get("embedding_base_url"),
+            embedding_model=store_cfg.get(
+                "embedding_model", "doubao-embedding-vision-250615"
+            ),
         )
     
     def _pdf_to_markdown_pymupdf(self, pdf_path: str, md_path: str, sample_id: str):
@@ -186,9 +220,9 @@ class DeepReadWrapper:
             )
 
         embedder = VolcengineEmbedder(
-            model_name="doubao-embedding-vision-250615",
-            api_key=self.api_key,
-            api_base=self.base_url,
+            model_name=self.embedding_model,
+            api_key=self.embedding_api_key,
+            api_base=self.embedding_base_url,
             input_type="multimodal",
             dimension=2048,
         )
@@ -289,8 +323,13 @@ class DeepReadWrapper:
                         except Exception:
                             pass
 
+            # 文档名作为普通正文结构的一部分参与目录展示、BM25 与向量检索。
+            if self.source_header_enabled:
+                ensure_source_header(merged_md_path, name)
+
             # --- Step 2: Markdown -> corpus ---
             corpus = parse_markdown_to_corpus(merged_md_path)
+            corpus["source_name"] = name
 
             # --- Step 3: Embedding ---
             texts: List[str] = []
@@ -324,10 +363,10 @@ class DeepReadWrapper:
                 corpus["vector_store"] = {
                     "matrix_path": emb_path,
                     "id_map_path": idmap_path,
-                    "model_name": "doubao-embedding-vision-250615",
+                    "model_name": self.embedding_model,
                     "normalized": True,
                     "dtype": "float16",
-                    "embed_base_url": self.base_url,
+                    "embed_base_url": self.embedding_base_url,
                 }
 
             # --- Step 4: save corpus JSON ---
@@ -403,9 +442,11 @@ class DeepReadWrapper:
                 disable_bm25=False,
                 disable_regex=False,
                 disable_read=False,
-                embed_api_key=self.api_key,
-                embed_base_url="https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal",
-                embedding_model="doubao-embedding-vision-250615",
+                embed_api_key=self.embedding_api_key,
+                embed_base_url=(
+                    f"{self.embedding_base_url}/embeddings/multimodal"
+                ),
+                embedding_model=self.embedding_model,
                 neighbor_window=self.neighbor_window,
                 bm25_topk=topk,
                 regex_topk=topk,
@@ -414,6 +455,10 @@ class DeepReadWrapper:
                 semantic_topk1=30,
                 semantic_topk2=1,
                 collected_texts=collected_texts,
+                enable_session_pagination=self.enable_session_pagination,
+                agent_topk_max=self.agent_topk_max,
+                pagination_candidate_limit=self.pagination_candidate_limit,
+                additional_instructions=self.agent_instructions,
             )
         except Exception as e:
             self.logger.error(f"run_agent failed for '{self.store_path}': {e}")
