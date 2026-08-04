@@ -69,6 +69,7 @@ class DeepReadWrapper:
         agent_topk_max: int = 10,
         pagination_candidate_limit: int = 50,
         agent_instructions: Optional[List[str] | str] = None,
+        preload_directory_structure: bool = False,
         embedding_api_key: Optional[str] = None,
         embedding_base_url: Optional[str] = None,
         embedding_model: str = "doubao-embedding-vision-250615",
@@ -96,6 +97,7 @@ class DeepReadWrapper:
             self.agent_topk_max, int(pagination_candidate_limit)
         )
         self.agent_instructions = agent_instructions
+        self.preload_directory_structure = preload_directory_structure
         self.embedding_api_key = embedding_api_key or api_key
         self.embedding_base_url = (
             embedding_base_url or base_url
@@ -154,6 +156,9 @@ class DeepReadWrapper:
                 "pagination_candidate_limit", 50
             ),
             agent_instructions=store_cfg.get("agent_instructions", ""),
+            preload_directory_structure=store_cfg.get(
+                "preload_directory_structure", False
+            ),
             embedding_api_key=store_cfg.get("embedding_api_key"),
             embedding_base_url=store_cfg.get("embedding_base_url"),
             embedding_model=store_cfg.get(
@@ -406,7 +411,13 @@ class DeepReadWrapper:
         with self._cache_lock:
             self._doc_index_cacahe = None
 
-    def retrieve(self, query: str, topk: int = 5, target_uri: str = None) -> DeepReadResult:
+    def retrieve(
+        self,
+        query: str,
+        topk: int = 5,
+        target_uri: str = None,
+        query_id: Optional[str] = None,
+    ) -> DeepReadResult:
         """
         使用 run_agent 对指定 sample 执行多轮检索并返回最终答案。
 
@@ -459,6 +470,8 @@ class DeepReadWrapper:
                 agent_topk_max=self.agent_topk_max,
                 pagination_candidate_limit=self.pagination_candidate_limit,
                 additional_instructions=self.agent_instructions,
+                preload_directory_structure=self.preload_directory_structure,
+                query_id=query_id,
             )
         except Exception as e:
             self.logger.error(f"run_agent failed for '{self.store_path}': {e}")

@@ -1,0 +1,40 @@
+project_name: "RAG_Benchmark"
+dataset_name: "FinanceBench"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+store:
+  type: "DeepRead"
+  enable_vector: true
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  use_pymupdf: true
+  # Per-query 对照实验恢复原始 DeepRead 行为：首轮直接提供目标文档的完整目录树。
+  preload_directory_structure: true
+  embedding_api_key: "${EMBEDDING_API_KEY}"
+  embedding_base_url: "${EMBEDDING_BASE_URL}"
+  embedding_model: "${EMBEDDING_MODEL_NAME}"
+
+execution:
+  # 对照实验默认串行，以降低服务限流和并发波动；确认配额后可提高。
+  max_workers: 1
+  ingest_workers: 1
+  retrieval_topk: 5
+  max_queries: null
+  skip_ingestion: false
+
+paths:
+  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  doc_output_dir: "Data/{dataset_name}/DeepRead/per_query/processed_docs"
+  vector_store: "Data/{dataset_name}/DeepRead/per_query/store_index"
+  output_dir: "Output/{dataset_name}/deepread_per_query_experiment"
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"

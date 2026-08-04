@@ -448,6 +448,12 @@ class PerQuestionPipeline(BenchmarkPipeline):
             if self.store_type == 'sql_agent':
                 res = store.retrieve(query=qa.question, topk=topk,
                                      sample_id=sample_id, qa_metadata=qa.metadata)
+            elif self.store_type == 'DeepRead':
+                res = store.retrieve(
+                    query=qa.question,
+                    topk=topk,
+                    query_id=f"{sample_id}:{task_id}",
+                )
             else:
                 res = store.retrieve(query=qa.question, topk=topk)
             latency = time.time() - t0
