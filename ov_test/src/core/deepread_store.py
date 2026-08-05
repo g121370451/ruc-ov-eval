@@ -68,6 +68,8 @@ class DeepReadWrapper:
         enable_session_pagination: bool = True,
         agent_topk_max: int = 10,
         pagination_candidate_limit: int = 50,
+        enable_retrieval_stagnation_hint: bool = True,
+        retrieval_stagnation_threshold: int = 3,
         agent_instructions: Optional[List[str] | str] = None,
         embedding_api_key: Optional[str] = None,
         embedding_base_url: Optional[str] = None,
@@ -94,6 +96,12 @@ class DeepReadWrapper:
         self.agent_topk_max = max(1, int(agent_topk_max))
         self.pagination_candidate_limit = max(
             self.agent_topk_max, int(pagination_candidate_limit)
+        )
+        self.enable_retrieval_stagnation_hint = bool(
+            enable_retrieval_stagnation_hint
+        )
+        self.retrieval_stagnation_threshold = max(
+            2, int(retrieval_stagnation_threshold)
         )
         self.agent_instructions = agent_instructions
         self.embedding_api_key = embedding_api_key or api_key
@@ -152,6 +160,12 @@ class DeepReadWrapper:
             agent_topk_max=store_cfg.get("agent_topk_max", 10),
             pagination_candidate_limit=store_cfg.get(
                 "pagination_candidate_limit", 50
+            ),
+            enable_retrieval_stagnation_hint=store_cfg.get(
+                "enable_retrieval_stagnation_hint", True
+            ),
+            retrieval_stagnation_threshold=store_cfg.get(
+                "retrieval_stagnation_threshold", 3
             ),
             agent_instructions=store_cfg.get("agent_instructions", ""),
             embedding_api_key=store_cfg.get("embedding_api_key"),
@@ -458,6 +472,12 @@ class DeepReadWrapper:
                 enable_session_pagination=self.enable_session_pagination,
                 agent_topk_max=self.agent_topk_max,
                 pagination_candidate_limit=self.pagination_candidate_limit,
+                enable_retrieval_stagnation_hint=(
+                    self.enable_retrieval_stagnation_hint
+                ),
+                retrieval_stagnation_threshold=(
+                    self.retrieval_stagnation_threshold
+                ),
                 additional_instructions=self.agent_instructions,
             )
         except Exception as e:
