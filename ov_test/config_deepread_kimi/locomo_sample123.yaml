@@ -1,14 +1,21 @@
 project_name: "RAG_Benchmark"
 
 # ===========修改配置===========
-dataset_name: "Qasper"
+dataset_name: "Locomo_sample123"
 
 adapter:
-  module: "src.adapters.qasper_adapter"
-  class_name: "QasperAdapter"
+  module: "src.adapters.locomo_adapter"
+  class_name: "LocomoAdapter"
 
 store:
   type: "DeepRead"
+  # DeepRead agent 专用模型（kimi-k3，Moonshot）；顶层 llm 块保持为评测 judge 模型（doubao），不受影响
+  # reasoning_effort: 思考强度 low/high/max（服务端默认 max）；max_completion_tokens: 输出长度上限（可选，默认 131072）
+  agent_llm:
+    model: "${KIMI_MODEL}"
+    base_url: "${KIMI_BASE_URL}"
+    api_key: "${KIMI_API_KEY}"
+    reasoning_effort: "high"
   enable_vector: true
   enable_hybrid: false
   enable_semantic: false
@@ -23,17 +30,14 @@ execution:
   ingest_workers: 1
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: true
-  worker_id: 6
-  num_workers: 7
+  skip_ingestion: false
 # ==================================
-
 paths:
-  raw_data: "Data/{dataset_name}"
+  raw_data: "Data/{dataset_name}/locomo10.json"
   doc_output_dir: "Data/{dataset_name}/DeepRead/processed_docs"
   vector_store: "Data/{dataset_name}/DeepRead/store_index"
-  output_dir: "Output/{dataset_name}/deepread_experiment_part6"
-  
+  output_dir: "Output/{dataset_name}/deepread_kimi_experiment"
+
 llm:
   model: "doubao-seed-1-8-251228"
   temperature: 0

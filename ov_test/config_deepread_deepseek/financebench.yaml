@@ -1,7 +1,7 @@
 project_name: "RAG_Benchmark"
 
 # ===========修改配置================
-dataset_name: "FinanceBench_sample20"
+dataset_name: "FinanceBench"
 
 adapter:
   module: "src.adapters.finance_bench_adapter"
@@ -9,6 +9,13 @@ adapter:
 
 store:
   type: "DeepRead"
+  # DeepRead agent 专用模型（DeepSeek-V4）；顶层 llm 块保持为评测 judge 模型（doubao），不受影响
+  # reasoning_effort: 思考强度 low/high/max（服务端默认 high）；max_completion_tokens: 输出长度上限（可选，映射为 DeepSeek 的 max_tokens）
+  agent_llm:
+    model: "${DEEPSEEK_MODEL}"
+    base_url: "${DEEPSEEK_BASE_URL}"
+    api_key: "${DEEPSEEK_API_KEY}"
+    reasoning_effort: "high"
   enable_vector: true
   enable_hybrid: false
   enable_semantic: false
@@ -23,17 +30,15 @@ execution:
   ingest_workers: 1
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: true
-  worker_id: 1
-  num_workers: 2
+  skip_ingestion: false
 # ==================================
 
 paths:
   raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
-  doc_output_dir: "Data/{dataset_name}/DeepRead/global/processed_docs"
-  vector_store: "Data/{dataset_name}/DeepRead/global/store_index"
-  output_dir: "Output/{dataset_name}/deepread_global_experiment_part1"
-  
+  doc_output_dir: "Data/{dataset_name}/DeepRead/processed_docs"
+  vector_store: "Data/{dataset_name}/DeepRead/store_index"
+  output_dir: "Output/{dataset_name}/deepread_deepseek_experiment"
+
 llm:
   model: "doubao-seed-1-8-251228"
   temperature: 0

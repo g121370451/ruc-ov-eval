@@ -74,6 +74,9 @@ class DeepReadWrapper:
         embedding_api_key: Optional[str] = None,
         embedding_base_url: Optional[str] = None,
         embedding_model: str = "doubao-embedding-vision-250615",
+        reasoning_effort: Optional[str] = None,
+        max_completion_tokens: Optional[int] = None,
+        request_timeout: int = 120,
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
@@ -109,6 +112,10 @@ class DeepReadWrapper:
             embedding_base_url or base_url
         ).rstrip("/")
         self.embedding_model = embedding_model
+        # Kimi（Moonshot）/ DeepSeek 专属调用参数：思考强度 / 输出长度上限 / 请求超时
+        self.reasoning_effort = reasoning_effort
+        self.max_completion_tokens = max_completion_tokens
+        self.request_timeout = request_timeout
 
         # Neighbor window
         try:
@@ -137,16 +144,32 @@ class DeepReadWrapper:
 
     @classmethod
     def from_config(cls, store_path: str, doc_output_dir: str, output_dir: str, llm_cfg: dict, store_cfg: dict) -> "DeepReadWrapper":
-        """从 config.yaml 的三个子块构造实例，供 run.py 调用。"""
+        """从 config.yaml 的三个子块构造实例，供 run.py 调用。
+
+        store.agent_llm 可选：DeepRead agent 专用模型配置（如 kimi-k3），
+        覆盖顶层 llm 块中的 model/base_url/api_key/temperature，
+        并可附加 reasoning_effort / max_completion_tokens / request_timeout。
+        顶层 llm 块保持为评测（judge）与生成模型，不受 agent_llm 影响。
+        """
+        from DeepRead.agent.llm import detect_provider
+
         neighbor_window = store_cfg.get("neighbor_window", "1,-1")
+        agent_llm = store_cfg.get("agent_llm") or {}
+        model = agent_llm.get("model", llm_cfg.get("model", ""))
+        base_url = agent_llm.get("base_url", llm_cfg.get("base_url", ""))
+        # kimi/deepseek 思考模型的单轮推理可能远超 120s，默认放宽到 600s
+        default_timeout = 600 if detect_provider(model, base_url) != "default" else 120
         return cls(
             store_path=store_path,
             doc_output_dir=doc_output_dir,
             output_dir = output_dir,
-            model=llm_cfg.get("model", ""),
-            base_url=llm_cfg.get("base_url", ""),
-            api_key=llm_cfg.get("api_key", ""),
-            temperature=llm_cfg.get("temperature", 0.0),
+            model=model,
+            base_url=base_url,
+            api_key=agent_llm.get("api_key", llm_cfg.get("api_key", "")),
+            temperature=agent_llm.get("temperature", llm_cfg.get("temperature", 0.0)),
+            reasoning_effort=agent_llm.get("reasoning_effort"),
+            max_completion_tokens=agent_llm.get("max_completion_tokens"),
+            request_timeout=int(agent_llm.get("request_timeout", default_timeout)),
             enable_vector=store_cfg.get("enable_vector", True),
             enable_hybrid=store_cfg.get("enable_hybrid", False),
             enable_semantic=store_cfg.get("enable_semantic", False),
@@ -479,6 +502,9 @@ class DeepReadWrapper:
                     self.retrieval_stagnation_threshold
                 ),
                 additional_instructions=self.agent_instructions,
+                reasoning_effort=self.reasoning_effort,
+                max_completion_tokens=self.max_completion_tokens,
+                request_timeout=self.request_timeout,
             )
         except Exception as e:
             self.logger.error(f"run_agent failed for '{self.store_path}': {e}")
