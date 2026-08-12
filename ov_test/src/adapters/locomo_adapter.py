@@ -17,6 +17,19 @@ class LocomoAdapter(BaseAdapter):
     专门用于处理 LocoMo 数据集的适配器。
     将 Session 格式的 JSON 转换为带有时间信息的 Markdown。
     """
+    def __init__(self, raw_file_path: str, **kwargs):
+        """接受具体 JSON 文件，或自动识别 LocoMo 数据目录中的标准文件名。"""
+        if os.path.isdir(raw_file_path):
+            candidates = [
+                os.path.join(raw_file_path, "locomo10.json"),
+                os.path.join(raw_file_path, "Locomo.json"),
+            ]
+            raw_file_path = next(
+                (candidate for candidate in candidates if os.path.isfile(candidate)),
+                raw_file_path,
+            )
+        super().__init__(raw_file_path)
+
     def data_prepare(self,doc_dir:str) -> List[StandardDoc]:
         """
         加载原始数据并转换为ov友好格式

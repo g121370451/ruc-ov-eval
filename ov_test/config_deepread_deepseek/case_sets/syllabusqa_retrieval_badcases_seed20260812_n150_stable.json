@@ -1,0 +1,902 @@
+[
+  {
+    "sample_id": "1. Syllabus 2023",
+    "question": "Based on the syllabus \"1. Syllabus 2023\", Can you provide more details about the structure of the final presentation?",
+    "occurrence": 0,
+    "historical_global_index": 142
+  },
+  {
+    "sample_id": "1. Syllabus 2023",
+    "question": "Based on the syllabus \"1. Syllabus 2023\", Can you provide some details on the readings that will be required for this course.",
+    "occurrence": 0,
+    "historical_global_index": 172
+  },
+  {
+    "sample_id": "2023_Chem122_syllabus",
+    "question": "Based on the syllabus \"2023_Chem122_syllabus\", Can you summarize what we will be doing for homework each week?",
+    "occurrence": 0,
+    "historical_global_index": 272
+  },
+  {
+    "sample_id": "2023_Chem122_syllabus",
+    "question": "Based on the syllabus \"2023_Chem122_syllabus\", How do we keep track of weekly assignments?",
+    "occurrence": 0,
+    "historical_global_index": 273
+  },
+  {
+    "sample_id": "2023_Chem122_syllabus",
+    "question": "Based on the syllabus \"2023_Chem122_syllabus\", I will be unable to attend courses from April 24th to May 5th. Which topics will I miss it?",
+    "occurrence": 0,
+    "historical_global_index": 283
+  },
+  {
+    "sample_id": "Acct 371 Syllabus - Spring",
+    "question": "Based on the syllabus \"Acct 371 Syllabus - Spring\", How long do you take to respond to emails?",
+    "occurrence": 0,
+    "historical_global_index": 328
+  },
+  {
+    "sample_id": "Acct 371 Syllabus - Spring",
+    "question": "Based on the syllabus \"Acct 371 Syllabus - Spring\", How will the grades in this course be weighted and assigned?",
+    "occurrence": 0,
+    "historical_global_index": 366
+  },
+  {
+    "sample_id": "syllabus_fall2022-revised2",
+    "question": "Based on the syllabus \"syllabus_fall2022-revised2\", What prerequisite knowledge or skills were required for this training, and why?",
+    "occurrence": 0,
+    "historical_global_index": 381
+  },
+  {
+    "sample_id": "Syllabus.Astron101.summer2023",
+    "question": "Based on the syllabus \"Syllabus.Astron101.summer2023\", Will you accept late assignments?",
+    "occurrence": 0,
+    "historical_global_index": 422
+  },
+  {
+    "sample_id": "Syllabus.Astron101.summer2023",
+    "question": "Based on the syllabus \"Syllabus.Astron101.summer2023\", What part of the course counts the most toward our final grade?",
+    "occurrence": 0,
+    "historical_global_index": 447
+  },
+  {
+    "sample_id": "Syllabus.Astron101.summer2023",
+    "question": "Based on the syllabus \"Syllabus.Astron101.summer2023\", I am only able to visit a professor after 4:30 p.m. on weekdays.  How will I be able to see the professor at all for office hours?",
+    "occurrence": 0,
+    "historical_global_index": 451
+  },
+  {
+    "sample_id": "Syllabus.Astron101.summer2023",
+    "question": "Based on the syllabus \"Syllabus.Astron101.summer2023\", Can you tell me more about the instructor?",
+    "occurrence": 0,
+    "historical_global_index": 461
+  },
+  {
+    "sample_id": "796 Syllabus",
+    "question": "Based on the syllabus \"796 Syllabus\", Will the final capstone project paper be difficult?",
+    "occurrence": 0,
+    "historical_global_index": 548
+  },
+  {
+    "sample_id": "Syllabus Bio 544 lecture S23",
+    "question": "Based on the syllabus \"Syllabus Bio 544 lecture S23\", How long are the labs?",
+    "occurrence": 0,
+    "historical_global_index": 617
+  },
+  {
+    "sample_id": "Syllabus_Grounding_S_2023",
+    "question": "Based on the syllabus \"Syllabus_Grounding_S_2023\", Tell me about the final paper option.",
+    "occurrence": 0,
+    "historical_global_index": 664
+  },
+  {
+    "sample_id": "Syllabus_Grounding_S_2023",
+    "question": "Based on the syllabus \"Syllabus_Grounding_S_2023\", What is the weekly log?",
+    "occurrence": 0,
+    "historical_global_index": 665
+  },
+  {
+    "sample_id": "Biol582_2022_Syllabus",
+    "question": "Based on the syllabus \"Biol582_2022_Syllabus\", How many quizzes will there be in this course?",
+    "occurrence": 0,
+    "historical_global_index": 805
+  },
+  {
+    "sample_id": "Biol582_2022_Syllabus",
+    "question": "Based on the syllabus \"Biol582_2022_Syllabus\", What textbook is used for this course?",
+    "occurrence": 0,
+    "historical_global_index": 814
+  },
+  {
+    "sample_id": "Biol582_2022_Syllabus",
+    "question": "Based on the syllabus \"Biol582_2022_Syllabus\", Where can I find the required reading for the week?",
+    "occurrence": 0,
+    "historical_global_index": 820
+  },
+  {
+    "sample_id": "Biol582_2022_Syllabus",
+    "question": "Based on the syllabus \"Biol582_2022_Syllabus\", Can students work on assignments together?",
+    "occurrence": 0,
+    "historical_global_index": 828
+  },
+  {
+    "sample_id": "Biol582_2022_Syllabus",
+    "question": "Based on the syllabus \"Biol582_2022_Syllabus\", Are the exams in this course cumulative?",
+    "occurrence": 0,
+    "historical_global_index": 829
+  },
+  {
+    "sample_id": "Biol582_2022_Syllabus",
+    "question": "Based on the syllabus \"Biol582_2022_Syllabus\", I am unable to obtain an iClicker. Will I still be able to earn an A- in the course if I do not take any of the quizzes?",
+    "occurrence": 0,
+    "historical_global_index": 839
+  },
+  {
+    "sample_id": "Biol582_2022_Syllabus",
+    "question": "Based on the syllabus \"Biol582_2022_Syllabus\", When and where are instructor office hours?",
+    "occurrence": 0,
+    "historical_global_index": 843
+  },
+  {
+    "sample_id": "GEOG468668syllabusGIS_2023",
+    "question": "Based on the syllabus \"GEOG468668syllabusGIS_2023\", Will I miss a lesson on spatial reasoning if I am out the week of Feb 27th?",
+    "occurrence": 0,
+    "historical_global_index": 895
+  },
+  {
+    "sample_id": "GEOG468668syllabusGIS_2023",
+    "question": "Based on the syllabus \"GEOG468668syllabusGIS_2023\", What is the late submission policy?",
+    "occurrence": 0,
+    "historical_global_index": 905
+  },
+  {
+    "sample_id": "Syllabus-549",
+    "question": "Based on the syllabus \"Syllabus-549\", What objectives should I be able to accomplish once this course is complete?",
+    "occurrence": 0,
+    "historical_global_index": 1134
+  },
+  {
+    "sample_id": "Syllabus-549",
+    "question": "Based on the syllabus \"Syllabus-549\", I would like to learn about ABAQUS modeling, will I have the chance here?",
+    "occurrence": 0,
+    "historical_global_index": 1170
+  },
+  {
+    "sample_id": "Syllabus-549",
+    "question": "Based on the syllabus \"Syllabus-549\", Will there be a final exam at the end of the course?",
+    "occurrence": 0,
+    "historical_global_index": 1171
+  },
+  {
+    "sample_id": "Syllabus-549",
+    "question": "Based on the syllabus \"Syllabus-549\", I have time on Wednesdays after lunch to meet with any professors will I be able to come to your office at this time?",
+    "occurrence": 0,
+    "historical_global_index": 1201
+  },
+  {
+    "sample_id": "Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus",
+    "question": "Based on the syllabus \"Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus\", What skills can be used in the presentation to present the project?",
+    "occurrence": 0,
+    "historical_global_index": 1205
+  },
+  {
+    "sample_id": "Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus",
+    "question": "Based on the syllabus \"Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus\", What are the key topics covered in the syllabus for this course?",
+    "occurrence": 0,
+    "historical_global_index": 1210
+  },
+  {
+    "sample_id": "Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus",
+    "question": "Based on the syllabus \"Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus\", Can you provide some details on the class attendance and grading policies?",
+    "occurrence": 0,
+    "historical_global_index": 1213
+  },
+  {
+    "sample_id": "Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus",
+    "question": "Based on the syllabus \"Honors 391AH - AA Media Pop Culture - Fall 2022 Syllabus\", Why are their strict rules regarding the use of electronic devices in the classroom?",
+    "occurrence": 0,
+    "historical_global_index": 1233
+  },
+  {
+    "sample_id": "PH224_Syllabus_Spring23",
+    "question": "Based on the syllabus \"PH224_Syllabus_Spring23\", I woke up feeling sick, and I don't know if I'll come to class today. What should I do?",
+    "occurrence": 0,
+    "historical_global_index": 1337
+  },
+  {
+    "sample_id": "PH224_Syllabus_Spring23",
+    "question": "Based on the syllabus \"PH224_Syllabus_Spring23\", What are the public health domains addressed in this course?",
+    "occurrence": 0,
+    "historical_global_index": 1353
+  },
+  {
+    "sample_id": "PH224_Syllabus_Spring23",
+    "question": "Based on the syllabus \"PH224_Syllabus_Spring23\", How much of the class can I skip and still pass",
+    "occurrence": 0,
+    "historical_global_index": 1376
+  },
+  {
+    "sample_id": "PH224_Syllabus_Spring23",
+    "question": "Based on the syllabus \"PH224_Syllabus_Spring23\", I need to miss class from 2/28 to 3/19, is that okay?",
+    "occurrence": 0,
+    "historical_global_index": 1387
+  },
+  {
+    "sample_id": "PH224_Syllabus_Spring23",
+    "question": "Based on the syllabus \"PH224_Syllabus_Spring23\", Will material from the first half of the semester be on the final exam?",
+    "occurrence": 0,
+    "historical_global_index": 1393
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", Is it possible to get an A in this class without attending lectures and doing the homework? ",
+    "occurrence": 0,
+    "historical_global_index": 1447
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", What can I expect to learn from this class?",
+    "occurrence": 0,
+    "historical_global_index": 1457
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", What will the Final Projects consist of?",
+    "occurrence": 0,
+    "historical_global_index": 1467
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", I will not be available on September 21, which topics will I miss on those days?",
+    "occurrence": 0,
+    "historical_global_index": 1473
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", What will my grade consist of?",
+    "occurrence": 0,
+    "historical_global_index": 1485
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", Is a textbook required for this class?",
+    "occurrence": 0,
+    "historical_global_index": 1487
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", For this course, how many credits are assigned?",
+    "occurrence": 0,
+    "historical_global_index": 1488
+  },
+  {
+    "sample_id": "Animlsci581 Syllabus-v4",
+    "question": "Based on the syllabus \"Animlsci581 Syllabus-v4\", What is the name of the textbook required for this class?",
+    "occurrence": 0,
+    "historical_global_index": 1496
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", Can I meet with the TA on Fridays before the discussion class?",
+    "occurrence": 0,
+    "historical_global_index": 1557
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", What are the experimental goals of the class?",
+    "occurrence": 0,
+    "historical_global_index": 1570
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", Are all the classes in the same building?",
+    "occurrence": 0,
+    "historical_global_index": 1578
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", Where do the lecture and discussion sections meet?",
+    "occurrence": 0,
+    "historical_global_index": 1580
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", When are office hours held?",
+    "occurrence": 0,
+    "historical_global_index": 1581
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", Do I need more then just the book for class",
+    "occurrence": 0,
+    "historical_global_index": 1585
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", Can I use a tablet for the class in lieu of a computer or laptop?",
+    "occurrence": 0,
+    "historical_global_index": 1588
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", How are grades determined?",
+    "occurrence": 0,
+    "historical_global_index": 1589
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", How many homework assignments will there be?",
+    "occurrence": 0,
+    "historical_global_index": 1601
+  },
+  {
+    "sample_id": "syllabus-RESEC213-2023spring-yp",
+    "question": "Based on the syllabus \"syllabus-RESEC213-2023spring-yp\", How many people will be leading the class?",
+    "occurrence": 0,
+    "historical_global_index": 1615
+  },
+  {
+    "sample_id": "Syllabus_BIOLOGY497G_BIOLOGY697G_FA22",
+    "question": "Based on the syllabus \"Syllabus_BIOLOGY497G_BIOLOGY697G_FA22\", What materials do I need to prepare for class?",
+    "occurrence": 0,
+    "historical_global_index": 1728
+  },
+  {
+    "sample_id": "EME6651-SP2023_Syllabus",
+    "question": "Based on the syllabus \"EME6651-SP2023_Syllabus\", Will the required readings for the course be posted on Canvas?",
+    "occurrence": 0,
+    "historical_global_index": 1766
+  },
+  {
+    "sample_id": "EME6651-SP2023_Syllabus",
+    "question": "Based on the syllabus \"EME6651-SP2023_Syllabus\", What should students consider when using the required software for the course?",
+    "occurrence": 0,
+    "historical_global_index": 1769
+  },
+  {
+    "sample_id": "EME6651-SP2023_Syllabus",
+    "question": "Based on the syllabus \"EME6651-SP2023_Syllabus\", I can only submit assignments in for grading at on Thursdays. Is this allowed?",
+    "occurrence": 0,
+    "historical_global_index": 1794
+  },
+  {
+    "sample_id": "EME6651-SP2023_Syllabus",
+    "question": "Based on the syllabus \"EME6651-SP2023_Syllabus\", If I have scored 90% on each analytic assignment this far, and have completed all of the online reflections with a perfect score, what is the minimum score I would need to get on the final exam in to get an A- in the class?",
+    "occurrence": 0,
+    "historical_global_index": 1797
+  },
+  {
+    "sample_id": "EME6651-SP2023_Syllabus",
+    "question": "Based on the syllabus \"EME6651-SP2023_Syllabus\", When and where are office hours held?",
+    "occurrence": 0,
+    "historical_global_index": 1798
+  },
+  {
+    "sample_id": "CS4501-001_ Privacy in the Internet Age, Fall 2021_1",
+    "question": "Based on the syllabus \"CS4501-001_ Privacy in the Internet Age, Fall 2021_1\", Do we have any days off from class",
+    "occurrence": 0,
+    "historical_global_index": 1860
+  },
+  {
+    "sample_id": "Teaching Math in Elementary School 2 Proposed Syllabus",
+    "question": "Based on the syllabus \"Teaching Math in Elementary School 2 Proposed Syllabus\", can you provide some detail for the project?",
+    "occurrence": 0,
+    "historical_global_index": 1897
+  },
+  {
+    "sample_id": "MIE 380 syllabus F22",
+    "question": "Based on the syllabus \"MIE 380 syllabus F22\", When and how will TA's office hours take place?",
+    "occurrence": 0,
+    "historical_global_index": 2100
+  },
+  {
+    "sample_id": "MKTG 497G Customer Insight Syllabus S2023",
+    "question": "Based on the syllabus \"MKTG 497G Customer Insight Syllabus S2023\", Which assignment is worth the most points?",
+    "occurrence": 0,
+    "historical_global_index": 2119
+  },
+  {
+    "sample_id": "ResEcon-213-Fall-2022",
+    "question": "Based on the syllabus \"ResEcon-213-Fall-2022\", What is the in-class response, participation requirement for the course. ",
+    "occurrence": 0,
+    "historical_global_index": 2240
+  },
+  {
+    "sample_id": "ResEcon-213-Fall-2022",
+    "question": "Based on the syllabus \"ResEcon-213-Fall-2022\", What am I expected to get out of this class?",
+    "occurrence": 0,
+    "historical_global_index": 2312
+  },
+  {
+    "sample_id": "ResEcon-213-Fall-2022",
+    "question": "Based on the syllabus \"ResEcon-213-Fall-2022\", Who do I contact for information on class logistics?",
+    "occurrence": 0,
+    "historical_global_index": 2329
+  },
+  {
+    "sample_id": "ResEcon-213-Fall-2022",
+    "question": "Based on the syllabus \"ResEcon-213-Fall-2022\", What are the course requirements, in terms of testing for the class?",
+    "occurrence": 0,
+    "historical_global_index": 2347
+  },
+  {
+    "sample_id": "Nutr_130H_Syllabus_2021Fall",
+    "question": "Based on the syllabus \"Nutr_130H_Syllabus_2021Fall\", What are the extra credit opportunities?",
+    "occurrence": 0,
+    "historical_global_index": 2368
+  },
+  {
+    "sample_id": "MIE 302 Spring 2022 Syllabus-v1",
+    "question": "Based on the syllabus \"MIE 302 Spring 2022 Syllabus-v1\", What safety protocols will I need to follow in the lab?",
+    "occurrence": 0,
+    "historical_global_index": 2438
+  },
+  {
+    "sample_id": "270 Syllabus Fall 2022 (1)",
+    "question": "Based on the syllabus \"270 Syllabus Fall 2022 (1)\", What are the policies for working in teams during this course?",
+    "occurrence": 0,
+    "historical_global_index": 2477
+  },
+  {
+    "sample_id": "270 Syllabus Fall 2022 (1)",
+    "question": "Based on the syllabus \"270 Syllabus Fall 2022 (1)\", How do lecture exams count towards my grade?",
+    "occurrence": 0,
+    "historical_global_index": 2479
+  },
+  {
+    "sample_id": "Syllabus_IntroGIS_Fall2022",
+    "question": "Based on the syllabus \"Syllabus_IntroGIS_Fall2022\", I will not be able to attend class on 9/29 and 9/30, what topics will I miss?",
+    "occurrence": 0,
+    "historical_global_index": 2550
+  },
+  {
+    "sample_id": "Syllabus_Marine_Microbiome_2022_redacted",
+    "question": "Based on the syllabus \"Syllabus_Marine_Microbiome_2022_redacted\", Will there be mental health services if student need them?",
+    "occurrence": 0,
+    "historical_global_index": 2588
+  },
+  {
+    "sample_id": "Syllabus_Marine_Microbiome_2022_redacted",
+    "question": "Based on the syllabus \"Syllabus_Marine_Microbiome_2022_redacted\", Are any buildings at UofSC named after a person born in South Carolina?",
+    "occurrence": 0,
+    "historical_global_index": 2702
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", I can't afford a $40 Amazon e-book. Can I still take the class?",
+    "occurrence": 0,
+    "historical_global_index": 2726
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", Will there be any breaks during the semister",
+    "occurrence": 0,
+    "historical_global_index": 2736
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", How does the class meet on class day?",
+    "occurrence": 0,
+    "historical_global_index": 2743
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", I will be out of town on our usual class day on April 18. What topic will I miss?",
+    "occurrence": 0,
+    "historical_global_index": 2745
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", Will my grade just be based only on what I do, or will I have team projects?",
+    "occurrence": 0,
+    "historical_global_index": 2749
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", Could you provide with the topics of section 1 of the course?",
+    "occurrence": 0,
+    "historical_global_index": 2750
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", For tuesday class meeting when does one need to complete the comment?",
+    "occurrence": 0,
+    "historical_global_index": 2765
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", What are the steps for signing up for the class online discussion forum?",
+    "occurrence": 0,
+    "historical_global_index": 2767
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", Can you please explain the course requirements?",
+    "occurrence": 0,
+    "historical_global_index": 2772
+  },
+  {
+    "sample_id": "Syllabus SPP 697 PM 2023 (clean)",
+    "question": "Based on the syllabus \"Syllabus SPP 697 PM 2023 (clean)\", Are there assignments prior to the first class?",
+    "occurrence": 0,
+    "historical_global_index": 2779
+  },
+  {
+    "sample_id": "PSYCH 397D syllabus Spring 2023",
+    "question": "Based on the syllabus \"PSYCH 397D syllabus Spring 2023\", Is it possible to fail the exams and still pass the class?",
+    "occurrence": 0,
+    "historical_global_index": 2908
+  },
+  {
+    "sample_id": "PSYCH 397D syllabus Spring 2023",
+    "question": "Based on the syllabus \"PSYCH 397D syllabus Spring 2023\", Where can students access the film and who is allowed to watch?",
+    "occurrence": 0,
+    "historical_global_index": 2916
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", Will I still be able to pass this course if I cannot attend the lab sessions?",
+    "occurrence": 0,
+    "historical_global_index": 2938
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", What is the corequisite for this course?",
+    "occurrence": 0,
+    "historical_global_index": 2964
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", What does the coursework look like?",
+    "occurrence": 0,
+    "historical_global_index": 2970
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", Is selling course materials from the blackboard considered academic misconduct?",
+    "occurrence": 0,
+    "historical_global_index": 2981
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", How are grades calculated? ",
+    "occurrence": 0,
+    "historical_global_index": 2989
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", What is the course's goal to understand?",
+    "occurrence": 0,
+    "historical_global_index": 2994
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", Is the writing on the blackboard intellectual property?",
+    "occurrence": 0,
+    "historical_global_index": 2997
+  },
+  {
+    "sample_id": "web_syllabus_4670",
+    "question": "Based on the syllabus \"web_syllabus_4670\", What will this course cover?",
+    "occurrence": 0,
+    "historical_global_index": 3001
+  },
+  {
+    "sample_id": "Syllabus Chem111-Fa22",
+    "question": "Based on the syllabus \"Syllabus Chem111-Fa22\", What are valid reasons for missing an exam? ",
+    "occurrence": 0,
+    "historical_global_index": 3027
+  },
+  {
+    "sample_id": "Syllabus Chem111-Fa22",
+    "question": "Based on the syllabus \"Syllabus Chem111-Fa22\", What types of homework assignments can I expect to have in this class?",
+    "occurrence": 0,
+    "historical_global_index": 3099
+  },
+  {
+    "sample_id": "BDES-Syllabus-2021-v1rsb",
+    "question": "Based on the syllabus \"BDES-Syllabus-2021-v1rsb\", What will be the class discussion topics for the month of November?",
+    "occurrence": 0,
+    "historical_global_index": 3143
+  },
+  {
+    "sample_id": "BDES-Syllabus-2021-v1rsb",
+    "question": "Based on the syllabus \"BDES-Syllabus-2021-v1rsb\", How much in depth is the class going to go into Analytics?",
+    "occurrence": 0,
+    "historical_global_index": 3146
+  },
+  {
+    "sample_id": "vsyllabus 2022",
+    "question": "Based on the syllabus \"vsyllabus 2022\", What textbook is required for the class?",
+    "occurrence": 0,
+    "historical_global_index": 3207
+  },
+  {
+    "sample_id": "vsyllabus 2022",
+    "question": "Based on the syllabus \"vsyllabus 2022\", Does this class cover employment testing?",
+    "occurrence": 0,
+    "historical_global_index": 3215
+  },
+  {
+    "sample_id": "Syllabus_ISE4100_Au22_v3_redacted",
+    "question": "Based on the syllabus \"Syllabus_ISE4100_Au22_v3_redacted\", Are all lecture notes, homework, project links submitted via Blackboard?",
+    "occurrence": 0,
+    "historical_global_index": 3233
+  },
+  {
+    "sample_id": "Syllabus_ISE4100_Au22_v3_redacted",
+    "question": "Based on the syllabus \"Syllabus_ISE4100_Au22_v3_redacted\", Are there lectures on Wednesdays?",
+    "occurrence": 0,
+    "historical_global_index": 3241
+  },
+  {
+    "sample_id": "Syllabus_ISE4100_Au22_v3_redacted",
+    "question": "Based on the syllabus \"Syllabus_ISE4100_Au22_v3_redacted\", How do grades work?",
+    "occurrence": 0,
+    "historical_global_index": 3258
+  },
+  {
+    "sample_id": "Syllabus_ISE4100_Au22_v3_redacted",
+    "question": "Based on the syllabus \"Syllabus_ISE4100_Au22_v3_redacted\", I am unable to attend class on October 12 and will miss the midterm exam. Will it be possible for me to earn a B for the course?",
+    "occurrence": 0,
+    "historical_global_index": 3271
+  },
+  {
+    "sample_id": "FS542_food chem2",
+    "question": "Based on the syllabus \"FS542_food chem2\", What topic are we going to be covering on November 28?",
+    "occurrence": 0,
+    "historical_global_index": 3340
+  },
+  {
+    "sample_id": "Syllabus_Spmgt461_DataAnalytics",
+    "question": "Based on the syllabus \"Syllabus_Spmgt461_DataAnalytics\", Is attendance mandatory?",
+    "occurrence": 0,
+    "historical_global_index": 3472
+  },
+  {
+    "sample_id": "Syllabus_Spmgt461_DataAnalytics",
+    "question": "Based on the syllabus \"Syllabus_Spmgt461_DataAnalytics\", Can I walk in to see the professor during the office hours?",
+    "occurrence": 0,
+    "historical_global_index": 3479
+  },
+  {
+    "sample_id": "Syllabus_Spmgt461_DataAnalytics",
+    "question": "Based on the syllabus \"Syllabus_Spmgt461_DataAnalytics\", Will this be a fall semester course?",
+    "occurrence": 0,
+    "historical_global_index": 3481
+  },
+  {
+    "sample_id": "Syllabus_Spmgt461_DataAnalytics",
+    "question": "Based on the syllabus \"Syllabus_Spmgt461_DataAnalytics\", Can we publish any class materials on the internet?\n\n",
+    "occurrence": 0,
+    "historical_global_index": 3503
+  },
+  {
+    "sample_id": "Syllabus_Spmgt461_DataAnalytics",
+    "question": "Based on the syllabus \"Syllabus_Spmgt461_DataAnalytics\", Are Windows systems a hard requirement for this course?",
+    "occurrence": 0,
+    "historical_global_index": 3504
+  },
+  {
+    "sample_id": "Syllabus_Spmgt461_DataAnalytics",
+    "question": "Based on the syllabus \"Syllabus_Spmgt461_DataAnalytics\", How is the student contributions part of the grade determined?",
+    "occurrence": 0,
+    "historical_global_index": 3506
+  },
+  {
+    "sample_id": "Syllabus_Spmgt461_DataAnalytics",
+    "question": "Based on the syllabus \"Syllabus_Spmgt461_DataAnalytics\", Do I need a windows computer for this class?",
+    "occurrence": 0,
+    "historical_global_index": 3521
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", What course management system is involved in this course?",
+    "occurrence": 0,
+    "historical_global_index": 3549
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", Could you give me some details on quizzes in this course?",
+    "occurrence": 0,
+    "historical_global_index": 3557
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", Can I take this course without a TopHat account?",
+    "occurrence": 0,
+    "historical_global_index": 3562
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", If I am new to C/C++ or Java, do I meet the prerequisites?",
+    "occurrence": 0,
+    "historical_global_index": 3567
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", What are the available office hours for the instructor and all TAs?",
+    "occurrence": 0,
+    "historical_global_index": 3576
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", What are the course assignments?",
+    "occurrence": 0,
+    "historical_global_index": 3587
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", How will we be graded for class participation and attendance?",
+    "occurrence": 0,
+    "historical_global_index": 3592
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", I did not attend the first midterm exam. What is the best grade I can get?",
+    "occurrence": 0,
+    "historical_global_index": 3593
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", Where are the lectures located?",
+    "occurrence": 0,
+    "historical_global_index": 3596
+  },
+  {
+    "sample_id": "MGMNT 462_ Syllabus - Spring 2023",
+    "question": "Based on the syllabus \"MGMNT 462_ Syllabus - Spring 2023\", How is attendance measured?",
+    "occurrence": 0,
+    "historical_global_index": 3598
+  },
+  {
+    "sample_id": "cs466_sp21_info_redacted",
+    "question": "Based on the syllabus \"cs466_sp21_info_redacted\", How will I know whether my prerequisite course performance is sufficient enough to enroll in this course?",
+    "occurrence": 0,
+    "historical_global_index": 3609
+  },
+  {
+    "sample_id": "cs466_sp21_info_redacted",
+    "question": "Based on the syllabus \"cs466_sp21_info_redacted\", Can you make up things if you miss it? ",
+    "occurrence": 0,
+    "historical_global_index": 3610
+  },
+  {
+    "sample_id": "cs466_sp21_info_redacted",
+    "question": "Based on the syllabus \"cs466_sp21_info_redacted\", What does the final score look like with all assignments and exams factored in?",
+    "occurrence": 0,
+    "historical_global_index": 3640
+  },
+  {
+    "sample_id": "cs466_sp21_info_redacted",
+    "question": "Based on the syllabus \"cs466_sp21_info_redacted\", Am I required to purchase a textbook for this course?",
+    "occurrence": 0,
+    "historical_global_index": 3660
+  },
+  {
+    "sample_id": "cs466_sp21_info_redacted",
+    "question": "Based on the syllabus \"cs466_sp21_info_redacted\", Am I required to purchase a textbook for this class?",
+    "occurrence": 0,
+    "historical_global_index": 3694
+  },
+  {
+    "sample_id": "cs466_sp21_info_redacted",
+    "question": "Based on the syllabus \"cs466_sp21_info_redacted\", Can't I just review the slides online for the course for study?",
+    "occurrence": 0,
+    "historical_global_index": 3700
+  },
+  {
+    "sample_id": "cs466_sp21_info_redacted",
+    "question": "Based on the syllabus \"cs466_sp21_info_redacted\", Could you please summarize the homework and grading policies for this course?",
+    "occurrence": 0,
+    "historical_global_index": 3715
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", What are the benefits that students can gain from this course?",
+    "occurrence": 0,
+    "historical_global_index": 3716
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", Can you summarize the grading schedule for this class?",
+    "occurrence": 0,
+    "historical_global_index": 3718
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", I will not be able to attend class from April 1 - April 10. What topics will I miss?",
+    "occurrence": 0,
+    "historical_global_index": 3734
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", Which topics will I miss If I am unable to attend sessions from April 3rd to April 7th?",
+    "occurrence": 0,
+    "historical_global_index": 3741
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", Will I be able to code when this is over?",
+    "occurrence": 0,
+    "historical_global_index": 3746
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", How will homework assignments and collections be handled?",
+    "occurrence": 0,
+    "historical_global_index": 3753
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", Can you give me more details on what the final class project will be like and how important it will be to passing this course?",
+    "occurrence": 0,
+    "historical_global_index": 3758
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", Did the time and date provided in the syllabus will change based on the difficulty of the subject?",
+    "occurrence": 0,
+    "historical_global_index": 3763
+  },
+  {
+    "sample_id": "syllabus-2",
+    "question": "Based on the syllabus \"syllabus-2\", How many credits is this course worth?",
+    "occurrence": 0,
+    "historical_global_index": 3785
+  },
+  {
+    "sample_id": "num_analysis_redacted",
+    "question": "Based on the syllabus \"num_analysis_redacted\", What are some topics that will be covered in this course?",
+    "occurrence": 0,
+    "historical_global_index": 3997
+  },
+  {
+    "sample_id": "151 syllabus fall 2022 Rounds",
+    "question": "Based on the syllabus \"151 syllabus fall 2022 Rounds\", What are the required materials for this class?",
+    "occurrence": 0,
+    "historical_global_index": 4034
+  },
+  {
+    "sample_id": "151 syllabus fall 2022 Rounds",
+    "question": "Based on the syllabus \"151 syllabus fall 2022 Rounds\", Are there any penalties for missing a discussion section without making it up?",
+    "occurrence": 0,
+    "historical_global_index": 4038
+  },
+  {
+    "sample_id": "151 syllabus fall 2022 Rounds",
+    "question": "Based on the syllabus \"151 syllabus fall 2022 Rounds\", I have an issue with taking a mid-term exam. Should I give this timing conflict as an excuse or is it possible to take the exam at an earlier time which won't conflict with my schedule?",
+    "occurrence": 0,
+    "historical_global_index": 4040
+  },
+  {
+    "sample_id": "151 syllabus fall 2022 Rounds",
+    "question": "Based on the syllabus \"151 syllabus fall 2022 Rounds\", If I miss the exam on November 10 will it affect my grade?",
+    "occurrence": 0,
+    "historical_global_index": 4046
+  },
+  {
+    "sample_id": "syllabus_606",
+    "question": "Based on the syllabus \"syllabus_606\", I learn better with the presence of other people.  What are my best options for learning in this course?",
+    "occurrence": 0,
+    "historical_global_index": 4115
+  },
+  {
+    "sample_id": "Legal 297BL Syllabus",
+    "question": "Based on the syllabus \"Legal 297BL Syllabus\", I work all day on Thursdays, will that impact my course?",
+    "occurrence": 0,
+    "historical_global_index": 4239
+  },
+  {
+    "sample_id": "L0",
+    "question": "Based on the syllabus \"L0\", What do I need to know to be successful at taking the exams?",
+    "occurrence": 0,
+    "historical_global_index": 4337
+  },
+  {
+    "sample_id": "L0",
+    "question": "Based on the syllabus \"L0\", What is the schedule and location of the course?",
+    "occurrence": 0,
+    "historical_global_index": 4350
+  }
+]

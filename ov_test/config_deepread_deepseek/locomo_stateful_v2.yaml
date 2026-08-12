@@ -1,0 +1,55 @@
+project_name: "RAG_Benchmark"
+dataset_name: "Locomo"
+
+adapter:
+  module: "src.adapters.locomo_adapter"
+  class_name: "LocomoAdapter"
+
+store:
+  type: "DeepRead"
+  agent_llm:
+    model: "${DEEPSEEK_MODEL}"
+    base_url: "${DEEPSEEK_BASE_URL}"
+    api_key: "${DEEPSEEK_API_KEY}"
+    reasoning_effort: "high"
+    request_timeout: 600
+  enable_vector: true
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  use_pymupdf: true
+  source_header_enabled: true
+  enable_session_pagination: true
+  agent_topk_max: 10
+  pagination_candidate_limit: 50
+  enable_retrieval_stagnation_hint: true
+  retrieval_stagnation_threshold: 3
+  embedding_api_key: "${EMBEDDING_API_KEY}"
+  embedding_base_url: "${EMBEDDING_BASE_URL}"
+  embedding_model: "${EMBEDDING_MODEL_NAME}"
+  agent_instructions:
+    - "LocoMo contains many people with the same first name across different conversations. Treat a search hit as a candidate until the surrounding speakers, session, and facts are consistent with the question; do not lock onto a document based on a first name alone."
+    - "For nicknames, place names, dates, titles, and other short literal answers, use regex_search when semantic or BM25 searches do not expose the exact phrase. After locating a promising conversation, prefer document-scoped search."
+    - "For questions requiring multiple events or items, continue searching across distinct sessions until all requested evidence is covered; repeated results are not evidence that the list is complete."
+    - "Use session dates for temporal questions and distinguish the date of the conversation from the date of the event described."
+
+execution:
+  # DeepSeek API 调用是主要瓶颈；8 个 QA 线程在 1540 题规模下兼顾吞吐和限流风险。
+  max_workers: 8
+  ingest_workers: 4
+  retrieval_topk: 1
+  max_queries: null
+  skip_ingestion: true
+
+paths:
+  raw_data: "Data/{dataset_name}/locomo10.json"
+  doc_output_dir: "Data/{dataset_name}/DeepRead/global_stateful_v2/processed_docs"
+  vector_store: "Data/{dataset_name}/DeepRead/global_stateful_v2/store_index"
+  output_dir: "Output/{dataset_name}/deepread_global_stateful_v2_deepseek"
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"

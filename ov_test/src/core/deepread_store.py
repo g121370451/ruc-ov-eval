@@ -5,6 +5,7 @@ import numpy as np
 import re
 import hashlib
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from tqdm import tqdm
@@ -12,7 +13,8 @@ from tqdm import tqdm
 from src.adapters.base import StandardDoc
 from src.core.monitor import BenchmarkMonitor
 from src.core.logger import get_logger
-from src.core.doubao_embedding_util import VolcengineEmbedder, embedding_token_tracker
+from src.core.doubao_embedding_util import VolcengineEmbedder
+from src.core.token_tracer_util import SimpleTokenTracker
 from src.core.token_tracer_util import token_tracker
 
 from DeepRead.tool import load_corpus
@@ -243,9 +245,9 @@ class DeepReadWrapper:
         然后构建 DocIndex。
         """
 
-        # TODO 完善并发处理逻辑（monitor在并发处理时起到展示作用）
         start_time = time.time()
-        embedding_token_tracker.reset()
+        # 入库会跨多个线程，需要共享且带锁的 tracker 才能正确汇总 token。
+        ingest_token_tracker = SimpleTokenTracker()
 
         if self.use_pymupdf:
             ocr_pipeline = None
@@ -256,36 +258,107 @@ class DeepReadWrapper:
                 vl_rec_server_url="http://127.0.0.1:8956/v1",
             )
 
-        embedder = VolcengineEmbedder(
-            model_name=self.embedding_model,
-            api_key=self.embedding_api_key,
-            api_base=self.embedding_base_url,
-            input_type="multimodal",
-            dimension=2048,
-        )
+        def make_embedder() -> VolcengineEmbedder:
+            # 每个入库任务使用独立 SDK client，避免假设第三方 HTTP client 线程安全。
+            # 只有 token tracker 在线程间共享，且其内部通过锁保护。
+            return VolcengineEmbedder(
+                model_name=self.embedding_model,
+                api_key=self.embedding_api_key,
+                api_base=self.embedding_base_url,
+                input_type="multimodal",
+                dimension=2048,
+                tracker=ingest_token_tracker,
+            )
 
-        for sample in tqdm(samples, desc="Ingesting Docs to DeepRead"):
+        worker_count = max(1, int(max_workers))
+
+        def ingest_sample(sample: StandardDoc) -> None:
             if monitor:
                 monitor.worker_start()
-
             try:
-                self._ingest_one(sample, ocr_pipeline, embedder)
+                self._ingest_one(sample, ocr_pipeline, make_embedder())
                 if monitor:
                     monitor.worker_end(success=True)
-            except Exception as e:
-                self.logger.error(f"Failed to ingest sample {sample.sample_id}: {e}")
+            except Exception:
                 if monitor:
                     monitor.worker_end(success=False)
-                raise e
+                raise
+
+        # Markdown 文档之间互不共享输出文件，可以安全地按文档并行入库。
+        # OCR pipeline 可能不支持并发，含 PDF 且启用 PaddleOCR 时保持串行。
+        contains_pdf = any(
+            os.path.splitext(path)[1].lower() == ".pdf"
+            for sample in samples
+            for path in sample.doc_paths
+        )
+        worker_count = self._safe_ingest_worker_count(
+            worker_count, contains_pdf=contains_pdf, ocr_enabled=ocr_pipeline is not None
+        )
+        if ocr_pipeline is not None and contains_pdf:
+            self.logger.info(
+                "DeepRead ingestion uses one worker because PaddleOCR is enabled for PDF input."
+            )
+
+        self.logger.info(
+            "DeepRead ingestion starting: docs=%d, workers=%d",
+            len(samples),
+            worker_count,
+        )
+        if worker_count == 1:
+            for sample in tqdm(samples, desc="Ingesting Docs to DeepRead"):
+                try:
+                    ingest_sample(sample)
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to ingest sample {sample.sample_id}: {e}"
+                    )
+                    raise
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                future_to_sample = {
+                    executor.submit(ingest_sample, sample): sample
+                    for sample in samples
+                }
+                with tqdm(
+                    total=len(future_to_sample),
+                    desc="Ingesting Docs to DeepRead",
+                ) as progress:
+                    for future in as_completed(future_to_sample):
+                        sample = future_to_sample[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to ingest sample {sample.sample_id}: {e}"
+                            )
+                            raise
+                        finally:
+                            progress.update(1)
             
         self.invalidate_doc_index_cache()
 
-        token_usage = embedding_token_tracker.get()
+        token_usage = ingest_token_tracker.get()
         return {
             "time": time.time() - start_time,
             "input_tokens": token_usage["input_tokens"],
             "output_tokens": token_usage["output_tokens"],
         }
+
+    @staticmethod
+    def _safe_ingest_worker_count(
+        requested_workers: int,
+        *,
+        contains_pdf: bool,
+        ocr_enabled: bool,
+    ) -> int:
+        """Return safe document-level ingestion concurrency.
+
+        PaddleOCR exposes a shared pipeline object whose thread safety is not guaranteed,
+        so OCR-backed PDF ingestion remains serial. Markdown and PyMuPDF paths are isolated
+        per document and may use the requested concurrency.
+        """
+        workers = max(1, int(requested_workers))
+        return 1 if contains_pdf and ocr_enabled else workers
     
     def _ingest_one(self, sample: StandardDoc, ocr_pipeline, embedder: VolcengineEmbedder):
         doc_paths = sample.doc_paths

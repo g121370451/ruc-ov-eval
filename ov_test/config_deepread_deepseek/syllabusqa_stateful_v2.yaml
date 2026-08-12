@@ -1,0 +1,55 @@
+project_name: "RAG_Benchmark"
+dataset_name: "SyllabusQA"
+
+adapter:
+  module: "src.adapters.syllabusqa_adapter"
+  class_name: "SyllabusQAAdapter"
+
+store:
+  type: "DeepRead"
+  agent_llm:
+    model: "${DEEPSEEK_MODEL}"
+    base_url: "${DEEPSEEK_BASE_URL}"
+    api_key: "${DEEPSEEK_API_KEY}"
+    reasoning_effort: "high"
+    request_timeout: 600
+  enable_vector: true
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  use_pymupdf: true
+  source_header_enabled: true
+  enable_session_pagination: true
+  agent_topk_max: 10
+  pagination_candidate_limit: 50
+  enable_retrieval_stagnation_hint: true
+  retrieval_stagnation_threshold: 3
+  embedding_api_key: "${EMBEDDING_API_KEY}"
+  embedding_base_url: "${EMBEDDING_BASE_URL}"
+  embedding_model: "${EMBEDDING_MODEL_NAME}"
+  agent_instructions:
+    - "A SyllabusQA question usually names the target syllabus or course. First search the exact syllabus identifier and normalized variants with underscores, hyphens, colons, and punctuation replaced by spaces; verify the Source Document node before using syllabus content."
+    - "After identifying the target syllabus, use document-scoped BM25, regex, or vector search. Do not answer from a different course merely because its policy wording is similar."
+    - "For dates, exam numbers, grading percentages, book titles, room numbers, and instructor names, use regex_search with short distinctive expressions when BM25 does not return the exact field."
+    - "If repeated full-corpus searches keep returning the same wrong courses, change the routing query to the shortest distinctive course identifier and inspect newly paginated documents instead of paraphrasing the policy question again."
+
+execution:
+  # 4358 个问题；10 个并发线程优先缩短总时长。遇到 DeepSeek 429 时降为 6。
+  max_workers: 10
+  ingest_workers: 4
+  retrieval_topk: 1
+  max_queries: null
+  skip_ingestion: true
+
+paths:
+  raw_data: "Data/{dataset_name}"
+  doc_output_dir: "Data/{dataset_name}/DeepRead/global_stateful_v2/processed_docs"
+  vector_store: "Data/{dataset_name}/DeepRead/global_stateful_v2/store_index"
+  output_dir: "Output/{dataset_name}/deepread_global_stateful_v2_deepseek"
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"

@@ -3,6 +3,7 @@ experiment_data/
 viking_store_locomo/
 .run_state.json
 *.json
+!ov_test/config_deepread_deepseek/case_sets/*.json
 ov.conf
 pageindex.conf
 .venv/

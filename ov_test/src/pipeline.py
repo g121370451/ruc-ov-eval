@@ -66,6 +66,18 @@ class BenchmarkPipeline:
         doc_dir = self.config['paths'].get('doc_output_dir')
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
+
+        # 稳定坏例清单先于文档转换与 embedding 校验，避免服务器数据版本
+        # 不一致时完成昂贵入库后才发现 case 无法匹配。
+        tasks = None
+        if self.config.get('paths', {}).get('task_cases'):
+            samples = self.adapter.load_and_transform()
+            tasks = self._prepare_tasks(samples)
+            self.logger.info(
+                "Stable task case preflight passed before ingestion: %d tasks",
+                len(tasks),
+            )
+
         # 0. 预处理数据集
         try:
             doc_info = self.adapter.data_prepare(doc_dir)
@@ -127,10 +139,10 @@ class BenchmarkPipeline:
             })
             # backup_store(store_path, self.logger)
         """Step 2 & 3: 数据入库 + 检索生成"""
-        # 1. 始终加载数据
-        samples = self.adapter.load_and_transform()
-        # 2. 准备 QA 任务
-        tasks = self._prepare_tasks(samples)
+        # 1. 加载数据并准备 QA 任务；稳定清单已在入库前完成该步骤。
+        if tasks is None:
+            samples = self.adapter.load_and_transform()
+            tasks = self._prepare_tasks(samples)
 
         # 断点恢复：从 records 中加载已完成的 task 结果
         completed_tasks = self.records.get("tasks", {})
@@ -290,6 +302,82 @@ class BenchmarkPipeline:
 
         worker_id = self.config['execution'].get('worker_id')
         num_workers = self.config['execution'].get('num_workers')
+
+        task_indices_path = self.config.get('paths', {}).get('task_indices')
+        if task_indices_path:
+            with open(task_indices_path, 'r', encoding='utf-8') as f:
+                selected_indices = json.load(f)
+            if not isinstance(selected_indices, list) or not all(
+                isinstance(index, int) and index >= 0 for index in selected_indices
+            ):
+                raise ValueError(
+                    "paths.task_indices must point to a JSON array of non-negative integers"
+                )
+            selected_set = set(selected_indices)
+            available_indices = {task['id'] for task in tasks}
+            missing_indices = sorted(selected_set - available_indices)
+            if missing_indices:
+                raise ValueError(
+                    f"task_indices contains unavailable global indices: {missing_indices[:10]}"
+                )
+            tasks = [task for task in tasks if task['id'] in selected_set]
+            self.logger.info(
+                "Selected %d tasks from task index file: %s",
+                len(tasks),
+                task_indices_path,
+            )
+
+        task_cases_path = self.config.get('paths', {}).get('task_cases')
+        if task_cases_path:
+            with open(task_cases_path, 'r', encoding='utf-8') as f:
+                selected_cases = json.load(f)
+            if not isinstance(selected_cases, list) or not all(
+                isinstance(case, dict)
+                and isinstance(case.get('sample_id'), str)
+                and isinstance(case.get('question'), str)
+                and isinstance(case.get('occurrence'), int)
+                and case['occurrence'] >= 0
+                for case in selected_cases
+            ):
+                raise ValueError(
+                    "paths.task_cases must point to a JSON array containing "
+                    "sample_id/question strings and a non-negative occurrence"
+                )
+
+            selected_keys = {
+                (case['sample_id'], case['question'], case['occurrence'])
+                for case in selected_cases
+            }
+            if len(selected_keys) != len(selected_cases):
+                raise ValueError("task_cases contains duplicate stable case keys")
+
+            occurrence_counts = {}
+            task_keys = {}
+            for task in tasks:
+                pair = (task['sample_id'], task['qa'].question)
+                occurrence = occurrence_counts.get(pair, 0)
+                occurrence_counts[pair] = occurrence + 1
+                task_keys[task['id']] = (*pair, occurrence)
+
+            available_keys = set(task_keys.values())
+            missing_cases = selected_keys - available_keys
+            if missing_cases:
+                examples = sorted(missing_cases)[:3]
+                raise ValueError(
+                    "task_cases contains cases unavailable in the current dataset: "
+                    f"{examples}"
+                )
+
+            tasks = [
+                task for task in tasks
+                if task_keys[task['id']] in selected_keys
+            ]
+            self.logger.info(
+                "Selected %d tasks from stable task case file: %s",
+                len(tasks),
+                task_cases_path,
+            )
+
         if worker_id is not None and num_workers is not None:
             tasks = tasks[worker_id::num_workers]
             self.logger.info(f"Shard {worker_id}/{num_workers}: {len(tasks)} tasks"

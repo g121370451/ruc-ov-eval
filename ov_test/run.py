@@ -125,12 +125,18 @@ def main():
     print(f"[Init] Resolving paths relative to Project Root: {PROJECT_ROOT}")
     dataset_name = config.get('dataset_name', 'UnknownDataset')
 
-    path_keys = ['raw_data', 'output_dir', 'vector_store', 'doc_output_dir']
+    path_keys = [
+        'raw_data', 'output_dir', 'vector_store', 'doc_output_dir',
+        'task_indices', 'task_cases',
+    ]
     for key in path_keys:
         if key in config.get('paths', {}):
             original = config['paths'][key]
             rendered_path = original.format(dataset_name=dataset_name)
-            resolved = resolve_path(rendered_path, PROJECT_ROOT)
+            # Task manifests are repository-owned experiment inputs; dataset and
+            # output paths remain relative to the workspace parent as before.
+            base_path = REPO_ROOT if key in {'task_indices', 'task_cases'} else PROJECT_ROOT
+            resolved = resolve_path(rendered_path, base_path)
             config['paths'][key] = resolved
             # print(f"  - {key}: {resolved}")
 

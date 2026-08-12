@@ -1,0 +1,698 @@
+[
+  {
+    "sample_id": "conv-26",
+    "question": "What events has Caroline participated in to help children?",
+    "occurrence": 0,
+    "historical_global_index": 34
+  },
+  {
+    "sample_id": "conv-26",
+    "question": "What kind of art does Caroline make?",
+    "occurrence": 0,
+    "historical_global_index": 43
+  },
+  {
+    "sample_id": "conv-26",
+    "question": "What are Melanie's pets' names?",
+    "occurrence": 0,
+    "historical_global_index": 52
+  },
+  {
+    "sample_id": "conv-26",
+    "question": "What symbols are important to Caroline?",
+    "occurrence": 0,
+    "historical_global_index": 56
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "What do Jon and Gina both have in common?",
+    "occurrence": 0,
+    "historical_global_index": 155
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "Which city have both Jean and John visited?",
+    "occurrence": 0,
+    "historical_global_index": 161
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "How did Gina promote her clothes store?",
+    "occurrence": 0,
+    "historical_global_index": 175
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "What does Jon's dance studio offer?",
+    "occurrence": 0,
+    "historical_global_index": 177
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "Which cities has Jon visited?",
+    "occurrence": 0,
+    "historical_global_index": 181
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "How long did it take for Jon to open his studio?",
+    "occurrence": 0,
+    "historical_global_index": 183
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "What did Gina receive from a dance contest?",
+    "occurrence": 0,
+    "historical_global_index": 213
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "How does Jon use the clipboard with a notepad attached to it?",
+    "occurrence": 0,
+    "historical_global_index": 219
+  },
+  {
+    "sample_id": "conv-30",
+    "question": "How does Gina describe the feeling that dance brings?",
+    "occurrence": 0,
+    "historical_global_index": 225
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What writing classes has Maria taken?",
+    "occurrence": 0,
+    "historical_global_index": 248
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What areas of the U.S. has John been to or is planning to go to?",
+    "occurrence": 0,
+    "historical_global_index": 254
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What desserts has Maria made?",
+    "occurrence": 0,
+    "historical_global_index": 256
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What has Maria done to feel closer to her faith?",
+    "occurrence": 0,
+    "historical_global_index": 259
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What causes does John feel passionate about supporting?",
+    "occurrence": 0,
+    "historical_global_index": 261
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What events is Maria planning for the homeless shelter funraiser?",
+    "occurrence": 0,
+    "historical_global_index": 262
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What shelters does Maria volunteer at?",
+    "occurrence": 0,
+    "historical_global_index": 263
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What area was hit by a flood?",
+    "occurrence": 0,
+    "historical_global_index": 275
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What activities has Maria done with her church friends?",
+    "occurrence": 0,
+    "historical_global_index": 277
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What exercises has John done?",
+    "occurrence": 0,
+    "historical_global_index": 280
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What causes has John done events for?",
+    "occurrence": 0,
+    "historical_global_index": 290
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "How many dogs has Maria adopted from the dog shelter she volunteers at?",
+    "occurrence": 0,
+    "historical_global_index": 295
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What did Maria donate to a homeless shelter in December 2023?",
+    "occurrence": 0,
+    "historical_global_index": 302
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "Where did John explore on a road trip last year?",
+    "occurrence": 0,
+    "historical_global_index": 320
+  },
+  {
+    "sample_id": "conv-41",
+    "question": "What was the focus of John's recent research and writing on his blog?",
+    "occurrence": 0,
+    "historical_global_index": 323
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What nickname does Nate use for Joanna?",
+    "occurrence": 0,
+    "historical_global_index": 399
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "Which of Joanna's screenplay were rejected from production companies?",
+    "occurrence": 0,
+    "historical_global_index": 408
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What book recommendations has Joanna given to Nate?",
+    "occurrence": 0,
+    "historical_global_index": 419
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "When did Joanna make a chocolate tart with raspberries?",
+    "occurrence": 0,
+    "historical_global_index": 426
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "How many of Joanna's writing have made it to the big screen?",
+    "occurrence": 0,
+    "historical_global_index": 437
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What animal do both Nate and Joanna like?",
+    "occurrence": 0,
+    "historical_global_index": 441
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What things has Nate reccomended to Joanna?",
+    "occurrence": 0,
+    "historical_global_index": 443
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What alternative career might Nate consider after gaming?",
+    "occurrence": 0,
+    "historical_global_index": 451
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "How many turtles does Nate have?",
+    "occurrence": 0,
+    "historical_global_index": 454
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "How many video game tournaments has Nate participated in?",
+    "occurrence": 0,
+    "historical_global_index": 463
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "How many tournaments has Nate won?",
+    "occurrence": 0,
+    "historical_global_index": 465
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What are the main ingredients of the ice cream recipe shared by Nate?",
+    "occurrence": 0,
+    "historical_global_index": 496
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What is Nate's favorite genre of movies?",
+    "occurrence": 0,
+    "historical_global_index": 498
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What kind of books does Nate enjoy?",
+    "occurrence": 0,
+    "historical_global_index": 499
+  },
+  {
+    "sample_id": "conv-42",
+    "question": "What does Joanna do while she writes?",
+    "occurrence": 0,
+    "historical_global_index": 554
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "what are John's goals with regards to his basketball career?",
+    "occurrence": 0,
+    "historical_global_index": 584
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Based on Tim's collections, what is a shop that he would enjoy visiting in New York city?",
+    "occurrence": 0,
+    "historical_global_index": 589
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Which geographical locations has Tim been to?",
+    "occurrence": 0,
+    "historical_global_index": 591
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "How many games has John mentioned winning?",
+    "occurrence": 0,
+    "historical_global_index": 601
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Which US cities does John mention visiting to Tim?",
+    "occurrence": 0,
+    "historical_global_index": 605
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "What could John do after his basketball career?",
+    "occurrence": 0,
+    "historical_global_index": 618
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "What outdoor activities does John enjoy?",
+    "occurrence": 0,
+    "historical_global_index": 619
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Which career-high performances did John achieve in 2023?",
+    "occurrence": 0,
+    "historical_global_index": 643
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "What would be a good hobby related to his travel dreams for Tim to pick up?",
+    "occurrence": 0,
+    "historical_global_index": 651
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Which Star Wars-related locations would Tim enjoy during his visit to Ireland?",
+    "occurrence": 0,
+    "historical_global_index": 654
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Which city is John excited to have a game at?",
+    "occurrence": 0,
+    "historical_global_index": 664
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "What new activity has Tim started learning in August 2023?",
+    "occurrence": 0,
+    "historical_global_index": 679
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Which basketball team does Tim support?",
+    "occurrence": 0,
+    "historical_global_index": 697
+  },
+  {
+    "sample_id": "conv-43",
+    "question": "Why do Tim and John find LeBron inspiring?",
+    "occurrence": 0,
+    "historical_global_index": 716
+  },
+  {
+    "sample_id": "conv-44",
+    "question": "What kind of indoor activities has Andrew pursued with his girlfriend?",
+    "occurrence": 0,
+    "historical_global_index": 764
+  },
+  {
+    "sample_id": "conv-44",
+    "question": "Where did Audrey get Pixie from?",
+    "occurrence": 0,
+    "historical_global_index": 780
+  },
+  {
+    "sample_id": "conv-44",
+    "question": "What is an indoor activity that Andrew would enjoy doing while make his dog happy?",
+    "occurrence": 0,
+    "historical_global_index": 781
+  },
+  {
+    "sample_id": "conv-44",
+    "question": "What has Andrew done with his dogs?",
+    "occurrence": 0,
+    "historical_global_index": 793
+  },
+  {
+    "sample_id": "conv-44",
+    "question": "What are the names of Andrew's dogs?",
+    "occurrence": 0,
+    "historical_global_index": 797
+  },
+  {
+    "sample_id": "conv-44",
+    "question": "What are the breeds of Audrey's dogs?",
+    "occurrence": 0,
+    "historical_global_index": 803
+  },
+  {
+    "sample_id": "conv-44",
+    "question": "Which national park could Audrey and Andrew be referring to in their conversations?",
+    "occurrence": 0,
+    "historical_global_index": 806
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "What are John's suspected health problems?",
+    "occurrence": 0,
+    "historical_global_index": 885
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "What are John and James' favorite games?",
+    "occurrence": 0,
+    "historical_global_index": 890
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "What kind of games has James tried to develop?",
+    "occurrence": 0,
+    "historical_global_index": 909
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "Did John and James study together?",
+    "occurrence": 0,
+    "historical_global_index": 918
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "Which new games did John start play during the course of the conversation with James?",
+    "occurrence": 0,
+    "historical_global_index": 936
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "What kind of programming-related events has John hosted?",
+    "occurrence": 0,
+    "historical_global_index": 939
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "When did John and his gaming friends organize the charity tournament?",
+    "occurrence": 0,
+    "historical_global_index": 944
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "What impresses John about Japan?",
+    "occurrence": 0,
+    "historical_global_index": 968
+  },
+  {
+    "sample_id": "conv-47",
+    "question": "What did John organize with his friends on May 8, 2022?",
+    "occurrence": 0,
+    "historical_global_index": 973
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "How many times has Jolene been to France?",
+    "occurrence": 0,
+    "historical_global_index": 1054
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "Why did Jolene sometimes put off doing yoga?",
+    "occurrence": 0,
+    "historical_global_index": 1058
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "What are Jolene's favorite books?",
+    "occurrence": 0,
+    "historical_global_index": 1060
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "How old is Jolene?",
+    "occurrence": 0,
+    "historical_global_index": 1071
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "What time management techniques do Deborah and Jolene use?",
+    "occurrence": 0,
+    "historical_global_index": 1074
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "When did Jolene finish her robotics project?",
+    "occurrence": 0,
+    "historical_global_index": 1080
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "How long did Jolene work on the robotics project given to her by her Professor?",
+    "occurrence": 0,
+    "historical_global_index": 1081
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "What projects is Jolene planning for next year?",
+    "occurrence": 0,
+    "historical_global_index": 1096
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "How old are Deborah's cats?",
+    "occurrence": 0,
+    "historical_global_index": 1098
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "Where did Jolene and her partner find a cool diving spot?",
+    "occurrence": 0,
+    "historical_global_index": 1112
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "Which locations does Deborah practice her yoga at?",
+    "occurrence": 0,
+    "historical_global_index": 1117
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "Which community activities have Deborah and Anna participated in?",
+    "occurrence": 0,
+    "historical_global_index": 1120
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "What gifts has Deborah received?",
+    "occurrence": 0,
+    "historical_global_index": 1121
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "Which countries has Deborah traveled to?",
+    "occurrence": 0,
+    "historical_global_index": 1122
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "What activities does Deborah pursue besides practicing and teaching yoga?",
+    "occurrence": 0,
+    "historical_global_index": 1123
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "What projects is Jolene planning for next year?",
+    "occurrence": 1,
+    "historical_global_index": 1128
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "How old are Deborah's cats?",
+    "occurrence": 1,
+    "historical_global_index": 1130
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "What did Jolene and Deb discuss as a helpful strategy for studying and time management?",
+    "occurrence": 0,
+    "historical_global_index": 1155
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "Why did Jolene decide to get a snake as a pet?",
+    "occurrence": 0,
+    "historical_global_index": 1174
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "Which yoga pose is Jolene a fan of for rest and calmness?",
+    "occurrence": 0,
+    "historical_global_index": 1191
+  },
+  {
+    "sample_id": "conv-48",
+    "question": "How old is Max?",
+    "occurrence": 0,
+    "historical_global_index": 1199
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What kinds of things did Evan have broken?",
+    "occurrence": 0,
+    "historical_global_index": 1227
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What significant event happened in Sam's life towards the end of summer 2023?",
+    "occurrence": 0,
+    "historical_global_index": 1250
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What kind of foods or recipes has Sam recommended to Evan?",
+    "occurrence": 0,
+    "historical_global_index": 1262
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "How many months lapsed between Sam's first and second doctor's appointment?",
+    "occurrence": 0,
+    "historical_global_index": 1265
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "How often does Sam get health checkups?",
+    "occurrence": 0,
+    "historical_global_index": 1269
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "Who was injured in Evan's family?",
+    "occurrence": 0,
+    "historical_global_index": 1275
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What personal health incidents does Evan face in 2023?",
+    "occurrence": 0,
+    "historical_global_index": 1280
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "Which new activity does Sam take up in October 2023?",
+    "occurrence": 0,
+    "historical_global_index": 1286
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What health scares did Sam and Evan experience?",
+    "occurrence": 0,
+    "historical_global_index": 1288
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "Which ailment does Sam have to face due to his weight?",
+    "occurrence": 0,
+    "historical_global_index": 1290
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What fun activity did Evan mention doing in July 2023?",
+    "occurrence": 0,
+    "historical_global_index": 1335
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What activity does Evan do to keep himself busy while healing his knee?",
+    "occurrence": 0,
+    "historical_global_index": 1341
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What electronics issue has been frustrating Sam lately?",
+    "occurrence": 0,
+    "historical_global_index": 1344
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "What does Evan mention about his progress at the gym to Sam?",
+    "occurrence": 0,
+    "historical_global_index": 1350
+  },
+  {
+    "sample_id": "conv-49",
+    "question": "Why had Evan been going through a tough time lately?",
+    "occurrence": 0,
+    "historical_global_index": 1353
+  },
+  {
+    "sample_id": "conv-50",
+    "question": "Which bands has Dave enjoyed listening to?",
+    "occurrence": 0,
+    "historical_global_index": 1385
+  },
+  {
+    "sample_id": "conv-50",
+    "question": "Which places or events has Calvin visited in Tokyo?",
+    "occurrence": 0,
+    "historical_global_index": 1401
+  },
+  {
+    "sample_id": "conv-50",
+    "question": "What is Dave's favorite activity?",
+    "occurrence": 0,
+    "historical_global_index": 1428
+  },
+  {
+    "sample_id": "conv-50",
+    "question": "What activities has Dave participated in with his friends?",
+    "occurrence": 0,
+    "historical_global_index": 1446
+  },
+  {
+    "sample_id": "conv-50",
+    "question": "Do all of Dave's car restoration projects go smoothly?",
+    "occurrence": 0,
+    "historical_global_index": 1448
+  },
+  {
+    "sample_id": "conv-50",
+    "question": "What kind of music has Calvin been creating lately?",
+    "occurrence": 0,
+    "historical_global_index": 1471
+  },
+  {
+    "sample_id": "conv-50",
+    "question": "What plans do Calvin and Dave have for when Calvin visits Boston?",
+    "occurrence": 0,
+    "historical_global_index": 1492
+  }
+]
