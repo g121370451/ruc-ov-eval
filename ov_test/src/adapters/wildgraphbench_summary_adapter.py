@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from collections import OrderedDict
 from pathlib import Path
@@ -31,16 +30,10 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def _link_or_copy(source: Path, destination: Path) -> None:
+def _text_to_markdown(source: Path, destination: Path) -> None:
+    """Stage Markdown-formatted WildGraphBench TXT without changing its content."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists():
-        if destination.is_file() and destination.stat().st_size == source.stat().st_size:
-            return
-        destination.unlink()
-    try:
-        os.link(source, destination)
-    except OSError:
-        shutil.copy2(source, destination)
+    shutil.copy2(source, destination)
 
 
 def _safe_relative_path(value: Any) -> Path:
@@ -103,12 +96,14 @@ class WildGraphBenchSummaryAdapter(BaseAdapter):
         destination_dir.mkdir(parents=True, exist_ok=True)
 
         expected_paths = {
-            _safe_relative_path(entry["relative_path"]).relative_to("reference_pages")
+            _safe_relative_path(entry["relative_path"])
+            .relative_to("reference_pages")
+            .with_suffix(".md")
             for entry in entries
         }
         actual_paths = {
             path.relative_to(destination_dir)
-            for path in destination_dir.rglob("*.txt")
+            for path in destination_dir.rglob("*.md")
             if path.is_file()
         }
         extra_paths = sorted(actual_paths - expected_paths)
@@ -116,7 +111,7 @@ class WildGraphBenchSummaryAdapter(BaseAdapter):
             preview = [path.as_posix() for path in extra_paths[:10]]
             suffix = "..." if len(extra_paths) > 10 else ""
             raise RuntimeError(
-                "Document staging directory contains TXT files outside the "
+                "Document staging directory contains Markdown files outside the "
                 f"WildGraphBench manifest: {preview}{suffix}. Use a clean, "
                 "scope-specific doc_output_dir."
             )
@@ -130,9 +125,9 @@ class WildGraphBenchSummaryAdapter(BaseAdapter):
             expected_size = entry.get("size_bytes")
             if expected_size is not None and source.stat().st_size != expected_size:
                 raise ValueError(f"WildGraphBench TXT size mismatch: {source}")
-            staged_path = manifest_path.relative_to("reference_pages")
+            staged_path = manifest_path.relative_to("reference_pages").with_suffix(".md")
             destination = destination_dir / staged_path
-            _link_or_copy(source, destination)
+            _text_to_markdown(source, destination)
             documents.append(
                 StandardDoc(sample_id=str(entry["id"]), doc_paths=[str(destination)])
             )
