@@ -113,7 +113,7 @@ enable_rerank: false
 当前 embedding 使用：
 
 ```env
-EMBEDDING_MODEL_NAME=doubao-embedding-vision-250615
+EMBEDDING_MODEL=doubao-embedding-vision-250615
 ```
 
 该模型走 Ark 的 `embeddings/multimodal` endpoint。虽然它是 vision embedding 模型，但在当前实验中只输入文本，不输入图片，因此仍符合非 VLM QA 的 text-only 约束。

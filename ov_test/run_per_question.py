@@ -5,6 +5,7 @@ import yaml
 import importlib
 from argparse import ArgumentParser
 from dotenv import load_dotenv
+from src.core.env_config import resolve_env_vars
 from src.core.logger import setup_logging
 # ==========================================
 # 1. 环境初始化
@@ -14,6 +15,8 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR) # 代码仓库根目录
 sys.path.append(REPO_ROOT)
 WORKSPACE_ROOT = os.path.dirname(REPO_ROOT)# 工作区根目录（Data和Output所在位置）
 PROJECT_ROOT = WORKSPACE_ROOT
+
+load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
 
 # 导入模块
 try:
@@ -46,28 +49,6 @@ def resolve_path(path_str, base_path):
         return path_str
     # 规范化路径 (处理 ../ 等符号)
     return os.path.normpath(os.path.join(base_path, path_str))
-
-def resolve_env_vars(obj):
-    """递归替换配置中的 ${VAR} 引用为环境变量值"""
-    if isinstance(obj, str):
-        def _replace(match):
-            expr = match.group(1)
-            if ":-" in expr:
-                var_name, default_value = expr.split(":-", 1)
-            else:
-                var_name, default_value = expr, None
-            value = os.environ.get(var_name)
-            if value is None:
-                if default_value is not None:
-                    return default_value
-                raise ValueError(f"环境变量 {var_name} 未设置，请检查 .env 文件")
-            return value
-        return re.sub(r'\$\{([^}]+)\}', _replace, obj)
-    elif isinstance(obj, dict):
-        return {k: resolve_env_vars(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [resolve_env_vars(item) for item in obj]
-    return obj
 
 def resolve_auto_output_dir(config):
     """自动递增实验输出目录编号，基于已解析的 output_dir 的父目录扫描"""
@@ -126,7 +107,6 @@ def main():
         return
 
     # --- B2. 加载 .env 并解析环境变量引用 ---
-    load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
     config = resolve_env_vars(config)
 
     # --- C. 路径修正 ---
@@ -192,10 +172,7 @@ def main():
             )
 
         # 3. LLM Client
-        api_key = os.environ.get(
-            config['llm'].get('api_key_env_var', ''),
-            config['llm'].get('api_key')
-        )
+        api_key = config['llm']['api_key']
         if not api_key:
             logger.warning("No API Key found in config or environment variables!")
 

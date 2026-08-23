@@ -83,7 +83,7 @@ store:
   # embedding 服务 key；必须在 .env 中配置 EMBEDDING_API_KEY。
   embedding_api_key: ${EMBEDDING_API_KEY}
   # embedding 模型名；doubao-embedding-vision 会自动走 multimodal embedding endpoint。
-  embedding_model_name: ${EMBEDDING_MODEL_NAME}
+  embedding_model_name: ${EMBEDDING_MODEL}
   # rerank 关闭时保持空字符串；开启时需要补对应服务地址。
   rerank_api_base: ""
   # rerank 关闭时保持空字符串；开启时需要补 key。
@@ -124,9 +124,9 @@ store:
   model_instances:
     JUDGE_LLM:
       type: remote
-      model: ${LLM_MODEL}
-      base_url: ${LLM_BASE_URL}
-      api_key: ${LLM_API_KEY}
+      model: ${VLM_MODEL}
+      base_url: ${VLM_BASE_URL}
+      api_key: ${VLM_API_KEY}
   # ui_settings: MoDora 原生 pipeline 到 LLM 实例的映射。
   # text_only_mode=true 时，视觉相关 pipeline 会被我们改造后的后端跳过或降级为文本路径。
   ui_settings:
@@ -148,7 +148,7 @@ store:
   pdf_text_empty_policy: warn
 # llm: ruc-ov-eval 评测/裁判等外层 LLM 配置，和 MoDora 内部 model_instances 分开。
 llm:
-  model: ${LLM_MODEL}
+  model: ${VLM_MODEL}
   temperature: 0
-  base_url: ${LLM_BASE_URL}
-  api_key: ${LLM_API_KEY}
+  base_url: ${VLM_BASE_URL}
+  api_key: ${VLM_API_KEY}

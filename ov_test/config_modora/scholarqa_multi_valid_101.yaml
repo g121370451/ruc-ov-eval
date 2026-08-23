@@ -1,0 +1,90 @@
+project_name: RAG_Benchmark
+dataset_name: scholarqa_multi_valid_101
+
+adapter:
+  module: src.adapters.scholarqa_multi_adapter
+  class_name: ScholarQAMultiAdapter
+
+execution:
+  max_workers: 5
+  ingest_workers: 1
+  retrieval_topk: 2
+  max_queries: null
+  skip_ingestion: false
+
+paths:
+  raw_data: Data/OVWikiBenchmark/datasets/ScholarQAMultiValid101/scholarqa_multi_valid_101.json
+  doc_output_dir: Data/OVWikiBenchmark/runtime/modora/scholarqa_multi_valid_101/source_docs
+  vector_store: Data/OVWikiBenchmark/runtime/modora/scholarqa_multi_valid_101/store_index
+  output_dir: Output/OVWikiBenchmark/scholarqa_multi_valid_101/modora_global/experiment_0001
+  log_file: Output/OVWikiBenchmark/scholarqa_multi_valid_101/modora_global/experiment_0001/benchmark.log
+
+store:
+  type: modora
+  modora_backend_path: modora/MoDora-backend
+  docs_dir: Data/OVWikiBenchmark/runtime/modora/scholarqa_multi_valid_101/source_docs
+  cache_dir: Data/OVWikiBenchmark/runtime/modora/scholarqa_multi_valid_101/cache
+  ingest_mode: python
+  preload_library: false
+  share_library_cache: true
+  force_full_library_retrieval: true
+  serial_queries: false
+  run_ocr: true
+  run_build_tree: true
+  resume: true
+  overwrite: false
+  delete_mode: cache_only
+  delete_vector_index: true
+  materialize_clean_unreferenced_pdfs: true
+  component_workers: 8
+  build_tree_concurrency: 8
+  enable_vector_search: true
+  enable_rerank: false
+  chroma_persist_path: Data/OVWikiBenchmark/runtime/modora/scholarqa_multi_valid_101/store_index
+  embedding_api_base: ${EMBEDDING_BASE_URL}
+  embedding_api_key: ${EMBEDDING_API_KEY}
+  embedding_model_name: ${EMBEDDING_MODEL}
+  rerank_api_base: ""
+  rerank_api_key: ""
+  rerank_model_name: ""
+  ocr_model: pdf_text
+  ocr_device: cpu
+  ocr_lang: en
+  allow_pdf_text_fallback: false
+  text_only_mode: true
+  enrich_non_text_components: false
+  visual_level_generation: false
+  visual_relevance_check: false
+  visual_reasoning: false
+  remote_llm_max_concurrency: null
+  remote_llm_per_query_concurrency: null
+  remote_llm_max_attempts: 4
+  remote_llm_base_delay_s: 1.0
+  remote_llm_max_delay_s: 30.0
+  model_instances:
+    JUDGE_LLM:
+      type: remote
+      model: ${VLM_MODEL}
+      base_url: ${VLM_BASE_URL}
+      api_key: ${VLM_API_KEY}
+  ui_settings:
+    schemaVersion: 3
+    pipelines:
+      enrichment:
+        modelInstance: JUDGE_LLM
+      levelGenerator:
+        modelInstance: JUDGE_LLM
+      metadataGenerator:
+        modelInstance: JUDGE_LLM
+      retriever:
+        modelInstance: JUDGE_LLM
+      qaService:
+        modelInstance: JUDGE_LLM
+  text_extract_workers: 8
+  pdf_text_empty_policy: warn
+
+llm:
+  model: ${VLM_MODEL}
+  temperature: 0
+  base_url: ${VLM_BASE_URL}
+  api_key: ${VLM_API_KEY}
