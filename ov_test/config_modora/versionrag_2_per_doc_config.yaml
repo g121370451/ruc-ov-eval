@@ -44,7 +44,7 @@ store:
   enable_rerank: false
   embedding_api_base: ${EMBEDDING_BASE_URL}
   embedding_api_key: ${EMBEDDING_API_KEY}
-  embedding_model_name: ${EMBEDDING_MODEL_NAME}
+  embedding_model_name: ${EMBEDDING_MODEL}
   embedding_index_batch_size: 32
   embedding_index_concurrency: 16
   rerank_api_base: ""
@@ -70,9 +70,9 @@ store:
   model_instances:
     JUDGE_LLM:
       type: remote
-      model: ep-20260612190309-tsv4t
-      base_url: ${LLM_BASE_URL}
-      api_key: ${LLM_API_KEY}
+      model: ${VLM_MODEL}
+      base_url: ${VLM_BASE_URL}
+      api_key: ${VLM_API_KEY}
   ui_settings:
     schemaVersion: 3
     pipelines:
@@ -89,7 +89,7 @@ store:
   text_extract_workers: 2
   pdf_text_empty_policy: warn
 llm:
-  model: ep-20260612190309-tsv4t
+  model: ${VLM_MODEL}
   temperature: 0
-  base_url: ${LLM_BASE_URL}
-  api_key: ${LLM_API_KEY}
+  base_url: ${VLM_BASE_URL}
+  api_key: ${VLM_API_KEY}

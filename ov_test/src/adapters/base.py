@@ -57,6 +57,7 @@ class StandardDoc:
     """Standardized sampleid to doc_path mapping structure"""
     sample_id:str
     doc_paths:list[str]
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class BaseAdapter(ABC):
