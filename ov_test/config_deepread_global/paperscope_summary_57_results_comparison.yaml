@@ -1,0 +1,34 @@
+project_name: "RAG_Benchmark"
+dataset_name: "paperscope_summary_57_results_comparison"
+
+adapter:
+  module: "src.adapters.paperscope_summary_adapter"
+  class_name: "PaperScopeSummaryAdapter"
+
+store:
+  type: "DeepRead"
+  enable_vector: true
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  use_pymupdf: true
+
+execution:
+  max_workers: 1
+  ingest_workers: 1
+  retrieval_topk: 2
+  max_queries: 2
+  skip_ingestion: false
+
+paths:
+  raw_data: "Data/OVWikiBenchmark/datasets/PaperScopeSummary57/summary_results_comparison.jsonl"
+  doc_output_dir: "Data/OVWikiBenchmark/runtime/deepread/paperscope_summary_57/processed_docs"
+  vector_store: "Data/OVWikiBenchmark/runtime/deepread/paperscope_summary_57/store_index"
+  output_dir: "Output/OVWikiBenchmark/paperscope_summary_57_results_comparison/deepread"
+
+llm:
+  model: "${VLM_MODEL}"
+  temperature: 0
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"
