@@ -15,11 +15,11 @@ store:
   use_pymupdf: true
 
 execution:
-  max_workers: 1
+  max_workers: 6
   ingest_workers: 1
   retrieval_topk: 2
-  max_queries: 2
-  skip_ingestion: false
+  max_queries: null
+  skip_ingestion: true
 
 paths:
   raw_data: "Data/OVWikiBenchmark/datasets/PaperScopeSummary57/summary_gap.jsonl"
