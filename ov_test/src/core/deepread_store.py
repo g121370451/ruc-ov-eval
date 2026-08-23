@@ -70,6 +70,7 @@ class DeepReadWrapper:
         embedding_base_url: str = "",
         embedding_model: str = "",
         embedding_dimension: int = 2048,
+        embedding_max_input_tokens: int = 4000,
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
@@ -93,6 +94,7 @@ class DeepReadWrapper:
         self.embedding_base_url = embedding_base_url
         self.embedding_model = embedding_model
         self.embedding_dimension = embedding_dimension
+        self.embedding_max_input_tokens = max(1, int(embedding_max_input_tokens))
 
         # Neighbor window
         try:
@@ -162,6 +164,9 @@ class DeepReadWrapper:
             embedding_base_url=embedding_base_url,
             embedding_model=embedding_model,
             embedding_dimension=embedding_dimension,
+            embedding_max_input_tokens=store_cfg.get(
+                "embedding_max_input_tokens", 4000
+            ),
         )
     
     def _pdf_to_markdown_pymupdf(self, pdf_path: str, md_path: str, sample_id: str):
@@ -198,6 +203,94 @@ class DeepReadWrapper:
         if not text or not self.enc:
             return 0
         return len(self.enc.encode(str(text)))
+
+    def _embedding_token_count(self, text: str) -> int:
+        """Count embedding input tokens, with a conservative character fallback."""
+        if not text:
+            return 0
+        if self.enc:
+            return len(self.enc.encode(text))
+        return len(text)
+
+    @staticmethod
+    def _natural_split_position(text: str, upper_bound: int) -> int:
+        """Prefer a readable boundary near the end of a token-safe prefix."""
+        lower_bound = max(1, upper_bound // 2)
+        separators = (
+            "\n\n", "\n", ". ", "。", "！", "？", "; ", "；", ", ", "，", " "
+        )
+        for separator in separators:
+            position = text.rfind(separator, lower_bound, upper_bound)
+            if position >= lower_bound:
+                return position + len(separator)
+        return upper_bound
+
+    def _split_embedding_text(self, text: str) -> List[str]:
+        """Split text into token-safe chunks for the embedding API."""
+        remaining = text.strip()
+        if not remaining:
+            return []
+
+        chunks: List[str] = []
+        limit = self.embedding_max_input_tokens
+        while self._embedding_token_count(remaining) > limit:
+            low, high = 1, len(remaining)
+            safe_end = 1
+            while low <= high:
+                middle = (low + high) // 2
+                if self._embedding_token_count(remaining[:middle]) <= limit:
+                    safe_end = middle
+                    low = middle + 1
+                else:
+                    high = middle - 1
+
+            split_at = self._natural_split_position(remaining, safe_end)
+            chunk = remaining[:split_at].strip()
+            if not chunk:
+                split_at = safe_end
+                chunk = remaining[:split_at].strip()
+            chunks.append(chunk)
+            remaining = remaining[split_at:].strip()
+
+        if remaining:
+            chunks.append(remaining)
+        return chunks
+
+    def _split_oversized_paragraphs(self, corpus: Dict[str, Any]) -> int:
+        """Replace oversized string paragraphs with token-safe consecutive chunks."""
+        split_paragraphs = 0
+        for node in corpus.get("nodes", []):
+            normalized: List[Any] = []
+            for paragraph in node.get("paragraphs", []):
+                if not isinstance(paragraph, str):
+                    normalized.append(paragraph)
+                    continue
+                chunks = self._split_embedding_text(paragraph)
+                if len(chunks) > 1:
+                    split_paragraphs += 1
+                normalized.extend(chunks)
+            node["paragraphs"] = normalized
+        return split_paragraphs
+
+    @staticmethod
+    def _document_name(path: str) -> str:
+        name = os.path.splitext(os.path.basename(path))[0]
+        name = re.sub(r'[\\/*?:"<>|]', '_', name)[:120]
+        return name if name else hashlib.sha1(path.encode("utf-8")).hexdigest()[:16]
+
+    def _sample_outputs_complete(self, sample: StandardDoc) -> bool:
+        if not sample.doc_paths:
+            return False
+        for path in sample.doc_paths:
+            name = self._document_name(path)
+            required_paths = (
+                os.path.join(self.store_path, f"{name}_corpus.json"),
+                os.path.join(self.store_path, f"{name}_emb.npy"),
+                os.path.join(self.store_path, f"{name}_idmap.json"),
+            )
+            if not all(os.path.isfile(output_path) for output_path in required_paths):
+                return False
+        return True
     
     def build_uri_map(self, doc_info: list[StandardDoc]) -> Dict[str, list]:
         """"""
@@ -208,8 +301,39 @@ class DeepReadWrapper:
         embedding_token_tracker.reset()
 
         ingested_samples: set = set()
+        prior_stats = {"time": 0, "input_tokens": 0, "output_tokens": 0}
         if checkpoint_manager:
-            ingested_samples = checkpoint_manager.get_ingested_samples()
+            checkpoint = checkpoint_manager.load_checkpoint()
+            if checkpoint:
+                state = checkpoint.get("execution_state", {})
+                ingested_samples = set(state.get("ingested_samples", []))
+                saved_stats = state.get("ingest_stats", {})
+                for key in prior_stats:
+                    prior_stats[key] = saved_stats.get(key, 0) or 0
+
+            samples_by_id = {sample.sample_id: sample for sample in samples}
+            valid_samples = {
+                sample_id
+                for sample_id in ingested_samples
+                if sample_id in samples_by_id
+                and self._sample_outputs_complete(samples_by_id[sample_id])
+            }
+            stale_samples = ingested_samples - valid_samples
+            if stale_samples:
+                self.logger.warning(
+                    "Ignoring %d stale ingestion checkpoint entries whose output "
+                    "files are incomplete.",
+                    len(stale_samples),
+                )
+            ingested_samples = valid_samples
+
+        def current_stats() -> Dict[str, Any]:
+            usage = embedding_token_tracker.get()
+            return {
+                "time": prior_stats["time"] + time.time() - start_time,
+                "input_tokens": prior_stats["input_tokens"] + usage["input_tokens"],
+                "output_tokens": prior_stats["output_tokens"] + usage["output_tokens"],
+            }
 
         if self.use_pymupdf:
             ocr_pipeline = None
@@ -243,21 +367,26 @@ class DeepReadWrapper:
 
                 if checkpoint_manager:
                     ingested_samples.add(sample.sample_id)
-                    checkpoint_manager.update_ingested_samples(ingested_samples, len(samples))
+                    checkpoint_manager.update_ingested_samples(
+                        ingested_samples,
+                        len(samples),
+                        ingest_stats=current_stats(),
+                    )
             except Exception as e:
                 self.logger.error(f"Failed to ingest sample {sample.sample_id}: {e}")
                 if monitor:
                     monitor.worker_end(success=False)
+                if checkpoint_manager:
+                    checkpoint_manager.update_ingested_samples(
+                        ingested_samples,
+                        len(samples),
+                        ingest_stats=current_stats(),
+                    )
                 raise e
             
         self.invalidate_doc_index_cache()
 
-        token_usage = embedding_token_tracker.get()
-        ingest_stats = {
-            "time": time.time() - start_time,
-            "input_tokens": token_usage["input_tokens"],
-            "output_tokens": token_usage["output_tokens"],
-        }
+        ingest_stats = current_stats()
 
         if checkpoint_manager:
             checkpoint_manager.update_ingested_samples(ingested_samples, len(samples), ingest_stats=ingest_stats)
@@ -271,9 +400,7 @@ class DeepReadWrapper:
             if not os.path.exists(path):
                 self.logger.warning(f"Document path does not exist: {path}")
                 return
-            name = os.path.splitext(os.path.basename(path))[0]
-            name = re.sub(r'[\\/*?:"<>|]', '_', name)[:120]
-            name = name if name else hashlib.sha1(path.encode('utf-8')).hexdigest()[:16]
+            name = self._document_name(path)
 
             merged_md_path = os.path.join(self.store_path, f"{name}.md")
             corpus_path = os.path.join(self.store_path, f"{name}_corpus.json")
@@ -339,6 +466,12 @@ class DeepReadWrapper:
 
             # --- Step 2: Markdown -> corpus ---
             corpus = parse_markdown_to_corpus(merged_md_path)
+            split_count = self._split_oversized_paragraphs(corpus)
+            if split_count:
+                self.logger.info(
+                    f"[{name}] Split {split_count} oversized paragraph(s) at "
+                    f"{self.embedding_max_input_tokens} embedding tokens"
+                )
 
             # --- Step 3: Embedding ---
             texts: List[str] = []
@@ -360,9 +493,26 @@ class DeepReadWrapper:
                     id_map.append({"node_id": nid, "paragraph_index": pi})
 
             if texts:
-                emb_list: List[List[float]] = [
-                    embedder.embed(text=t) 
-                    for t in tqdm(texts, desc=f"[{name}] Embedding", unit="chunk", leave=False)]
+                emb_list: List[List[float]] = []
+                progress = tqdm(
+                    texts,
+                    desc=f"[{name}] Embedding",
+                    unit="chunk",
+                    leave=False,
+                )
+                for chunk_index, text in enumerate(progress, 1):
+                    try:
+                        emb_list.append(embedder.embed(text=text))
+                    except Exception as exc:
+                        token_count = self._embedding_token_count(text)
+                        raise RuntimeError(
+                            f"[{name}] embedding chunk {chunk_index}/{len(texts)} "
+                            f"failed (tokens={token_count}, chars={len(text)}, "
+                            f"model={self.embedding_model}, "
+                            f"base_url={self.embedding_base_url}). Verify that the "
+                            "embedding Base URL, model name, and API key belong to "
+                            f"the same Volcengine service: {exc}"
+                        ) from exc
                 arr = np.asarray(emb_list, dtype=np.float16)
 
                 np.save(emb_path, arr)
@@ -376,6 +526,7 @@ class DeepReadWrapper:
                     "normalized": True,
                     "dtype": "float16",
                     "embed_base_url": self.embedding_base_url,
+                    "max_input_tokens": self.embedding_max_input_tokens,
                 }
 
             # --- Step 4: save corpus JSON ---

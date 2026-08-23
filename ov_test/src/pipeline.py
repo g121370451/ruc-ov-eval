@@ -67,17 +67,6 @@ class BenchmarkPipeline:
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
 
-        if self.resume:
-            ingested_samples = self.checkpoint_manager.get_ingested_samples()
-            if ingested_samples:
-                self.logger.info(f"Resuming ingestion. {len(ingested_samples)} samples already ingested.")
-                checkpoint_data = self.checkpoint_manager.load_checkpoint()
-                ingest_stats = (checkpoint_data or {}).get("execution_state", {}).get(
-                    "ingest_stats", {"time": 0, "input_tokens": 0, "output_tokens": 0})
-                self.metrics_summary["insertion"] = ingest_stats
-                self.logger.info("Ingestion already completed from checkpoint.")
-                return
-
         try:
             doc_info = self.adapter.data_prepare(doc_dir)
         except Exception as e:
@@ -86,10 +75,21 @@ class BenchmarkPipeline:
 
         import shutil
         store_path = self.config['paths'].get('vector_store', '')
-        if os.path.isdir(store_path):
-            shutil.rmtree(store_path)
-            os.makedirs(store_path, exist_ok=True)
-            self.logger.info(f"Store directory cleared: {store_path}")
+        if self.resume:
+            ingested_samples = self.checkpoint_manager.get_ingested_samples()
+            self.logger.info(
+                f"Resuming ingestion with {len(ingested_samples)} checkpointed "
+                "sample(s); existing store files will be preserved."
+            )
+            if store_path:
+                os.makedirs(store_path, exist_ok=True)
+        else:
+            self.checkpoint_manager.delete_checkpoint()
+            if os.path.isdir(store_path):
+                shutil.rmtree(store_path)
+            if store_path:
+                os.makedirs(store_path, exist_ok=True)
+                self.logger.info(f"Store directory initialized cleanly: {store_path}")
 
         ingest_workers = self.config['execution'].get('ingest_workers', 10)
         ingest_stats = self.db.ingest(

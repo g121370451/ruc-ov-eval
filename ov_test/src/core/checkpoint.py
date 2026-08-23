@@ -144,17 +144,15 @@ class CheckpointManager:
         checkpoint = self.load_checkpoint()
         completed_tasks = []
         total_tasks = 0
-        current_step = "ingestion"
         if checkpoint:
             old_state = checkpoint.get("execution_state", {})
             completed_tasks = old_state.get("completed_tasks", [])
             total_tasks = old_state.get("total_tasks", 0)
-            current_step = old_state.get("current_step", "ingestion")
             if not ingest_stats:
                 ingest_stats = old_state.get("ingest_stats", {})
 
         execution_state = {
-            "current_step": current_step,
+            "current_step": "ingestion",
             "completed_tasks": completed_tasks,
             "total_tasks": total_tasks,
             "ingested_samples": list(ingested_samples),
