@@ -1,0 +1,34 @@
+project_name: "RAG_Benchmark"
+dataset_name: "enterprise_rag_bench_selected_80"
+
+adapter:
+  module: "src.adapters.enterprise_rag_bench_adapter"
+  class_name: "EnterpriseRAGBenchAdapter"
+
+store:
+  type: "DeepRead"
+  enable_vector: true
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  use_pymupdf: true
+
+execution:
+  max_workers: 6
+  ingest_workers: 1
+  retrieval_topk: 2
+  max_queries: null
+  skip_ingestion: true
+
+paths:
+  raw_data: "Data/OVWikiBenchmark/datasets/EnterpriseRAGBenchSelected80/questions_selected_80.jsonl"
+  doc_output_dir: "Data/OVWikiBenchmark/runtime/deepread/enterprise_rag_bench_selected_80/processed_docs"
+  vector_store: "Data/OVWikiBenchmark/runtime/deepread/enterprise_rag_bench_selected_80/store_index"
+  output_dir: "Output/OVWikiBenchmark/enterprise_rag_bench_selected_80/deepread"
+
+llm:
+  model: "${VLM_MODEL}"
+  temperature: 0
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"
