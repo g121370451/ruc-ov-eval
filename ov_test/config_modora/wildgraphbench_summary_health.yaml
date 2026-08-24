@@ -58,7 +58,8 @@ store:
   allow_pdf_text_fallback: false
   query_trace_logging: false
   qa_include_schema_in_reasoning: true
-  qa_enable_fallback: false
+  qa_schema_scope: evidence_docs
+  qa_enable_fallback: true
   text_only_mode: true
   enrich_non_text_components: false
   visual_level_generation: false

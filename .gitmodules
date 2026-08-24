@@ -1,4 +1,4 @@
 [submodule "modora"]
 	path = modora
 	url = https://github.com/sponge225/MoDora.git
-	branch = modora
+	branch = modora-vector-schema-updates

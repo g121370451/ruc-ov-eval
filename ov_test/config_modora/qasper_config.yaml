@@ -106,8 +106,9 @@ store:
   query_trace_logging: false
   # 只把 evidence 命中文档的 schema 放进回答 prompt，避免整库结构撑爆上下文。
   qa_include_schema_in_reasoning: true
+  qa_schema_scope: evidence_docs
   # global 实验中禁用 whole-tree fallback，避免把全部文档树塞进 LLM。
-  qa_enable_fallback: false
+  qa_enable_fallback: true
   # true 表示适配非 VLM 模型，剥离图片输入并走文本提示词。
   text_only_mode: true
   # 是否用 VLM/LLM enrich 图片、表格、图表等非文本组件；text_only 下关闭。
