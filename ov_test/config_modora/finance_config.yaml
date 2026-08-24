@@ -12,7 +12,7 @@ execution:
   # QA 查询间并发数；开 embedding 时过大可能触发更多 embedding 请求和 Chroma 写入压力。
   max_workers: 6
   # 入库外层 worker 数；实际 OCR/text extraction/build_tree 还会受下面 MoDora 参数限制。
-  ingest_workers: 1
+  ingest_workers: 4
   # 最终保留给生成/评测的检索结果数量。
   retrieval_topk: 5
   # 调试时限制问题数量；null 表示跑完整数据集。

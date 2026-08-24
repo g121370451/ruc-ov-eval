@@ -6,7 +6,7 @@ adapter:
 execution:
   grouping_mode: doc_paths
   max_workers: 1
-  ingest_workers: 1
+  ingest_workers: 2
   retrieval_topk: 5
   max_queries: 10
   auto_output_dir: false
@@ -36,8 +36,8 @@ store:
   materialize_clean_unreferenced_pdfs: true
   ocr_batch_size: 1
   ocr_text_recognition_batch_size: 1
-  component_workers: 8
-  build_tree_concurrency: 8
+  component_workers: 2
+  build_tree_concurrency: 2
   enable_vector_search: true
   enable_rerank: false
   embedding_api_base: ${EMBEDDING_BASE_URL}
@@ -79,7 +79,7 @@ store:
         modelInstance: JUDGE_LLM
       qaService:
         modelInstance: JUDGE_LLM
-  text_extract_workers: 8
+  text_extract_workers: 2
   pdf_text_empty_policy: warn
 llm:
   model: ${VLM_MODEL}

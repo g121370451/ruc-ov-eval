@@ -7,9 +7,10 @@ adapter:
 
 execution:
   max_workers: 5
-  ingest_workers: 1
+  ingest_workers: 4
   retrieval_topk: 2
   max_queries: null
+  auto_output_dir: false
   skip_ingestion: false
 
 paths:
@@ -36,6 +37,8 @@ store:
   delete_mode: cache_only
   delete_vector_index: true
   materialize_clean_unreferenced_pdfs: true
+  ocr_batch_size: 1
+  ocr_text_recognition_batch_size: 1
   component_workers: 8
   build_tree_concurrency: 8
   enable_vector_search: true
@@ -44,6 +47,8 @@ store:
   embedding_api_base: ${EMBEDDING_BASE_URL}
   embedding_api_key: ${EMBEDDING_API_KEY}
   embedding_model_name: ${EMBEDDING_MODEL}
+  embedding_index_batch_size: 32
+  embedding_index_concurrency: 16
   rerank_api_base: ""
   rerank_api_key: ""
   rerank_model_name: ""
@@ -51,15 +56,18 @@ store:
   ocr_device: cpu
   ocr_lang: en
   allow_pdf_text_fallback: false
+  query_trace_logging: false
+  qa_include_schema_in_reasoning: true
+  qa_enable_fallback: false
   text_only_mode: true
   enrich_non_text_components: false
   visual_level_generation: false
   visual_relevance_check: false
   visual_reasoning: false
-  remote_llm_max_concurrency: null
-  remote_llm_per_query_concurrency: null
+  remote_llm_max_concurrency: 8
+  remote_llm_per_query_concurrency: 2
   remote_llm_max_attempts: 4
-  remote_llm_base_delay_s: 1.0
+  remote_llm_base_delay_s: 4.0
   remote_llm_max_delay_s: 30.0
   model_instances:
     JUDGE_LLM:
