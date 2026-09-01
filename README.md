@@ -218,3 +218,48 @@ uv run python ov_test/run.py # 运行完整评测（入库 -> 检索生成 -> �
 * **Active**: 当前并发工作的活跃线程数。
 * **Errs**: 执行中捕获异常或失败的任务总数。
 
+## 5. Microsoft GraphRAG Baseline
+
+项目已通过 `GraphRAGStoreWrapper` 接入 Microsoft GraphRAG。当前固定为
+`graphrag==3.0.9`：该版本包含 GraphRAG 3.x 的 Basic、Local、Global 和 DRIFT
+查询模式，并能在本项目的 Windows + Python 3.13 环境中直接安装。
+
+本次对比只运行 DRIFT，首轮使用以下两份配置：
+
+- `ov_test/config_graphrag/versionrag_drift.yaml`：VersionRAG DRIFT Search，
+  34 个文档（约 2.61 MB）、100 个问题，适合作为首轮完整测试。
+- `ov_test/config_graphrag/enterprise_rag_bench_selected_80_drift.yaml`：
+  EnterpriseRAGBench Selected 80 DRIFT Search，323 个文档、80 个问题。
+
+同步依赖并运行：
+
+```bash
+uv sync
+uv run python ov_test/run.py --config ov_test/config_graphrag/versionrag_drift.yaml
+uv run python ov_test/run.py --config ov_test/config_graphrag/enterprise_rag_bench_selected_80_drift.yaml
+```
+
+首轮建议把入库和问答分开，先核对索引成本再开始查询：
+
+```bash
+uv run python ov_test/run.py --config ov_test/config_graphrag/versionrag_drift.yaml --step ingest
+uv run python ov_test/run.py --config ov_test/config_graphrag/versionrag_drift.yaml --step geneval
+```
+
+GraphRAG 复用现有环境变量：
+
+- 生成模型：`VLM_MODEL`、`VLM_BASE_URL`、`VLM_API_KEY`。
+- Embedding 模型：`EMBEDDING_MODEL`、`EMBEDDING_BASE_URL`、
+  `EMBEDDING_API_KEY`、`EMBEDDING_DIMENSION`。
+- OpenAI-compatible 服务默认使用 `model_provider: openai`；可在
+  `store.graphrag.completion` 或 `store.graphrag.embedding` 中覆盖。
+
+DRIFT 查询在内部已调用 LLM 生成最终答案，因此不再经过公共生成器。
+结果中的 `latency_scope` 会标记为 `end_to_end`，Token 指标包含
+DRIFT primer、follow-up Local Search 和 reduce 等内部调用。DRIFT 不使用普通
+向量检索的 `retrieval_topk`，实验参数统一由 `drift_search` 配置。
+
+索引目录中会生成 `_index_manifest.json`，记录语料指纹、GraphRAG 版本、
+非敏感索引配置及入库指标。API Key 不会写入该文件。语料或索引
+配置变化时，需要使用新的 `vector_store` 目录或先执行删除阶段。
+

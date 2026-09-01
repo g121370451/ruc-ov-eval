@@ -200,6 +200,13 @@ def main():
                 store_path=config['paths']['vector_store'],
                 sql_agent_config=sql_agent_conf
             )
+        elif store_type == 'graphrag':
+            from src.core.graphrag_store import GraphRAGStoreWrapper
+            vector_store = GraphRAGStoreWrapper.from_config(
+                store_path=config['paths']['vector_store'],
+                llm_cfg=config.get('llm', {}),
+                store_cfg=store_cfg,
+            )
         else:
             from src.core.vector_store import VikingStoreWrapper
             vector_store = VikingStoreWrapper(store_path=config['paths']['vector_store'])

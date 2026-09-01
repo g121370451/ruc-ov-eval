@@ -15,6 +15,7 @@ from .core.monitor import BenchmarkMonitor
 from .core.metrics import MetricsCalculator
 from .core.judge_util import llm_grader
 from .core.checkpoint import CheckpointManager
+from .core.store_contract import store_provides_final_answer
 
 
 class BenchmarkPipeline:
@@ -187,9 +188,14 @@ class BenchmarkPipeline:
         }
         total = len(sorted_results)
         if total > 0:
+            latency_scopes = sorted({
+                r['retrieval'].get('latency_scope', 'retrieval_only')
+                for r in sorted_results
+            })
             self._update_report({
                     "Query Efficiency (Average Per Query)": {
                         "Average Retrieval Time (s)": sum(r['retrieval']['latency_sec'] for r in sorted_results) / total,
+                        "Latency Scope": latency_scopes[0] if len(latency_scopes) == 1 else latency_scopes,
                         "Average Input Tokens": sum(r['token_usage']['total_input_tokens'] for r in sorted_results) / total,
                         "Average Output Tokens": sum(r['token_usage']['llm_output_tokens'] for r in sorted_results) / total,
                     }
@@ -350,8 +356,9 @@ class BenchmarkPipeline:
             retrieve_in = getattr(search_res, 'retrieve_input_tokens', 0)
             retrieve_out = getattr(search_res, 'retrieve_output_tokens', 0)
 
-            if self.store_type == 'DeepRead':
-                ans = context_blocks[0] if context_blocks else ""
+            provides_final_answer = store_provides_final_answer(self.db)
+            if provides_final_answer:
+                ans = self.db.get_final_answer(search_res)
                 in_tokens = retrieve_in
                 out_tokens = retrieve_out
             else:
@@ -374,6 +381,12 @@ class BenchmarkPipeline:
                 "_global_index": task['id'], "sample_id": task['sample_id'], "question": qa.question,
                 "gold_answers": qa.gold_answers, "category": str(qa.category), "evidence": qa.evidence,
                 "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
+                              "latency_scope": "end_to_end" if provides_final_answer else "retrieval_only",
+                              "query_mode": getattr(search_res, 'query_mode', None),
+                              "internal_llm_calls": getattr(search_res, 'llm_calls', 0),
+                              "llm_calls_categories": getattr(search_res, 'llm_calls_categories', {}),
+                              "input_tokens_categories": getattr(search_res, 'input_tokens_categories', {}),
+                              "output_tokens_categories": getattr(search_res, 'output_tokens_categories', {}),
                               "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
                               "sql_queries": getattr(search_res, 'sql_queries', [])},
                 "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},

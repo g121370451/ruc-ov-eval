@@ -25,6 +25,7 @@ from tqdm import tqdm
 from src.pipeline import BenchmarkPipeline
 from src.adapters.base import StandardDoc, StandardSample
 from src.core.metrics import MetricsCalculator
+from src.core.store_contract import store_provides_final_answer
 
 
 #region debug-point kohaku-coredump-pipeline
@@ -142,6 +143,13 @@ class PerQuestionPipeline(BenchmarkPipeline):
             return SQLAgentStoreWrapper(
                 store_path=store_path,
                 sql_agent_config=sql_agent_conf
+            )
+        elif self.store_type == 'graphrag':
+            from src.core.graphrag_store import GraphRAGStoreWrapper
+            return GraphRAGStoreWrapper.from_config(
+                store_path=store_path,
+                llm_cfg=self.config.get('llm', {}),
+                store_cfg=self.store_config,
             )
         else:
             from src.core.vector_store import VikingStoreWrapper
@@ -388,9 +396,14 @@ class PerQuestionPipeline(BenchmarkPipeline):
             total = len(results_list)
             total_in = sum(r['token_usage']['total_input_tokens'] for r in results_list)
             total_out = sum(r['token_usage']['llm_output_tokens'] for r in results_list)
+            latency_scopes = sorted({
+                r['retrieval'].get('latency_scope', 'retrieval_only')
+                for r in results_list
+            })
             self._update_report({
                 "Query Efficiency (Average Per Query)": {
                     "Average Retrieval Time (s)": sum(r['retrieval']['latency_sec'] for r in results_list) / total,
+                    "Latency Scope": latency_scopes[0] if len(latency_scopes) == 1 else latency_scopes,
                     "Average Input Tokens": total_in / total,
                     "Average Output Tokens": total_out / total,
                     "Total Input Tokens": total_in,
@@ -534,9 +547,9 @@ class PerQuestionPipeline(BenchmarkPipeline):
             retrieved_texts, context_blocks, retrieved_uris = store.process_retrieval_results(res)
             recall = MetricsCalculator.check_recall(retrieved_texts, qa.evidence)
 
-            if self.store_type == 'DeepRead':
-                 # DeepRead 直接返回最终答案，无需再调用 LLM 生成
-                ans = context_blocks[0] if context_blocks else ""
+            provides_final_answer = store_provides_final_answer(store)
+            if provides_final_answer:
+                ans = store.get_final_answer(res)
                 in_tok = retrieve_in
                 out_tok = retrieve_out
             else:
@@ -561,6 +574,12 @@ class PerQuestionPipeline(BenchmarkPipeline):
                 "question": qa.question, "gold_answers": qa.gold_answers,
                 "category": str(qa.category), "evidence": qa.evidence,
                 "retrieval": {"latency_sec": latency, "uris": retrieved_uris,
+                              "latency_scope": "end_to_end" if provides_final_answer else "retrieval_only",
+                              "query_mode": getattr(res, 'query_mode', None),
+                              "internal_llm_calls": getattr(res, 'llm_calls', 0),
+                              "llm_calls_categories": getattr(res, 'llm_calls_categories', {}),
+                              "input_tokens_categories": getattr(res, 'input_tokens_categories', {}),
+                              "output_tokens_categories": getattr(res, 'output_tokens_categories', {}),
                               "recall_texts": retrieved_texts, "prompt_texts": context_blocks,
                               "sql_queries": getattr(res, 'sql_queries', [])},
                 "llm": {"final_answer": ans, "not_mentioned_reason": not_mentioned_reason},

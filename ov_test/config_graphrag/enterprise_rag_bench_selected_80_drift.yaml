@@ -1,0 +1,63 @@
+project_name: "RAG_Benchmark"
+dataset_name: "enterprise_rag_bench_selected_80"
+
+adapter:
+  module: "src.adapters.enterprise_rag_bench_adapter"
+  class_name: "EnterpriseRAGBenchAdapter"
+
+store:
+  type: "graphrag"
+  graphrag:
+    indexing_method: "standard"  # standard | fast
+    query_mode: "drift"          # 本实验只评估 DRIFT
+    community_level: 2
+    response_type: "Multiple Paragraphs"
+    concurrent_requests: 8
+    max_context_tokens: 12000
+    cache_enabled: true
+    context_block_max_chars: 12000
+    chunking:
+      type: "tokens"
+      size: 1200
+      overlap: 100
+      encoding_model: "o200k_base"
+    completion:
+      model_provider: "openai"
+    embedding:
+      model_provider: "openai"
+    drift_search:
+      data_max_tokens: 12000
+      reduce_temperature: 0
+      concurrency: 8
+      drift_k_followups: 20
+      primer_folds: 5
+      primer_llm_max_tokens: 12000
+      n_depth: 3
+      local_search_text_unit_prop: 0.9
+      local_search_community_prop: 0.1
+      local_search_top_k_mapped_entities: 10
+      local_search_top_k_relationships: 10
+      local_search_max_data_tokens: 12000
+
+execution:
+  # GraphRAG query engines already have internal concurrency. Keep outer query
+  # concurrency at one for reproducible latency and provider rate limiting.
+  max_workers: 1
+  ingest_workers: 1
+  # DRIFT 不使用普通向量检索的 top-k；该字段仅用于统一 Store 接口。
+  retrieval_topk: 10
+  max_queries: null
+  skip_ingestion: false
+
+paths:
+  raw_data: "Data/OVWikiBenchmark/datasets/EnterpriseRAGBenchSelected80/questions_selected_80.jsonl"
+  doc_output_dir: "Data/OVWikiBenchmark/runtime/enterprise_rag_bench_selected_80/graphrag/processed_docs"
+  vector_store: "Data/OVWikiBenchmark/runtime/enterprise_rag_bench_selected_80/graphrag/drift_store"
+  output_dir: "Output/OVWikiBenchmark/{dataset_name}/graphrag_drift"
+  log_file: "Output/OVWikiBenchmark/{dataset_name}/graphrag_drift/benchmark.log"
+
+llm:
+  model: "${VLM_MODEL}"
+  temperature: 0
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"

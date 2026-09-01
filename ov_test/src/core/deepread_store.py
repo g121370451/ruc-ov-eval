@@ -640,6 +640,13 @@ class DeepReadWrapper:
 
         return retrieved_texts, context_blocks, retrieved_uris
 
+    def get_final_answer(self, search_result: DeepReadResult) -> str:
+        """Return the answer generated internally by DeepRead."""
+
+        if not search_result.resources:
+            return ""
+        return search_result.resources[0].content
+
     def read_resource(self, uri: str) -> str:
         """读取 sample 对应的 Markdown 文件内容。uri 格式为 deepread://{sample_id}。"""
         sample_id = uri.replace("deepread://", "")
