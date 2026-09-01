@@ -21,6 +21,7 @@ import pandas as pd
 
 from src.adapters.base import StandardDoc
 from src.core.env_config import required_env
+from src.core.graphrag_progress import GraphRAGProgressCallbacks
 from src.core.logger import get_logger
 
 
@@ -123,6 +124,12 @@ class GraphRAGStoreWrapper:
         )
         self.context_block_max_chars = int(
             self.options.get("context_block_max_chars", 12000)
+        )
+        self.show_index_progress = bool(
+            self.options.get("show_index_progress", True)
+        )
+        self.progress_mininterval = float(
+            self.options.get("progress_mininterval", 0.5)
         )
 
         self._tables: dict[str, pd.DataFrame] = {}
@@ -515,6 +522,10 @@ class GraphRAGStoreWrapper:
             monitor.worker_start()
 
         before_metrics = self._collect_model_metrics()
+        progress_callbacks = GraphRAGProgressCallbacks(
+            enabled=self.show_index_progress,
+            mininterval=self.progress_mininterval,
+        )
         success = False
         try:
             from graphrag import api
@@ -523,6 +534,7 @@ class GraphRAGStoreWrapper:
                 api.build_index(
                     config=self._config,
                     method=self.indexing_method,
+                    callbacks=[progress_callbacks],
                     input_documents=documents,
                 )
             )
@@ -541,6 +553,7 @@ class GraphRAGStoreWrapper:
                 )
             success = True
         finally:
+            progress_callbacks.close()
             _release_graphrag_file_handlers(self.root)
             if monitor:
                 monitor.worker_end(success=success)

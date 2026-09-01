@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
+import yaml
 
 
 OV_TEST_ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +83,27 @@ class GraphRAGStoreTests(unittest.TestCase):
             self.assertNotIn("embedding-secret", settings)
             self.assertNotIn("nested-secret", settings)
             self.assertTrue(Path(store._config.output_storage.base_dir).is_absolute())
+
+    def test_drift_configs_apply_server_embedding_batch_limit(self):
+        config_dir = OV_TEST_ROOT / "config_graphrag"
+        paths = sorted(config_dir.glob("*_drift.yaml"))
+        self.assertEqual(len(paths), 2)
+
+        for path in paths:
+            config = yaml.safe_load(path.read_text(encoding="utf-8"))
+            options = config["store"]["graphrag"]
+            with tempfile.TemporaryDirectory() as tmp:
+                store = self._make_store(tmp, **options)
+            self.assertEqual(
+                store._config.embed_text.batch_size,
+                10,
+                msg=path.name,
+            )
+            self.assertEqual(
+                store._config.embed_text.batch_max_tokens,
+                8191,
+                msg=path.name,
+            )
 
     def test_prepare_documents_is_stable_and_preserves_source_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:

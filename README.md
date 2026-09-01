@@ -263,3 +263,22 @@ DRIFT primer、follow-up Local Search 和 reduce 等内部调用。DRIFT 不使�
 非敏感索引配置及入库指标。API Key 不会写入该文件。语料或索引
 配置变化时，需要使用新的 `vector_store` 目录或先执行删除阶段。
 
+入库时默认显示 GraphRAG 整体工作流和当前阶段的 `tqdm` 进度条。当前
+阶段进度条包含完成数、总数、速度、已耗时和 ETA。相关配置为：
+
+```yaml
+store:
+  graphrag:
+    concurrent_requests: 8
+    show_index_progress: true
+    progress_mininterval: 0.5
+    embed_text:
+      batch_size: 10
+      batch_max_tokens: 8191
+```
+
+`execution.ingest_workers: 1` 表示外层只启动一个 GraphRAG 索引任务；图提取、
+描述摘要和 Embedding 等内部阶段仍由 `concurrent_requests` 控制并发度。
+`embed_text.batch_size` 限制单次 Embedding 请求的文本条数，必须不大于
+服务端的 input 批量上限。
+
