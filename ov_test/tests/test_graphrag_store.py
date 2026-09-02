@@ -41,6 +41,22 @@ TEST_LLM = {
     "temperature": 0,
 }
 
+OV_WIKI_DRIFT_CONFIGS = {
+    "enterprise_rag_bench_selected_80_drift.yaml",
+    "mdaqa_first_100_drift.yaml",
+    "mudabench_complex_drift.yaml",
+    "mudabench_simple_drift.yaml",
+    "paperscope_summary_57_gap_drift.yaml",
+    "paperscope_summary_57_results_comparison_drift.yaml",
+    "paperscope_summary_57_trend_drift.yaml",
+    "paperscope_summary_93_gap_drift.yaml",
+    "paperscope_summary_93_results_comparison_drift.yaml",
+    "paperscope_summary_93_trend_drift.yaml",
+    "scholarqa_multi_valid_101_drift.yaml",
+    "wildgraphbench_summary_all_drift.yaml",
+    "wildgraphbench_summary_health_drift.yaml",
+}
+
 
 class _FakeEngine:
     async def search(self, query: str):
@@ -87,11 +103,19 @@ class GraphRAGStoreTests(unittest.TestCase):
     def test_drift_configs_apply_server_embedding_batch_limit(self):
         config_dir = OV_TEST_ROOT / "config_graphrag"
         paths = sorted(config_dir.glob("*_drift.yaml"))
-        self.assertEqual(len(paths), 2)
+        self.assertEqual(
+            {path.name for path in paths},
+            OV_WIKI_DRIFT_CONFIGS | {"versionrag_drift.yaml"},
+        )
 
         for path in paths:
             config = yaml.safe_load(path.read_text(encoding="utf-8"))
             options = config["store"]["graphrag"]
+            self.assertEqual(config["store"]["type"], "graphrag", msg=path.name)
+            self.assertEqual(options["query_mode"], "drift", msg=path.name)
+            self.assertEqual(options["indexing_method"], "standard", msg=path.name)
+            self.assertEqual(options["concurrent_requests"], 8, msg=path.name)
+            self.assertTrue(options["show_index_progress"], msg=path.name)
             with tempfile.TemporaryDirectory() as tmp:
                 store = self._make_store(tmp, **options)
             self.assertEqual(
@@ -103,6 +127,81 @@ class GraphRAGStoreTests(unittest.TestCase):
                 store._config.embed_text.batch_max_tokens,
                 8191,
                 msg=path.name,
+            )
+            self.assertEqual(
+                store._config.embed_text.names,
+                ["entity_description", "community_full_content"],
+                msg=path.name,
+            )
+            self.assertEqual(store._config.drift_search.n_depth, 3, msg=path.name)
+            self.assertEqual(
+                store._config.drift_search.drift_k_followups, 20, msg=path.name
+            )
+
+    def test_ov_wiki_drift_configs_match_existing_dataset_adapters_and_inputs(self):
+        graph_dir = OV_TEST_ROOT / "config_graphrag"
+        baseline_dir = OV_TEST_ROOT / "config_ov_wiki"
+        for graph_name in sorted(OV_WIKI_DRIFT_CONFIGS):
+            base_name = graph_name.removesuffix("_drift.yaml") + ".yaml"
+            graph_config = yaml.safe_load(
+                (graph_dir / graph_name).read_text(encoding="utf-8")
+            )
+            baseline_config = yaml.safe_load(
+                (baseline_dir / base_name).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                graph_config["dataset_name"],
+                baseline_config["dataset_name"],
+                msg=graph_name,
+            )
+            self.assertEqual(
+                graph_config["adapter"], baseline_config["adapter"], msg=graph_name
+            )
+            self.assertEqual(
+                graph_config["paths"]["raw_data"],
+                baseline_config["paths"]["raw_data"],
+                msg=graph_name,
+            )
+
+    def test_shared_corpora_use_one_graphrag_index(self):
+        graph_dir = OV_TEST_ROOT / "config_graphrag"
+
+        def index_paths(names):
+            configs = [
+                yaml.safe_load((graph_dir / name).read_text(encoding="utf-8"))
+                for name in names
+            ]
+            return {
+                (
+                    config["paths"]["doc_output_dir"],
+                    config["paths"]["vector_store"],
+                )
+                for config in configs
+            }
+
+        self.assertEqual(
+            len(
+                index_paths(
+                    [
+                        "mudabench_simple_drift.yaml",
+                        "mudabench_complex_drift.yaml",
+                    ]
+                )
+            ),
+            1,
+        )
+        for size in (57, 93):
+            self.assertEqual(
+                len(
+                    index_paths(
+                        [
+                            f"paperscope_summary_{size}_gap_drift.yaml",
+                            f"paperscope_summary_{size}_results_comparison_drift.yaml",
+                            f"paperscope_summary_{size}_trend_drift.yaml",
+                        ]
+                    )
+                ),
+                1,
             )
 
     def test_prepare_documents_is_stable_and_preserves_source_metadata(self):

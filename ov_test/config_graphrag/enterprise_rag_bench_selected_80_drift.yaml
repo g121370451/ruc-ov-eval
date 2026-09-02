@@ -30,6 +30,9 @@ store:
     # 当前 Embedding 服务单请求最多接收 10 条 input；GraphRAG 默认值 16
     # 会触发 InvalidParameter: max 10, got 16。
     embed_text:
+      names:
+        - "entity_description"
+        - "community_full_content"
       batch_size: 10
       batch_max_tokens: 8191
     drift_search:

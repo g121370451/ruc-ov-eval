@@ -65,3 +65,49 @@ uv run python ov_test/run.py \
 ```
 
 每份配置中的 `execution.max_queries` 只限制实际问答数量；`null` 表示全部。
+
+## GraphRAG DRIFT Baseline
+
+`ov_test/config_graphrag/` 已覆盖上述 13 组 OV-Wiki 固定实验。所有
+配置统一使用 Standard GraphRAG 入库和 DRIFT 查询，并复用同一批
+数据集 adapter：
+
+| 实验 | GraphRAG 配置 | Adapter |
+|---|---|---|
+| EnterpriseRAG-Bench Selected 80 | `enterprise_rag_bench_selected_80_drift.yaml` | `EnterpriseRAGBenchAdapter` |
+| MDA-QA First 100 | `mdaqa_first_100_drift.yaml` | `MDAQAAdapter` |
+| MuDABench Simple | `mudabench_simple_drift.yaml` | `MuDABenchAdapter` |
+| MuDABench Complex | `mudabench_complex_drift.yaml` | `MuDABenchAdapter` |
+| PaperScope 57 Gap | `paperscope_summary_57_gap_drift.yaml` | `PaperScopeSummaryAdapter` |
+| PaperScope 57 Results Comparison | `paperscope_summary_57_results_comparison_drift.yaml` | `PaperScopeSummaryAdapter` |
+| PaperScope 57 Trend | `paperscope_summary_57_trend_drift.yaml` | `PaperScopeSummaryAdapter` |
+| PaperScope 93 Gap | `paperscope_summary_93_gap_drift.yaml` | `PaperScopeSummaryAdapter` |
+| PaperScope 93 Results Comparison | `paperscope_summary_93_results_comparison_drift.yaml` | `PaperScopeSummaryAdapter` |
+| PaperScope 93 Trend | `paperscope_summary_93_trend_drift.yaml` | `PaperScopeSummaryAdapter` |
+| ScholarQA-Multi Valid 101 | `scholarqa_multi_valid_101_drift.yaml` | `ScholarQAMultiAdapter` |
+| WildGraphBench Summary All | `wildgraphbench_summary_all_drift.yaml` | `WildGraphBenchSummaryAdapter` |
+| WildGraphBench Summary Health | `wildgraphbench_summary_health_drift.yaml` | `WildGraphBenchSummaryAdapter` |
+
+入库和查询建议分开执行：
+
+```bash
+uv run python ov_test/run.py \
+  --config ov_test/config_graphrag/mdaqa_first_100_drift.yaml \
+  --step ingest
+
+uv run python ov_test/run.py \
+  --config ov_test/config_graphrag/mdaqa_first_100_drift.yaml \
+  --step geneval
+```
+
+下列问题 scope 共用语料和索引，只需使用其中一份配置执行
+`--step ingest`，其他配置直接执行 `--step geneval`：
+
+- `mudabench_simple` / `mudabench_complex`。
+- `paperscope_summary_57` 的 gap / results_comparison / trend。
+- `paperscope_summary_93` 的 gap / results_comparison / trend。
+
+每份 DRIFT 配置统一固定 `n_depth=3`、`drift_k_followups=20`、
+`primer_folds=5`和内部并发度 8。Embedding 单请求批量限制为 10，
+且只生成 DRIFT 必需的 `entity_description` 与
+`community_full_content` 两类向量。

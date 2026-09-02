@@ -1,15 +1,15 @@
 project_name: "RAG_Benchmark"
-dataset_name: "VersionRAG"
+dataset_name: "paperscope_summary_93_results_comparison"
 
 adapter:
-  module: "src.adapters.versionrag_adapter"
-  class_name: "VersionRAGAdapter"
+  module: "src.adapters.paperscope_summary_adapter"
+  class_name: "PaperScopeSummaryAdapter"
 
 store:
   type: "graphrag"
   graphrag:
-    indexing_method: "standard"  # standard | fast
-    query_mode: "drift"          # 本实验只评估 DRIFT
+    indexing_method: "standard"
+    query_mode: "drift"
     community_level: 2
     response_type: "Multiple Paragraphs"
     concurrent_requests: 8
@@ -27,8 +27,8 @@ store:
       model_provider: "openai"
     embedding:
       model_provider: "openai"
-    # 与 Enterprise 实验使用相同的服务端批量限制。
     embed_text:
+      # DRIFT 只使用实体描述和社区报告向量；服务端单请求最多 10 条 input。
       names:
         - "entity_description"
         - "community_full_content"
@@ -49,24 +49,24 @@ store:
       local_search_max_data_tokens: 12000
 
 execution:
-  # VersionRAG 只有 34 个文档（约 2.61 MB）和 100 个问题，首轮直接
-  # 使用共享全局索引；不要把 doc_output_dir 命名成 per_question。
+  # GraphRAG 内部处理并发为 8；外层查询保持串行，避免并发倍增。
   max_workers: 1
   ingest_workers: 1
-  # DRIFT 不使用普通向量检索的 top-k；该字段仅用于统一 Store 接口。
   retrieval_topk: 10
   max_queries: null
   skip_ingestion: false
 
 paths:
-  raw_data: "Data/{dataset_name}/data/test/evaluation_set.csv"
-  doc_output_dir: "Data/{dataset_name}/GraphRAG/processed_docs"
-  vector_store: "Data/{dataset_name}/GraphRAG/drift_store"
-  output_dir: "Output/{dataset_name}/graphrag_drift"
-  log_file: "Output/{dataset_name}/graphrag_drift/benchmark.log"
+  raw_data: "Data/OVWikiBenchmark/datasets/PaperScopeSummary93/summary_results_comparison.jsonl"
+  # 同一文档规模的 trend/gap/results_comparison 共用一份索引。
+  doc_output_dir: "Data/OVWikiBenchmark/runtime/paperscope_summary_93/graphrag/processed_docs"
+  vector_store: "Data/OVWikiBenchmark/runtime/paperscope_summary_93/graphrag/drift_store"
+  output_dir: "Output/OVWikiBenchmark/{dataset_name}/graphrag_drift"
+  log_file: "Output/OVWikiBenchmark/{dataset_name}/graphrag_drift/benchmark.log"
 
 llm:
   model: "${VLM_MODEL}"
   temperature: 0
   base_url: "${VLM_BASE_URL}"
   api_key: "${VLM_API_KEY}"
+
