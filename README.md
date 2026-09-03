@@ -282,3 +282,10 @@ store:
 `embed_text.batch_size` 限制单次 Embedding 请求的文本条数，必须不大于
 服务端的 input 批量上限。
 
+PDF 数据集由评测适配层先提取文本，再以 DataFrame 传给 GraphRAG。
+主解析器是 PyMuPDF（正式模块名 `pymupdf`），使用按页排序的纯文本提取。
+MuPDF 对不规范 PDF 的可恢复诊断不再无文件名地直接输出，而是带具体
+文件路径写入 benchmark 日志。PyMuPDF 抛异常或返回空文本时会自动
+回退到 `pypdf`；两种解析器都失败才中止入库。每篇 PDF 使用的解析器、
+页数、诊断数和回退原因会写入 GraphRAG 的 `_index_manifest.json`。
+

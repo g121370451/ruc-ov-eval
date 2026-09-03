@@ -23,6 +23,7 @@ from src.adapters.base import StandardDoc
 from src.core.env_config import required_env
 from src.core.graphrag_progress import GraphRAGProgressCallbacks
 from src.core.logger import get_logger
+from src.core.pdf_text import extract_pdf_text, summarize_diagnostics
 
 
 _SUPPORTED_QUERY_MODES = {"basic", "local", "global", "drift"}
@@ -318,21 +319,40 @@ class GraphRAGStoreWrapper:
 
         return len(encode(model=self._tokenizer_model_id, text=str(text)))
 
-    @staticmethod
-    def _read_document(path: Path) -> str:
+    def _read_document(self, path: Path) -> tuple[str, dict[str, Any]]:
         suffix = path.suffix.lower()
         if suffix in {".txt", ".md", ".markdown"}:
-            return path.read_text(encoding="utf-8").strip()
+            return path.read_text(encoding="utf-8").strip(), {
+                "text_extractor": "utf-8",
+            }
         if suffix == ".pdf":
-            import fitz
-
-            with fitz.open(path) as document:
-                return "\n\n".join(page.get_text() for page in document).strip()
+            result = extract_pdf_text(path)
+            if result.diagnostics:
+                self.logger.warning(
+                    "PyMuPDF recovered PDF syntax issues: file=%s diagnostics=%d [%s]",
+                    path,
+                    len(result.diagnostics),
+                    summarize_diagnostics(result.diagnostics),
+                )
+            if result.fallback_reason:
+                self.logger.warning(
+                    "PDF extraction fell back to pypdf: file=%s reason=%s",
+                    path,
+                    result.fallback_reason,
+                )
+            return result.text, {
+                "text_extractor": result.backend,
+                "page_count": result.page_count,
+                "pdf_diagnostic_count": len(result.diagnostics),
+                "pdf_fallback_reason": result.fallback_reason,
+            }
 
         from markitdown import MarkItDown
 
         converted = MarkItDown().convert(str(path))
-        return str(converted.text_content or "").strip()
+        return str(converted.text_content or "").strip(), {
+            "text_extractor": "markitdown",
+        }
 
     def _prepare_input_documents(
         self, samples: Iterable[StandardDoc]
@@ -350,7 +370,7 @@ class GraphRAGStoreWrapper:
                 seen_paths.add(path_key)
                 if not path.is_file():
                     raise FileNotFoundError(f"GraphRAG input document not found: {path}")
-                content = self._read_document(path)
+                content, extraction_metadata = self._read_document(path)
                 if not content:
                     raise ValueError(f"GraphRAG input document has no extractable text: {path}")
 
@@ -364,6 +384,7 @@ class GraphRAGStoreWrapper:
                 raw_data = {
                     "sample_id": str(sample.sample_id),
                     "source_path": str(path),
+                    **extraction_metadata,
                 }
                 rows.append(
                     {
@@ -381,6 +402,7 @@ class GraphRAGStoreWrapper:
                         "sample_id": str(sample.sample_id),
                         "source_path": str(path),
                         "content_sha256": content_sha256,
+                        **extraction_metadata,
                     }
                 )
 
@@ -421,6 +443,13 @@ class GraphRAGStoreWrapper:
             "embedding_call_args": _redact_secrets(embedding.call_args),
             "embedding_dimension": self._config.vector_store.vector_size,
             "tokenizer_backend": "litellm/openai/gpt-4o-mini",
+            "pdf_extraction": {
+                "primary": "pymupdf",
+                "primary_version": package_version("PyMuPDF"),
+                "fallback": "pypdf",
+                "fallback_version": package_version("pypdf"),
+                "sort": True,
+            },
             "chunking": self._config.chunking.model_dump(mode="json"),
             "extract_graph": self._config.extract_graph.model_dump(mode="json"),
             "extract_graph_nlp": self._config.extract_graph_nlp.model_dump(

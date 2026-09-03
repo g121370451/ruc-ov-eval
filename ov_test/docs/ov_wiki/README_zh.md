@@ -111,3 +111,9 @@ uv run python ov_test/run.py \
 `primer_folds=5`和内部并发度 8。Embedding 单请求批量限制为 10，
 且只生成 DRIFT 必需的 `entity_description` 与
 `community_full_content` 两类向量。
+
+MDA-QA、MuDABench 和 PaperScope 的 PDF 会在进入 GraphRAG 前由 PyMuPDF
+提取成纯文本。不规范 PDF 的可恢复 MuPDF 诊断会被捕获并带文件名
+写入日志，不再直接刷屏。PyMuPDF 抛异常或未提取到文本时，
+会自动使用 `pypdf` 重试；两种解析器都返回空文本时，该 PDF
+很可能是扫描件，需要先 OCR。

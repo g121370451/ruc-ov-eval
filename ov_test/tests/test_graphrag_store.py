@@ -223,6 +223,28 @@ class GraphRAGStoreTests(unittest.TestCase):
             self.assertEqual(first.loc[0, "raw_data"]["sample_id"], "sample")
             self.assertEqual(sources[0]["source_path"], str(document.resolve()))
 
+    def test_prepare_pdf_records_extractor_and_page_count(self):
+        import pymupdf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            document = root / "document.pdf"
+            with pymupdf.open() as pdf:
+                page = pdf.new_page()
+                page.insert_text((72, 72), "PDF source for GraphRAG")
+                pdf.save(document)
+            store = self._make_store(str(root / "store"))
+
+            frame, _, sources = store._prepare_input_documents(
+                [StandardDoc(sample_id="sample", doc_paths=[str(document)])]
+            )
+
+        self.assertIn("PDF source for GraphRAG", frame.loc[0, "text"])
+        self.assertEqual(frame.loc[0, "raw_data"]["text_extractor"], "pymupdf")
+        self.assertEqual(frame.loc[0, "raw_data"]["page_count"], 1)
+        self.assertEqual(sources[0]["text_extractor"], "pymupdf")
+        self.assertEqual(sources[0]["page_count"], 1)
+
     def test_retrieve_returns_direct_answer_context_and_internal_usage(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self._make_store(tmp, query_mode="drift")
