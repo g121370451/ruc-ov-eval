@@ -250,9 +250,12 @@ GraphRAG 复用现有环境变量：
 
 - 生成模型：`VLM_MODEL`、`VLM_BASE_URL`、`VLM_API_KEY`。
 - Embedding 模型：`EMBEDDING_MODEL`、`EMBEDDING_BASE_URL`、
-  `EMBEDDING_API_KEY`、`EMBEDDING_DIMENSION`。
-- OpenAI-compatible 服务默认使用 `model_provider: openai`；可在
-  `store.graphrag.completion` 或 `store.graphrag.embedding` 中覆盖。
+  `EMBEDDING_API_KEY`、`EMBEDDING_PROVIDER`、`EMBEDDING_DIMENSION`。
+- 生成服务仍可在 `store.graphrag.completion` 中覆盖 provider。Embedding
+  默认完全读取上述 `EMBEDDING_*` 变量；`doubao-embedding-vision-*` 会自动
+  使用 Ark SDK 的 `/embeddings/multimodal` 接口，其他模型继续使用
+  LiteLLM 的普通 embedding 接口。不要把视觉 embedding 模型直接交给
+  OpenAI-compatible `/embeddings`，服务端会返回“不支持此 API”。
 
 DRIFT 查询在内部已调用 LLM 生成最终答案，因此不再经过公共生成器。
 结果中的 `latency_scope` 会标记为 `end_to_end`，Token 指标包含
@@ -280,7 +283,9 @@ store:
 `execution.ingest_workers: 1` 表示外层只启动一个 GraphRAG 索引任务；图提取、
 描述摘要和 Embedding 等内部阶段仍由 `concurrent_requests` 控制并发度。
 `embed_text.batch_size` 限制单次 Embedding 请求的文本条数，必须不大于
-服务端的 input 批量上限。
+服务端的 input 批量上限。豆包视觉 embedding 接口每次只接受一个逻辑
+多模态输入，适配器会把 GraphRAG 的 batch 拆成逐文本请求，并由 GraphRAG
+外层并发调度。
 
 PDF 数据集由评测适配层先提取文本，再以 DataFrame 传给 GraphRAG。
 主解析器是 PyMuPDF（正式模块名 `pymupdf`），使用按页排序的纯文本提取。

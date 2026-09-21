@@ -112,6 +112,13 @@ uv run python ov_test/run.py \
 且只生成 DRIFT 必需的 `entity_description` 与
 `community_full_content` 两类向量。
 
+GraphRAG 的 embedding 模型、provider、API 地址、密钥和维度统一从
+`ov_test/.env` 的 `EMBEDDING_*` 变量读取。若模型名为
+`doubao-embedding-vision-*`，适配器自动调用 Ark 的多模态 embedding
+接口，并把 GraphRAG batch 拆成逐文本请求；不能用普通 `/embeddings`
+接口调用该模型。索引完成后，查询阶段会核对 manifest 中的模型、维度、
+API 地址和后端类型，避免用不同 embedding 查询已有向量库。
+
 ### GraphRAG 社区查询消融
 
 以下配置复用对应数据集已完成的 Standard GraphRAG 索引，但查询时切换为

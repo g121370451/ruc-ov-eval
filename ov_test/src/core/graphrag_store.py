@@ -15,19 +15,37 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Unpack
 
 import pandas as pd
+from openai.types.create_embedding_response import Usage
+from openai.types.embedding import Embedding
 
+from graphrag_llm.embedding.embedding import LLMEmbedding
+from graphrag_llm.middleware import with_middleware_pipeline
+from graphrag_llm.types import LLMEmbeddingResponse
 from src.adapters.base import StandardDoc
+from src.core.doubao_embedding_util import VolcengineEmbedder
 from src.core.env_config import required_env
 from src.core.graphrag_progress import GraphRAGProgressCallbacks
 from src.core.logger import get_logger
 from src.core.pdf_text import extract_pdf_text, summarize_diagnostics
+from src.core.token_tracer_util import ThreadLocalTokenTracker
+
+if TYPE_CHECKING:
+    from graphrag_cache import Cache, CacheKeyCreator
+
+    from graphrag_llm.config import ModelConfig
+    from graphrag_llm.metrics import MetricsProcessor, MetricsStore
+    from graphrag_llm.rate_limit import RateLimiter
+    from graphrag_llm.retry import Retry
+    from graphrag_llm.tokenizer import Tokenizer
+    from graphrag_llm.types import LLMEmbeddingArgs, Metrics
 
 
 _SUPPORTED_QUERY_MODES = {"basic", "local", "global", "drift"}
 _SUPPORTED_INDEXING_METHODS = {"standard", "fast"}
+_VOLCENGINE_MULTIMODAL_EMBEDDING_TYPE = "volcengine_multimodal"
 _TABLES_BY_MODE = {
     "basic": ("text_units",),
     "local": (
@@ -71,6 +89,142 @@ class GraphRAGResult:
     llm_calls_categories: dict[str, int] = field(default_factory=dict)
     input_tokens_categories: dict[str, int] = field(default_factory=dict)
     output_tokens_categories: dict[str, int] = field(default_factory=dict)
+
+
+class _GraphRAGVolcengineEmbedding(LLMEmbedding):
+    """Expose the existing ``VolcengineEmbedder`` through GraphRAG's interface."""
+
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        model_config: "ModelConfig",
+        tokenizer: "Tokenizer",
+        metrics_store: "MetricsStore",
+        metrics_processor: "MetricsProcessor | None" = None,
+        rate_limiter: "RateLimiter | None" = None,
+        retrier: "Retry | None" = None,
+        cache: "Cache | None" = None,
+        cache_key_creator: "CacheKeyCreator",
+        embedding_dimension: int,
+        **_kwargs: Any,
+    ) -> None:
+        self._model_id = model_id
+        self._model_config = model_config
+        self._tokenizer = tokenizer
+        self._metrics_store = metrics_store
+        self._track_metrics = metrics_processor is not None
+        self._dimension = int(embedding_dimension)
+        if self._dimension <= 0:
+            raise ValueError("embedding_dimension must be greater than zero")
+
+        self._embedding, self._embedding_async = with_middleware_pipeline(
+            model_config=model_config,
+            model_fn=self._base_embedding,
+            async_model_fn=self._base_embedding_async,
+            request_type="embedding",
+            cache=cache,
+            cache_key_creator=cache_key_creator,
+            tokenizer=tokenizer,
+            metrics_processor=metrics_processor,
+            rate_limiter=rate_limiter,
+            retrier=retrier,
+        )
+
+    def _base_embedding(self, **kwargs: Any) -> LLMEmbeddingResponse:
+        kwargs.pop("metrics", None)
+        inputs = kwargs.pop("input")
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        texts = [str(value) for value in inputs]
+        requested_dimension = kwargs.pop("dimensions", None)
+        if requested_dimension is not None and int(requested_dimension) != self._dimension:
+            raise ValueError(
+                f"Requested embedding dimension {requested_dimension} does not match "
+                f"the configured vector store dimension {self._dimension}"
+            )
+
+        tracker = ThreadLocalTokenTracker()
+        embedder = VolcengineEmbedder(
+            model_name=self._model_config.model,
+            api_key=self._model_config.api_key,
+            api_base=self._model_config.api_base,
+            dimension=self._dimension,
+            input_type="multimodal",
+            tracker=tracker,
+        )
+        try:
+            vectors = embedder.embed_batch(texts)
+        finally:
+            close = getattr(embedder.client, "close", None)
+            if callable(close):
+                close()
+
+        for vector in vectors:
+            if len(vector) != self._dimension:
+                raise ValueError(
+                    f"Embedding model {self._model_config.model!r} returned "
+                    f"{len(vector)} dimensions; expected {self._dimension}"
+                )
+        prompt_tokens = int(tracker.get()["input_tokens"])
+        return LLMEmbeddingResponse(
+            object="list",
+            data=[
+                Embedding(object="embedding", embedding=vector, index=index)
+                for index, vector in enumerate(vectors)
+            ],
+            model=self._model_config.model,
+            usage=Usage(prompt_tokens=prompt_tokens, total_tokens=prompt_tokens),
+        )
+
+    async def _base_embedding_async(self, **kwargs: Any) -> LLMEmbeddingResponse:
+        return await asyncio.to_thread(self._base_embedding, **kwargs)
+
+    def embedding(
+        self, /, **kwargs: Unpack["LLMEmbeddingArgs"]
+    ) -> LLMEmbeddingResponse:
+        request_metrics: Metrics | None = kwargs.pop("metrics", None) or {}
+        if not self._track_metrics:
+            request_metrics = None
+        try:
+            return self._embedding(metrics=request_metrics, **kwargs)
+        finally:
+            if request_metrics:
+                self._metrics_store.update_metrics(metrics=request_metrics)
+
+    async def embedding_async(
+        self, /, **kwargs: Unpack["LLMEmbeddingArgs"]
+    ) -> LLMEmbeddingResponse:
+        request_metrics: Metrics | None = kwargs.pop("metrics", None) or {}
+        if not self._track_metrics:
+            request_metrics = None
+        try:
+            return await self._embedding_async(metrics=request_metrics, **kwargs)
+        finally:
+            if request_metrics:
+                self._metrics_store.update_metrics(metrics=request_metrics)
+
+    @property
+    def metrics_store(self) -> "MetricsStore":
+        return self._metrics_store
+
+    @property
+    def tokenizer(self) -> "Tokenizer":
+        return self._tokenizer
+
+
+def _register_volcengine_multimodal_embedding() -> None:
+    from graphrag_llm.embedding.embedding_factory import (
+        embedding_factory,
+        register_embedding,
+    )
+
+    if _VOLCENGINE_MULTIMODAL_EMBEDDING_TYPE not in embedding_factory:
+        register_embedding(
+            embedding_type=_VOLCENGINE_MULTIMODAL_EMBEDDING_TYPE,
+            embedding_initializer=_GraphRAGVolcengineEmbedding,
+            scope="singleton",
+        )
 
 
 class GraphRAGStoreWrapper:
@@ -194,6 +348,30 @@ class GraphRAGStoreWrapper:
         embedding_dimension = int(
             embedding_options.get("dimension") or required_env("EMBEDDING_DIMENSION")
         )
+        configured_embedding_provider = str(
+            embedding_options.get("model_provider")
+            or os.getenv("EMBEDDING_PROVIDER")
+            or "openai"
+        )
+        embedding_type = str(embedding_options.get("type") or "").strip()
+        is_doubao_vision_embedding = embedding_model.lower().startswith(
+            "doubao-embedding-vision"
+        )
+        if not embedding_type:
+            embedding_type = (
+                _VOLCENGINE_MULTIMODAL_EMBEDDING_TYPE
+                if is_doubao_vision_embedding
+                else "litellm"
+            )
+        if embedding_type == _VOLCENGINE_MULTIMODAL_EMBEDDING_TYPE:
+            _register_volcengine_multimodal_embedding()
+            # Old GraphRAG YAMLs used "openai" to access Ark's compatible API.
+            # The custom backend calls Ark directly, so record the actual provider.
+            embedding_provider = str(
+                os.getenv("EMBEDDING_PROVIDER") or "volcengine"
+            )
+        else:
+            embedding_provider = configured_embedding_provider
 
         completion_call_args = {"temperature": llm_cfg.get("temperature", 0)}
         completion_call_args.update(completion_options.get("call_args", {}))
@@ -258,14 +436,13 @@ class GraphRAGStoreWrapper:
             },
             "embedding_models": {
                 "default_embedding_model": {
-                    "type": "litellm",
-                    "model_provider": str(
-                        embedding_options.get("model_provider", "openai")
-                    ),
+                    "type": embedding_type,
+                    "model_provider": embedding_provider,
                     "model": embedding_model,
                     "api_key": embedding_api_key,
                     "api_base": embedding_api_base,
                     "call_args": embedding_call_args,
+                    "embedding_dimension": embedding_dimension,
                     "retry": retry,
                     "metrics": metrics,
                 }
@@ -436,6 +613,7 @@ class GraphRAGStoreWrapper:
             ).hexdigest(),
             "completion_call_args": _redact_secrets(completion.call_args),
             "embedding_model_provider": embedding.model_provider,
+            "embedding_backend": embedding.type,
             "embedding_model": embedding.model,
             "embedding_api_base_sha256": hashlib.sha256(
                 str(embedding.api_base or "").encode("utf-8")
@@ -473,6 +651,37 @@ class GraphRAGStoreWrapper:
             raise ValueError(
                 f"Invalid GraphRAG index manifest: {self.manifest_path}"
             ) from exc
+
+    def _validate_query_embedding_settings(self, manifest: dict[str, Any]) -> None:
+        """Reject queries whose embedding model cannot match the stored vectors."""
+
+        stored = manifest.get("index_settings")
+        if not isinstance(stored, dict):
+            # Backward compatibility for very old manifests without settings.
+            return
+        current = self._public_index_settings()
+        compared_keys = (
+            "embedding_model",
+            "embedding_dimension",
+            "embedding_api_base_sha256",
+            "embedding_backend",
+        )
+        mismatches = {
+            key: (stored.get(key), current.get(key))
+            for key in compared_keys
+            if key in stored and stored.get(key) != current.get(key)
+        }
+        if mismatches:
+            details = ", ".join(
+                f"{key}: index={old!r}, current={new!r}"
+                for key, (old, new) in mismatches.items()
+            )
+            raise RuntimeError(
+                "Current embedding configuration does not match the existing "
+                f"GraphRAG index ({details}). Restore the embedding settings used "
+                "for indexing, or rebuild the vector_store; query and index vectors "
+                "must come from the same model and backend."
+            )
 
     def _required_output_paths(self, mode: Optional[str] = None) -> list[Path]:
         selected_mode = mode or self.query_mode
@@ -759,6 +968,7 @@ class GraphRAGStoreWrapper:
             raise RuntimeError(
                 f"GraphRAG index is missing or incomplete at {self.store_path}; run ingestion first"
             )
+        self._validate_query_embedding_settings(manifest)
         missing = [path for path in self._required_output_paths() if not path.is_file()]
         if missing:
             raise FileNotFoundError(

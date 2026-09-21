@@ -25,8 +25,9 @@ store:
       encoding_model: "o200k_base"
     completion:
       model_provider: "openai"
-    embedding:
-      model_provider: "openai"
+    # 模型、密钥、地址和 provider 均从 ov_test/.env 的 EMBEDDING_* 读取；
+    # doubao-embedding-vision-* 会自动使用 Ark 多模态 embedding 接口。
+    embedding: {}
     embed_text:
       # DRIFT 只使用实体描述和社区报告向量；服务端单请求最多 10 条 input。
       names:

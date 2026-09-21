@@ -25,8 +25,9 @@ store:
       encoding_model: "o200k_base"
     completion:
       model_provider: "openai"
-    embedding:
-      model_provider: "openai"
+    # 模型、密钥、地址和 provider 均从 ov_test/.env 的 EMBEDDING_* 读取；
+    # doubao-embedding-vision-* 会自动使用 Ark 多模态 embedding 接口。
+    embedding: {}
     # 当前 Embedding 服务单请求最多接收 10 条 input；GraphRAG 默认值 16
     # 会触发 InvalidParameter: max 10, got 16。
     embed_text:
