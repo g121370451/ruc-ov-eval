@@ -663,8 +663,6 @@ class GraphRAGStoreWrapper:
         compared_keys = (
             "embedding_model",
             "embedding_dimension",
-            "embedding_api_base_sha256",
-            "embedding_backend",
         )
         mismatches = {
             key: (stored.get(key), current.get(key))
