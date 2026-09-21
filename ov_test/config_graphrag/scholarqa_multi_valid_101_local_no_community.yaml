@@ -1,0 +1,67 @@
+project_name: "RAG_Benchmark"
+dataset_name: "scholarqa_multi_valid_101"
+
+adapter:
+  module: "src.adapters.scholarqa_multi_adapter"
+  class_name: "ScholarQAMultiAdapter"
+
+store:
+  type: "graphrag"
+  graphrag:
+    indexing_method: "standard"
+    # Community ablation: bypass DRIFT/global community-report routing and use
+    # entity-guided Local Search only.
+    query_mode: "local"
+    community_level: 2
+    response_type: "Multiple Paragraphs"
+    concurrent_requests: 8
+    show_index_progress: true
+    progress_mininterval: 0.5
+    max_context_tokens: 12000
+    cache_enabled: true
+    context_block_max_chars: 12000
+    chunking:
+      type: "tokens"
+      size: 1200
+      overlap: 100
+      encoding_model: "o200k_base"
+    completion:
+      model_provider: "openai"
+    embedding:
+      model_provider: "openai"
+    # Keep the embedding set identical to the completed DRIFT index so this
+    # query-only ablation can reuse it. Local Search reads entity_description;
+    # community_full_content remains stored but is not queried.
+    embed_text:
+      names:
+        - "entity_description"
+        - "community_full_content"
+      batch_size: 10
+      batch_max_tokens: 8191
+    local_search:
+      text_unit_prop: 0.9
+      community_prop: 0.0
+      top_k_entities: 10
+      top_k_relationships: 10
+      max_context_tokens: 12000
+
+execution:
+  max_workers: 1
+  ingest_workers: 1
+  retrieval_topk: 10
+  max_queries: null
+  # The completed Standard GraphRAG index is shared with the DRIFT condition.
+  skip_ingestion: true
+
+paths:
+  raw_data: "Data/OVWikiBenchmark/datasets/ScholarQAMultiValid101/scholarqa_multi_valid_101.json"
+  doc_output_dir: "Data/OVWikiBenchmark/runtime/scholarqa_multi_valid_101/graphrag/processed_docs"
+  vector_store: "Data/OVWikiBenchmark/runtime/scholarqa_multi_valid_101/graphrag/drift_store"
+  output_dir: "Output/OVWikiBenchmark/{dataset_name}/graphrag_local_no_community"
+  log_file: "Output/OVWikiBenchmark/{dataset_name}/graphrag_local_no_community/benchmark.log"
+
+llm:
+  model: "${VLM_MODEL}"
+  temperature: 0
+  base_url: "${VLM_BASE_URL}"
+  api_key: "${VLM_API_KEY}"

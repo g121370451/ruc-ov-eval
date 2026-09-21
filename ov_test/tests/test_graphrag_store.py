@@ -138,6 +138,60 @@ class GraphRAGStoreTests(unittest.TestCase):
                 store._config.drift_search.drift_k_followups, 20, msg=path.name
             )
 
+    def test_local_no_community_configs_reuse_drift_indexes(self):
+        config_dir = OV_TEST_ROOT / "config_graphrag"
+        prefixes = (
+            "enterprise_rag_bench_selected_80",
+            "scholarqa_multi_valid_101",
+        )
+
+        for prefix in prefixes:
+            drift = yaml.safe_load(
+                (config_dir / f"{prefix}_drift.yaml").read_text(encoding="utf-8")
+            )
+            ablation_path = config_dir / f"{prefix}_local_no_community.yaml"
+            ablation = yaml.safe_load(ablation_path.read_text(encoding="utf-8"))
+            options = ablation["store"]["graphrag"]
+
+            self.assertEqual(options["query_mode"], "local", msg=ablation_path.name)
+            self.assertEqual(
+                options["local_search"]["community_prop"],
+                0.0,
+                msg=ablation_path.name,
+            )
+            self.assertEqual(
+                options["local_search"]["text_unit_prop"],
+                0.9,
+                msg=ablation_path.name,
+            )
+            self.assertTrue(
+                ablation["execution"]["skip_ingestion"], msg=ablation_path.name
+            )
+            self.assertEqual(
+                ablation["paths"]["vector_store"],
+                drift["paths"]["vector_store"],
+                msg=ablation_path.name,
+            )
+            self.assertEqual(
+                ablation["paths"]["raw_data"],
+                drift["paths"]["raw_data"],
+                msg=ablation_path.name,
+            )
+            self.assertNotEqual(
+                ablation["paths"]["output_dir"],
+                drift["paths"]["output_dir"],
+                msg=ablation_path.name,
+            )
+
+            with tempfile.TemporaryDirectory() as tmp:
+                store = self._make_store(tmp, **options)
+            self.assertEqual(store.query_mode, "local", msg=ablation_path.name)
+            self.assertEqual(
+                store._config.local_search.community_prop,
+                0.0,
+                msg=ablation_path.name,
+            )
+
     def test_ov_wiki_drift_configs_match_existing_dataset_adapters_and_inputs(self):
         graph_dir = OV_TEST_ROOT / "config_graphrag"
         baseline_dir = OV_TEST_ROOT / "config_ov_wiki"

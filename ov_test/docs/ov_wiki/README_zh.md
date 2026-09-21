@@ -112,6 +112,29 @@ uv run python ov_test/run.py \
 且只生成 DRIFT 必需的 `entity_description` 与
 `community_full_content` 两类向量。
 
+### GraphRAG 社区查询消融
+
+以下配置复用对应数据集已完成的 Standard GraphRAG 索引，但查询时切换为
+Local Search，并设置 `community_prop=0.0`：
+
+- `enterprise_rag_bench_selected_80_local_no_community.yaml`
+- `scholarqa_multi_valid_101_local_no_community.yaml`
+
+该条件不使用社区报告作为查询上下文，也不运行 DRIFT primer 或 follow-up
+递归；它仍使用实体描述向量将问题映射到实体，并检索关系和原始 text units。
+因此它是“查询阶段无社区”的消融，不是“入库阶段不生成社区”。它与完整
+DRIFT 条件共用 `vector_store`，只需执行 `--step geneval`，不要重新入库：
+
+```bash
+uv run python ov_test/run.py \
+  --config ov_test/config_graphrag/enterprise_rag_bench_selected_80_local_no_community.yaml \
+  --step geneval
+
+uv run python ov_test/run.py \
+  --config ov_test/config_graphrag/scholarqa_multi_valid_101_local_no_community.yaml \
+  --step geneval
+```
+
 MDA-QA、MuDABench 和 PaperScope 的 PDF 会在进入 GraphRAG 前由 PyMuPDF
 提取成纯文本。不规范 PDF 的可恢复 MuPDF 诊断会被捕获并带文件名
 写入日志，不再直接刷屏。PyMuPDF 抛异常或未提取到文本时，
