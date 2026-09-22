@@ -29,7 +29,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$SCRIPT_DIR/ov_test"
 
-PYTHON_BIN="${PYTHON_BIN:-python}"
+# 解释器：优先 PYTHON_BIN 环境变量 > 本仓库 .venv（uv sync 生成）> python3 > python
+if [ -z "${PYTHON_BIN:-}" ]; then
+    for cand in "$SCRIPT_DIR/.venv/bin/python" "$(command -v python3 || true)" "$(command -v python || true)"; do
+        if [ -n "$cand" ] && [ -x "$cand" ]; then
+            PYTHON_BIN="$cand"
+            break
+        fi
+    done
+fi
+if [ -z "${PYTHON_BIN:-}" ]; then
+    echo "[FATAL] 找不到 Python 解释器。请先 uv sync，或用 PYTHON_BIN=/path/to/python 指定。" >&2
+    exit 1
+fi
+echo "[Init] PYTHON_BIN=$PYTHON_BIN"
 ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/ov_test/.env}"
 ALL_DATASETS=(clapnq financebench hotpotqa locomo qasper syllabusqa)
 LOG_DIR="$WORKSPACE_ROOT/Output/logs"
