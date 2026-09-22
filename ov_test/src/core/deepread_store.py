@@ -64,6 +64,12 @@ class DeepReadWrapper:
         neighbor_window: str = "1,-1",
         max_rounds: int = 50,
         use_pymupdf: bool = False,
+        agent_instructions: Optional[List[str]] = None,
+        embedding_api_key: Optional[str] = None,
+        embedding_base_url: Optional[str] = None,
+        embedding_model: str = "doubao-embedding-vision-250615",
+        enable_document_inventory_search: bool = False,
+        document_inventory_tool_path: str = "",
     ):
         self.store_path = store_path
         self.doc_output_dir = doc_output_dir
@@ -81,6 +87,40 @@ class DeepReadWrapper:
         self.enable_semantic = enable_semantic
         self.max_rounds = max_rounds
         self.use_pymupdf = use_pymupdf
+        self.agent_instructions = list(agent_instructions or [])
+        self.embedding_api_key = embedding_api_key or api_key
+        self.embedding_base_url = (
+            embedding_base_url or "https://ark.cn-beijing.volces.com/api/v3"
+        ).rstrip("/")
+        self.embedding_model = embedding_model
+
+        # AI 生成工具注入点（消融运行时最小回填）：从给定路径动态加载候选工具的 run()
+        self.enable_document_inventory_search = enable_document_inventory_search
+        self.document_inventory_tool_path = str(document_inventory_tool_path or "")
+        self.document_inventory_tool = None
+        if self.enable_document_inventory_search:
+            if not self.document_inventory_tool_path:
+                raise ValueError(
+                    "enable_document_inventory_search requires document_inventory_tool_path"
+                )
+            import importlib.util
+            candidate_path = os.path.abspath(self.document_inventory_tool_path)
+            if not os.path.isfile(candidate_path):
+                raise FileNotFoundError(
+                    f"Generated document inventory tool not found: {candidate_path}"
+                )
+            module_name = "deepread_generated_inventory_" + hashlib.sha1(
+                candidate_path.encode("utf-8")
+            ).hexdigest()[:12]
+            spec = importlib.util.spec_from_file_location(module_name, candidate_path)
+            if spec is None or spec.loader is None:
+                raise RuntimeError(f"Cannot load generated tool: {candidate_path}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            generated_run = getattr(module, "run", None)
+            if not callable(generated_run):
+                raise RuntimeError("Generated tool must export callable run")
+            self.document_inventory_tool = generated_run
 
         # Neighbor window
         try:
@@ -125,6 +165,18 @@ class DeepReadWrapper:
             neighbor_window=str(neighbor_window),
             max_rounds=store_cfg.get("max_rounds", 12),
             use_pymupdf=store_cfg.get("use_pymupdf", False),
+            agent_instructions=store_cfg.get("agent_instructions") or [],
+            embedding_api_key=store_cfg.get("embedding_api_key"),
+            embedding_base_url=store_cfg.get("embedding_base_url"),
+            embedding_model=store_cfg.get(
+                "embedding_model", "doubao-embedding-vision-250615"
+            ),
+            enable_document_inventory_search=store_cfg.get(
+                "enable_document_inventory_search", False
+            ),
+            document_inventory_tool_path=store_cfg.get(
+                "document_inventory_tool_path", ""
+            ),
         )
     
     def _pdf_to_markdown_pymupdf(self, pdf_path: str, md_path: str, sample_id: str):
@@ -186,9 +238,9 @@ class DeepReadWrapper:
             )
 
         embedder = VolcengineEmbedder(
-            model_name="doubao-embedding-vision-250615",
-            api_key=self.api_key,
-            api_base=self.base_url,
+            model_name=self.embedding_model,
+            api_key=self.embedding_api_key,
+            api_base=self.embedding_base_url,
             input_type="multimodal",
             dimension=2048,
         )
@@ -398,9 +450,9 @@ class DeepReadWrapper:
                 disable_bm25=False,
                 disable_regex=False,
                 disable_read=False,
-                embed_api_key=self.api_key,
-                embed_base_url="https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal",
-                embedding_model="doubao-embedding-vision-250615",
+                embed_api_key=self.embedding_api_key,
+                embed_base_url=f"{self.embedding_base_url}/embeddings/multimodal",
+                embedding_model=self.embedding_model,
                 neighbor_window=self.neighbor_window,
                 bm25_topk=topk,
                 regex_topk=topk,
@@ -409,6 +461,9 @@ class DeepReadWrapper:
                 semantic_topk1=30,
                 semantic_topk2=1,
                 collected_texts=collected_texts,
+                additional_instructions=self.agent_instructions,
+                enable_document_inventory_search=self.enable_document_inventory_search,
+                document_inventory_tool=self.document_inventory_tool,
             )
         except Exception as e:
             self.logger.error(f"run_agent failed for '{self.store_path}': {e}")

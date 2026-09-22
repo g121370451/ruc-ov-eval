@@ -135,7 +135,16 @@ def main():
             # print(f"  - {key}: {resolved}")
 
     # --- C2. 自增输出目录 + CLI skip_ingest ---
-    resolve_auto_output_dir(config)
+    # Long-running experiments may opt into one stable output directory so the
+    # pipeline's per-question records can resume after interruption. Historical
+    # configs keep the auto-increment behavior by default.
+    if config.get('paths', {}).get('auto_increment_output', True):
+        resolve_auto_output_dir(config)
+    else:
+        output_dir = config['paths']['output_dir']
+        os.makedirs(output_dir, exist_ok=True)
+        config['paths']['log_file'] = os.path.join(output_dir, "benchmark.log")
+        print(f"[Init] Stable output dir (resume enabled): {output_dir}")
     if args.skip_ingest:
         config['execution']['skip_ingestion'] = True
 
@@ -224,12 +233,26 @@ def main():
             
         llm_client = LLMClientWrapper(config=config['llm'], api_key=api_key)
 
+        # 3b. Judge Client（可选）：config 存在 judge: 块时评审用它，否则复用答题 client
+        judge_client = None
+        judge_cfg = config.get('judge') or {}
+        if judge_cfg.get('model'):
+            judge_api_key = os.environ.get(
+                judge_cfg.get('api_key_env_var', ''),
+                judge_cfg.get('api_key')
+            )
+            if not judge_api_key:
+                logger.warning("No Judge API Key found in config or environment variables!")
+            judge_client = LLMClientWrapper(config=judge_cfg, api_key=judge_api_key)
+            logger.info(f"Judge client enabled: model={judge_cfg['model']}")
+
         # 4. Pipeline
         pipeline = BenchmarkPipeline(
             config=config,
             adapter=adapter,
             vector_db=vector_store,
-            llm=llm_client
+            llm=llm_client,
+            judge_llm=judge_client
         )
 
         # --- E. 执行任务 ---

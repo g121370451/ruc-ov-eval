@@ -1,7 +1,13 @@
+import logging
+import time
+import random
 from typing import List, Optional
 
 import volcenginesdkarkruntime
+from volcenginesdkarkruntime._exceptions import ArkBadRequestError, ArkRateLimitError
 from src.core.token_tracer_util import ThreadLocalTokenTracker
+
+logger = logging.getLogger(__name__)
 
 # embedding token追踪器实例
 embedding_token_tracker = ThreadLocalTokenTracker()
@@ -138,10 +144,46 @@ class VolcengineEmbedder():
             vector = truncate_and_normalize(vector, self.dimension)
             return vector
 
-        try:
-            return _embed_call()
-        except Exception as e:
-            raise RuntimeError(f"Volcengine embedding failed: {str(e)}") from e
+        # 重试策略：指数退避 + 抖动。
+        #
+        # 方舟套餐接口偶尔会把可重放成功的请求返回为
+        # ``400 InvalidParameter``。这不是稳定的输入校验错误：相同模型、
+        # endpoint 和原始文本稍后重放可以成功。只对此精确错误做两次短重试，
+        # 其他 4xx 仍立即失败，避免掩盖真实的配置或参数问题。
+        max_retries = 5
+        base_delay = 2.0  # 初始等待 2 秒
+
+        for attempt in range(max_retries):
+            try:
+                return _embed_call()
+            except ArkRateLimitError as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        f"[VolcengineEmbedder] Rate limit (429) on attempt {attempt + 1}, "
+                        f"retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    raise RuntimeError(
+                        f"Volcengine embedding failed after {max_retries} retries due to rate limit: {str(e)}"
+                    ) from e
+            except ArkBadRequestError as e:
+                transient_invalid_parameter = "InvalidParameter" in str(e)
+                if transient_invalid_parameter and attempt < 2:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        "[VolcengineEmbedder] Transient 400 InvalidParameter on "
+                        f"attempt {attempt + 1} (text_chars={len(text)}), "
+                        f"retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(
+                    f"Volcengine embedding failed: {str(e)}"
+                ) from e
+            except Exception as e:
+                raise RuntimeError(f"Volcengine embedding failed: {str(e)}") from e
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Batch embedding
