@@ -1,0 +1,63 @@
+project_name: "RAG_Benchmark"
+dataset_name: "FinanceBench"
+
+adapter:
+  module: "src.adapters.finance_bench_adapter"
+  class_name: "FinanceBenchAdapter"
+
+store:
+  type: "DeepRead"
+
+  # No-vector retrieval path: BM25/regex + keyword document graph.
+  enable_vector: false
+  enable_hybrid: false
+  enable_semantic: false
+  neighbor_window: "1,-1"
+  max_rounds: 50
+  use_pymupdf: true
+
+  # Existing three DeepRead improvements.
+  source_header_enabled: true
+  enable_session_pagination: true
+  agent_topk_max: 10
+  pagination_candidate_limit: 50
+  enable_retrieval_stagnation_hint: true
+  retrieval_stagnation_threshold: 3
+
+  # Document graph: document nodes, keyword-similarity edges, Leiden/CPM communities.
+  enable_document_graph: true
+  document_graph_mode: "keyword"
+  document_graph_neighbor_limit: 8
+  document_graph_edge_score_threshold: 0.15
+  document_graph_keyword_weight: 1.0
+  document_graph_vector_weight: 0.0
+  document_graph_cpm_resolution: 0.15
+  document_graph_seed: 0
+  document_graph_initial_topk: 5
+  document_graph_seed_topk: 5
+  document_graph_max_hops: 1
+  document_graph_cache_enabled: true
+
+  agent_instructions:
+    - "FinanceBench document names usually encode the company, fiscal year, and report type. Verify those attributes before relying on a candidate document."
+    - "Start with graph-selected documents. If their content is insufficient, revise the graph query or broaden to full-corpus BM25/regex retrieval."
+    - "Before answering, check that dates, units, and financial definitions come from the same intended document and reporting period."
+
+execution:
+  max_workers: 3
+  ingest_workers: 3
+  retrieval_topk: 1
+  max_queries: null
+  skip_ingestion: false
+
+paths:
+  raw_data: "Data/{dataset_name}/data/financebench_open_source.jsonl"
+  doc_output_dir: "Data/{dataset_name}/DeepRead/global_graph_keyword/processed_docs"
+  vector_store: "Data/{dataset_name}/DeepRead/global_graph_keyword/store_index"
+  output_dir: "Output/{dataset_name}/deepread_global_graph_keyword"
+
+llm:
+  model: "${LLM_MODEL}"
+  temperature: 0
+  base_url: "${LLM_BASE_URL}"
+  api_key: "${LLM_API_KEY}"

@@ -131,6 +131,38 @@ class DeepReadIngestConcurrencyTest(unittest.TestCase):
                 self.assertEqual(embeddings.shape[0], len(id_map))
                 self.assertGreater(embeddings.shape[0], 0)
 
+    def test_keyword_only_graph_ingestion_skips_embeddings(self):
+        wrapper = self._make_wrapper()
+        wrapper._needs_embeddings = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = os.path.join(temp_dir, "keyword_only.md")
+            store_dir = os.path.join(temp_dir, "store")
+            os.makedirs(store_dir)
+            with open(source_path, "w", encoding="utf-8") as handle:
+                handle.write("# Revenue\n\nCloud subscription revenue increased.\n")
+            wrapper.store_path = store_dir
+
+            with patch(
+                "src.core.deepread_store.VolcengineEmbedder",
+                side_effect=AssertionError("embedding client must not be created"),
+            ):
+                stats = wrapper.ingest(
+                    [StandardDoc("keyword-only", [source_path])], max_workers=2
+                )
+
+            self.assertEqual(stats["input_tokens"], 0)
+            self.assertTrue(os.path.isfile(os.path.join(store_dir, "keyword_only.md")))
+            self.assertTrue(
+                os.path.isfile(os.path.join(store_dir, "keyword_only_corpus.json"))
+            )
+            self.assertFalse(
+                os.path.exists(os.path.join(store_dir, "keyword_only_emb.npy"))
+            )
+            self.assertFalse(
+                os.path.exists(os.path.join(store_dir, "keyword_only_idmap.json"))
+            )
+
     def test_worker_exception_is_propagated(self):
         wrapper = self._make_wrapper()
         samples = [StandardDoc("good", ["good.md"]), StandardDoc("bad", ["bad.md"])]

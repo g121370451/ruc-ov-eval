@@ -71,6 +71,18 @@ source .venv/bin/activate  # macOS/Linux
 uv run python ov_test/run.py # 运行完整评测（入库 -> 检索生成 -> 结果评估）
 ```
 
+### DeepRead 文档图版本
+
+`DeepRead` 子模块中的多文档检索版本包含四项机制：初始提示词只放图筛出的候选文档、基于稳定段落 label 的跨提示词/跨工具去重、按未读结果补位的分页，以及文档相似图与 Leiden/CPM 图社区。图支持关键词、向量和混合连边；关键词模式不调用 embedding API。
+
+FinanceBench 的无向量图配置：
+
+```bash
+uv run python ov_test/run.py --config ov_test/config_deepread_global/financebench_graph_keyword.yaml
+```
+
+图索引缓存位于 store 目录的 `deepread_document_graph.json`，语料、向量文件或图参数变化时会自动重建。
+
 ## 3. 接入新数据 (Adapter 机制)
 
 适配一个全新的数据集时，主要涉及以下三个部分：

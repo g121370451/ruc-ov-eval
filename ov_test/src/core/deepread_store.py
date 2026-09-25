@@ -70,6 +70,18 @@ class DeepReadWrapper:
         enable_session_pagination: bool = True,
         agent_topk_max: int = 10,
         pagination_candidate_limit: int = 50,
+        enable_document_graph: bool = False,
+        document_graph_mode: str = "keyword",
+        document_graph_neighbor_limit: int = 8,
+        document_graph_edge_score_threshold: float = 0.15,
+        document_graph_keyword_weight: float = 0.55,
+        document_graph_vector_weight: float = 0.45,
+        document_graph_cpm_resolution: float = 0.15,
+        document_graph_seed: int = 0,
+        document_graph_initial_topk: int = 5,
+        document_graph_seed_topk: int = 5,
+        document_graph_max_hops: int = 1,
+        document_graph_cache_enabled: bool = True,
         enable_retrieval_stagnation_hint: bool = True,
         retrieval_stagnation_threshold: int = 3,
         agent_instructions: Optional[List[str] | str] = None,
@@ -101,6 +113,41 @@ class DeepReadWrapper:
         self.agent_topk_max = max(1, int(agent_topk_max))
         self.pagination_candidate_limit = max(
             self.agent_topk_max, int(pagination_candidate_limit)
+        )
+        self.enable_document_graph = bool(enable_document_graph)
+        self.document_graph_mode = str(document_graph_mode).lower()
+        self.document_graph_neighbor_limit = max(
+            1, int(document_graph_neighbor_limit)
+        )
+        self.document_graph_edge_score_threshold = max(
+            0.0, float(document_graph_edge_score_threshold)
+        )
+        self.document_graph_keyword_weight = max(
+            0.0, float(document_graph_keyword_weight)
+        )
+        self.document_graph_vector_weight = max(
+            0.0, float(document_graph_vector_weight)
+        )
+        self.document_graph_cpm_resolution = max(
+            0.0, float(document_graph_cpm_resolution)
+        )
+        self.document_graph_seed = int(document_graph_seed)
+        self.document_graph_initial_topk = max(
+            1, int(document_graph_initial_topk)
+        )
+        self.document_graph_seed_topk = max(1, int(document_graph_seed_topk))
+        self.document_graph_max_hops = max(
+            0, min(int(document_graph_max_hops), 3)
+        )
+        self.document_graph_cache_enabled = bool(document_graph_cache_enabled)
+        self._needs_embeddings = bool(
+            enable_vector
+            or enable_hybrid
+            or enable_semantic
+            or (
+                self.enable_document_graph
+                and self.document_graph_mode in {"vector", "hybrid"}
+            )
         )
         self.enable_retrieval_stagnation_hint = bool(
             enable_retrieval_stagnation_hint
@@ -185,6 +232,36 @@ class DeepReadWrapper:
             agent_topk_max=store_cfg.get("agent_topk_max", 10),
             pagination_candidate_limit=store_cfg.get(
                 "pagination_candidate_limit", 50
+            ),
+            enable_document_graph=store_cfg.get("enable_document_graph", False),
+            document_graph_mode=store_cfg.get("document_graph_mode", "keyword"),
+            document_graph_neighbor_limit=store_cfg.get(
+                "document_graph_neighbor_limit", 8
+            ),
+            document_graph_edge_score_threshold=store_cfg.get(
+                "document_graph_edge_score_threshold", 0.15
+            ),
+            document_graph_keyword_weight=store_cfg.get(
+                "document_graph_keyword_weight", 0.55
+            ),
+            document_graph_vector_weight=store_cfg.get(
+                "document_graph_vector_weight", 0.45
+            ),
+            document_graph_cpm_resolution=store_cfg.get(
+                "document_graph_cpm_resolution", 0.15
+            ),
+            document_graph_seed=store_cfg.get("document_graph_seed", 0),
+            document_graph_initial_topk=store_cfg.get(
+                "document_graph_initial_topk", 5
+            ),
+            document_graph_seed_topk=store_cfg.get(
+                "document_graph_seed_topk", 5
+            ),
+            document_graph_max_hops=store_cfg.get(
+                "document_graph_max_hops", 1
+            ),
+            document_graph_cache_enabled=store_cfg.get(
+                "document_graph_cache_enabled", True
             ),
             enable_retrieval_stagnation_hint=store_cfg.get(
                 "enable_retrieval_stagnation_hint", True
@@ -276,7 +353,12 @@ class DeepReadWrapper:
             if monitor:
                 monitor.worker_start()
             try:
-                self._ingest_one(sample, ocr_pipeline, make_embedder())
+                embedder = (
+                    make_embedder()
+                    if getattr(self, "_needs_embeddings", True)
+                    else None
+                )
+                self._ingest_one(sample, ocr_pipeline, embedder)
                 if monitor:
                     monitor.worker_end(success=True)
             except Exception:
@@ -335,6 +417,7 @@ class DeepReadWrapper:
                         finally:
                             progress.update(1)
             
+        self._remove_index_artifacts()
         self.invalidate_doc_index_cache()
 
         token_usage = ingest_token_tracker.get()
@@ -360,7 +443,12 @@ class DeepReadWrapper:
         workers = max(1, int(requested_workers))
         return 1 if contains_pdf and ocr_enabled else workers
     
-    def _ingest_one(self, sample: StandardDoc, ocr_pipeline, embedder: VolcengineEmbedder):
+    def _ingest_one(
+        self,
+        sample: StandardDoc,
+        ocr_pipeline,
+        embedder: Optional[VolcengineEmbedder],
+    ):
         doc_paths = sample.doc_paths
 
         for path in doc_paths:
@@ -376,9 +464,15 @@ class DeepReadWrapper:
             emb_path = os.path.join(self.store_path, f"{name}_emb.npy")
             idmap_path = os.path.join(self.store_path, f"{name}_idmap.json")
 
-            # --- 断点续传：如果所有输出文件都已存在，直接跳过 ---
-            if os.path.exists(merged_md_path) and os.path.exists(corpus_path) and os.path.exists(emb_path) and os.path.exists(idmap_path):
-                self.logger.info(f"[{name}] Already embedded (md/corpus/emb/idmap exist), skipping.")
+            required_outputs = [merged_md_path, corpus_path]
+            if embedder is not None:
+                required_outputs.extend([emb_path, idmap_path])
+
+            # --- 断点续传：只要求当前检索模式实际需要的输出文件 ---
+            if all(os.path.exists(path) for path in required_outputs):
+                self.logger.info(
+                    f"[{name}] Required DeepRead artifacts already exist, skipping."
+                )
                 return
 
             #  ---Step 1: PDF -> Markdown (or Markdown directly) ---
@@ -441,26 +535,27 @@ class DeepReadWrapper:
             corpus = parse_markdown_to_corpus(merged_md_path)
             corpus["source_name"] = name
 
-            # --- Step 3: Embedding ---
-            texts: List[str] = []
-            id_map: List[Dict[str, Any]] = []
+            # --- Step 3: Embedding (only when a vector-backed feature needs it) ---
+            if embedder is not None:
+                texts: List[str] = []
+                id_map: List[Dict[str, Any]] = []
 
-            for n in corpus.get("nodes", []):
-                nid = n.get("id")
-                for pi, p in enumerate(n.get("paragraphs", [])):
-                    if isinstance(p, str):
-                        t = p.strip()
-                    elif isinstance(p, dict):
-                        t = str(p.get("content", "")).strip()
-                    else:
-                        t = str(p).strip()
+                for n in corpus.get("nodes", []):
+                    nid = n.get("id")
+                    for pi, p in enumerate(n.get("paragraphs", [])):
+                        if isinstance(p, str):
+                            t = p.strip()
+                        elif isinstance(p, dict):
+                            t = str(p.get("content", "")).strip()
+                        else:
+                            t = str(p).strip()
 
-                    if not t:
-                        continue
-                    texts.append(t)
-                    id_map.append({"node_id": nid, "paragraph_index": pi})
+                        if not t:
+                            continue
+                        texts.append(t)
+                        id_map.append({"node_id": nid, "paragraph_index": pi})
 
-            if texts:
+            if embedder is not None and texts:
                 emb_list: List[List[float]] = [
                     embedder.embed(text=t) 
                     for t in tqdm(texts, desc=f"[{name}] Embedding", unit="chunk", leave=False)]
@@ -501,8 +596,39 @@ class DeepReadWrapper:
                     for f in os.listdir(self.store_path)
                     if f.endswith('_corpus.json')
                 ])
-                self._doc_index_cacahe = load_corpus(corpus_paths, neighbor_window=self.neighbor_window)
+                graph_cache_path = (
+                    os.path.join(self.store_path, "deepread_document_graph.json")
+                    if self.enable_document_graph
+                    and self.document_graph_cache_enabled
+                    else None
+                )
+                self._doc_index_cacahe = load_corpus(
+                    corpus_paths,
+                    neighbor_window=self.neighbor_window,
+                    document_graph_config={
+                        "enabled": self.enable_document_graph,
+                        "mode": self.document_graph_mode,
+                        "neighbor_limit": self.document_graph_neighbor_limit,
+                        "edge_score_threshold": (
+                            self.document_graph_edge_score_threshold
+                        ),
+                        "keyword_weight": self.document_graph_keyword_weight,
+                        "vector_weight": self.document_graph_vector_weight,
+                        "cpm_resolution": self.document_graph_cpm_resolution,
+                        "seed": self.document_graph_seed,
+                    },
+                    document_graph_cache_path=graph_cache_path,
+                    load_vectors=self._needs_embeddings,
+                )
                 self.logger.info(f"DocIndex built and cached from {len(corpus_paths)} corpus file(s) in '{self.store_path}'")
+                document_graph = getattr(
+                    self._doc_index_cacahe, "document_graph", None
+                )
+                if document_graph is not None:
+                    self.logger.info(
+                        "Document graph ready: %s",
+                        document_graph.summary(),
+                    )
                 # 输出 doc_id -> 文档名映射，方便人工查阅
                 if getattr(self._doc_index_cacahe, 'doc_id_map', None):
                     map_path = os.path.join(self.store_path, "deepread_doc_map.json")
@@ -568,6 +694,10 @@ class DeepReadWrapper:
                 enable_session_pagination=self.enable_session_pagination,
                 agent_topk_max=self.agent_topk_max,
                 pagination_candidate_limit=self.pagination_candidate_limit,
+                enable_document_graph=self.enable_document_graph,
+                graph_initial_top_k=self.document_graph_initial_topk,
+                graph_seed_top_k=self.document_graph_seed_topk,
+                graph_max_hops=self.document_graph_max_hops,
                 enable_retrieval_stagnation_hint=(
                     self.enable_retrieval_stagnation_hint
                 ),
@@ -616,6 +746,19 @@ class DeepReadWrapper:
 
     _DOC_FILE_SUFFIXES = [".md", "_corpus.json", "_emb.npy", "_idmap.json", ".json"]
     _DOC_TEMP_SUFFIXES = ["_temp_page.json", "_temp_page.md"]
+    _INDEX_ARTIFACTS = {"deepread_document_graph.json", "deepread_doc_map.json"}
+
+    def _remove_index_artifacts(self) -> None:
+        store_path = getattr(self, "store_path", "")
+        if not store_path:
+            return
+        for filename in self._INDEX_ARTIFACTS:
+            path = os.path.join(store_path, filename)
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError as exc:
+                    self.logger.warning(f"Failed to remove index artifact {path}: {exc}")
 
     def _iter_document_ids(self) -> list[str]:
         """从 store_path 中的文件名推断出所有 document id（文件主干）。"""
@@ -623,6 +766,8 @@ class DeepReadWrapper:
             return []
         doc_ids = set()
         for filename in os.listdir(self.store_path):
+            if filename in self._INDEX_ARTIFACTS:
+                continue
             filepath = os.path.join(self.store_path, filename)
             if os.path.isdir(filepath):
                 continue
@@ -652,6 +797,10 @@ class DeepReadWrapper:
                 except Exception as e:
                     self.logger.warning(f"[{doc_id}] Failed to remove {path}: {e}")
 
+        if removed_any:
+            self._remove_index_artifacts()
+            self.invalidate_doc_index_cache()
+
         return removed_any
 
     def clear(self):
@@ -674,6 +823,8 @@ class DeepReadWrapper:
                 self.delete_document(doc_id)
             except Exception as e:
                 self.logger.warning(f"clear(): failed to delete document {doc_id}: {e}")
+
+        self._remove_index_artifacts()
 
         self.logger.info(
             f"clear(): finished deleting {len(doc_ids)} documents, "
