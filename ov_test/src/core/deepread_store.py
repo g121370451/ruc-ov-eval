@@ -70,6 +70,7 @@ class DeepReadWrapper:
         enable_session_pagination: bool = True,
         agent_topk_max: int = 10,
         pagination_candidate_limit: int = 50,
+        enable_read_label_dedup: bool = False,
         enable_document_graph: bool = False,
         document_graph_mode: str = "keyword",
         document_graph_neighbor_limit: int = 8,
@@ -114,6 +115,7 @@ class DeepReadWrapper:
         self.pagination_candidate_limit = max(
             self.agent_topk_max, int(pagination_candidate_limit)
         )
+        self.enable_read_label_dedup = bool(enable_read_label_dedup)
         self.enable_document_graph = bool(enable_document_graph)
         self.document_graph_mode = str(document_graph_mode).lower()
         self.document_graph_neighbor_limit = max(
@@ -232,6 +234,9 @@ class DeepReadWrapper:
             agent_topk_max=store_cfg.get("agent_topk_max", 10),
             pagination_candidate_limit=store_cfg.get(
                 "pagination_candidate_limit", 50
+            ),
+            enable_read_label_dedup=store_cfg.get(
+                "enable_read_label_dedup", False
             ),
             enable_document_graph=store_cfg.get("enable_document_graph", False),
             document_graph_mode=store_cfg.get("document_graph_mode", "keyword"),
@@ -694,6 +699,7 @@ class DeepReadWrapper:
                 enable_session_pagination=self.enable_session_pagination,
                 agent_topk_max=self.agent_topk_max,
                 pagination_candidate_limit=self.pagination_candidate_limit,
+                enable_read_label_dedup=self.enable_read_label_dedup,
                 enable_document_graph=self.enable_document_graph,
                 graph_initial_top_k=self.document_graph_initial_topk,
                 graph_seed_top_k=self.document_graph_seed_topk,

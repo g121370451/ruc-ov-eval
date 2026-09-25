@@ -83,6 +83,26 @@ uv run python ov_test/run.py --config ov_test/config_deepread_global/financebenc
 
 图索引缓存位于 store 目录的 `deepread_document_graph.json`，语料、向量文件或图参数变化时会自动重建。
 
+三组 DeepRead 实验使用独立的入库和输出目录：
+
+| 实验 | 配置 | 输出目录前缀 |
+| --- | --- | --- |
+| 图社区开启 | `financebench_graph_keyword.yaml` | `deepread_global_graph_keyword` |
+| 图社区关闭 | `financebench_no_community.yaml` | `deepread_global_no_community` |
+| `zqy-DeepRead` 原版兼容组 | `financebench_original.yaml` | `deepread_global_original` |
+
+每组先单独入库，再复用对应库执行生成和评测：
+
+```bash
+uv run python ov_test/run.py --config ov_test/config_deepread_global/financebench_no_community.yaml --step ingest
+uv run python ov_test/run.py --config ov_test/config_deepread_global/financebench_no_community.yaml --step geneval
+
+uv run python ov_test/run.py --config ov_test/config_deepread_global/financebench_original.yaml --step ingest
+uv run python ov_test/run.py --config ov_test/config_deepread_global/financebench_original.yaml --step geneval
+```
+
+`ingest` 只执行文档处理和建库；`geneval` 强制跳过入库，执行检索生成和评测。图社区在 DeepRead 进程内本地构建，不需要启动独立 Wiki 服务。
+
 ## 3. 接入新数据 (Adapter 机制)
 
 适配一个全新的数据集时，主要涉及以下三个部分：

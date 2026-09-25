@@ -60,9 +60,10 @@ class BenchmarkPipeline:
             with open(self.records_file, 'w', encoding='utf-8') as f:
                 json.dump(self.records, f, indent=2, ensure_ascii=False)
 
-    def run_generation(self):
-        """Step1 数据预处理"""
-        self.logger.info(">>> Stage: Ingestion & Generation")
+    def run_generation(self, ingest_only: bool = False):
+        """Run ingestion and optionally continue with retrieval and generation."""
+        stage_name = "Ingestion Only" if ingest_only else "Ingestion & Generation"
+        self.logger.info(f">>> Stage: {stage_name}")
         doc_dir = self.config['paths'].get('doc_output_dir')
         if not doc_dir:
             doc_dir = os.path.join(self.output_dir, "docs")
@@ -138,6 +139,11 @@ class BenchmarkPipeline:
                 }
             })
             # backup_store(store_path, self.logger)
+
+        if ingest_only:
+            self.logger.info("Ingestion-only stage finished; generation was not started.")
+            return
+
         """Step 2 & 3: 数据入库 + 检索生成"""
         # 1. 加载数据并准备 QA 任务；稳定清单已在入库前完成该步骤。
         if tasks is None:

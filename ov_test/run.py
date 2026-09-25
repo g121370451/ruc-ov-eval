@@ -100,8 +100,15 @@ def main():
     parser.add_argument("--config", default=default_config_path, 
                         help=f"Path to config file. Default: {default_config_path}")
     
-    parser.add_argument("--step", choices=["all", "gen", "eval", "del"], default="all",
-                        help="Execution step: 'gen' (Retrieval+LLM), 'eval' (Judge), or 'all'")
+    parser.add_argument(
+        "--step",
+        choices=["all", "ingest", "geneval", "gen", "eval", "del"],
+        default="all",
+        help=(
+            "Execution step: 'ingest' (ingest only), 'geneval' (reuse the "
+            "store, then generate and evaluate), 'gen', 'eval', 'del', or 'all'"
+        ),
+    )
     parser.add_argument("--skip-ingest", action="store_true", default=False,
                         help="Skip document ingestion, reuse existing store")
 
@@ -142,7 +149,9 @@ def main():
 
     # --- C2. 自增输出目录 + CLI skip_ingest ---
     resolve_auto_output_dir(config)
-    if args.skip_ingest:
+    if args.step == "ingest":
+        config['execution']['skip_ingestion'] = False
+    elif args.step == "geneval" or args.skip_ingest:
         config['execution']['skip_ingestion'] = True
 
     # --- D. 初始化组件 ---
@@ -239,11 +248,15 @@ def main():
         )
 
         # --- E. 执行任务 ---
-        if args.step in ["all", "gen"]:
+        if args.step == "ingest":
+            logger.info("Stage: Ingestion Only")
+            pipeline.run_generation(ingest_only=True)
+
+        if args.step in ["all", "gen", "geneval"]:
             logger.info("Stage: Generation (Ingest -> Retrieve -> Generate)")
             pipeline.run_generation()
             
-        if args.step in ["all", "eval"]:
+        if args.step in ["all", "eval", "geneval"]:
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 
